@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # claude-flow API 서버 (Slack Socket Mode + REST API)
+  claude-flow:
+    build:
+      context: ..
+      dockerfile: docker-compose/Dockerfile
+    container_name: claude-flow
+    ports:
+      - "8080:8080"
+    environment:
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - N8N_WEBHOOK_URL=http://n8n:5678
+      - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+      - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-300}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    volumes:
+      # Claude Code가 접근할 프로젝트 디렉토리
+      - ${PROJECT_PATH:-../..}:/workspace:rw
+    depends_on:
+      - n8n
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+
+  # n8n 워크플로우 엔진
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: claude-flow-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678
+      - GENERIC_TIMEZONE=Asia/Seoul
+      - N8N_SECURE_COOKIE=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n-workflows:/home/node/workflows:ro
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+
+volumes:
+  n8n_data:
+
+networks:
+  claude-flow-network:
+    driver: bridge

@@ -1,0 +1,178 @@
+{
+  "name": "Slack Mention Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-mention",
+        "responseMode": "onReceived",
+        "responseData": "allEntries"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, timestamp: $json.timestamp, emoji: 'hourglass_flowing_sand', remove: false }) }}"
+      },
+      "id": "add-loading",
+      "name": "Add Loading",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, systemPrompt: 'You are a helpful AI assistant. Answer in Korean if the user asks in Korean. Be concise and accurate.', maxTurns: 5 }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "execute-claude",
+      "name": "Execute Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, timestamp: $('Webhook').item.json.timestamp, emoji: 'hourglass_flowing_sand', remove: true }) }}"
+      },
+      "id": "remove-loading",
+      "name": "Remove Loading",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, text: $('Execute Claude').item.json.result || 'No response', threadTs: $('Webhook').item.json.threadTs || $('Webhook').item.json.timestamp }) }}"
+      },
+      "id": "send-reply",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, text: '❌ 오류가 발생했습니다: ' + ($('Execute Claude').item.json.error || 'Unknown error'), threadTs: $('Webhook').item.json.threadTs || $('Webhook').item.json.timestamp }) }}"
+      },
+      "id": "send-error",
+      "name": "Send Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, timestamp: $('Webhook').item.json.timestamp, emoji: 'white_check_mark', remove: false }) }}"
+      },
+      "id": "add-success-reaction",
+      "name": "Add ✅",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, timestamp: $('Webhook').item.json.timestamp, emoji: 'x', remove: false }) }}"
+      },
+      "id": "add-error-reaction",
+      "name": "Add ❌",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Add Loading", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add Loading": {
+      "main": [
+        [{ "node": "Execute Claude", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Claude": {
+      "main": [
+        [{ "node": "Remove Loading", "type": "main", "index": 0 }]
+      ]
+    },
+    "Remove Loading": {
+      "main": [
+        [{ "node": "Success?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Success?": {
+      "main": [
+        [{ "node": "Send Reply", "type": "main", "index": 0 }],
+        [{ "node": "Send Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Reply": {
+      "main": [
+        [{ "node": "Add ✅", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Error": {
+      "main": [
+        [{ "node": "Add ❌", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

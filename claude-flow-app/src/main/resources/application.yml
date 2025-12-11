@@ -1,0 +1,38 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: claude-flow
+
+claude-flow:
+  slack:
+    app-token: ${SLACK_APP_TOKEN:}
+    bot-token: ${SLACK_BOT_TOKEN:}
+    signing-secret: ${SLACK_SIGNING_SECRET:}
+
+  webhook:
+    base-url: ${N8N_WEBHOOK_URL:http://localhost:5678}
+    mention-endpoint: /webhook/slack-mention
+    message-endpoint: /webhook/slack-message
+    reaction-endpoint: /webhook/slack-reaction
+    feedback-endpoint: /webhook/slack-feedback
+
+  claude:
+    model: ${CLAUDE_MODEL:claude-sonnet-4-20250514}
+    max-tokens: ${CLAUDE_MAX_TOKENS:4096}
+    timeout-seconds: ${CLAUDE_TIMEOUT:300}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    ai.claudeflow: DEBUG
+    com.slack.api: INFO
