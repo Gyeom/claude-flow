@@ -1,6 +1,79 @@
 // Dashboard Types
 
 export interface DashboardStats {
+  period: string
+  overview: SummaryStats
+  timeseries: TimeSeriesData[]
+  models: ModelStats[]
+  sources: SourceStats[]
+  routing: RoutingStats[]
+  topRequesters: RequesterStats[]
+  feedback: FeedbackSummary
+}
+
+// : 백분위수 포함 통계
+export interface SummaryStats {
+  totalRequests: number
+  successful: number
+  failed: number
+  successRate: number
+  avgDurationMs: number
+  p50DurationMs: number
+  p90DurationMs: number
+  p95DurationMs: number
+  p99DurationMs: number
+  totalCostUsd: number
+  totalInputTokens: number
+  totalOutputTokens: number
+}
+
+export interface TimeSeriesData {
+  timestamp: string
+  requests: number
+  successful: number
+  failed: number
+  avgDurationMs: number
+  totalTokens: number
+}
+
+export interface ModelStats {
+  model: string
+  requests: number
+  avgDurationMs: number
+  totalTokens: number
+  successRate: number
+  costUsd: number
+}
+
+export interface SourceStats {
+  source: string
+  requests: number
+  successRate: number
+}
+
+export interface RoutingStats {
+  method: string
+  requests: number
+  avgConfidence: number
+  successRate: number
+}
+
+export interface RequesterStats {
+  userId: string
+  displayName: string | null
+  requests: number
+  successRate: number
+  totalTokens: number
+}
+
+export interface FeedbackSummary {
+  thumbsUp: number
+  thumbsDown: number
+  satisfactionScore: number
+}
+
+// Legacy compatibility (기존 대시보드와 호환)
+export interface LegacyDashboardStats {
   totalExecutions: number
   successRate: number
   totalTokens: number
@@ -100,4 +173,40 @@ export interface ProjectStat {
   agentCount: number
   totalExecutions: number
   avgDurationMs: number
+}
+
+// User Context Types
+export interface UserContext {
+  userId: string
+  displayName: string | null
+  preferredLanguage: string
+  domain: string | null
+  totalInteractions: number
+  totalChars: number
+  lastSeen: string
+  summary: string | null
+  summaryUpdatedAt: string | null
+}
+
+export interface UserContextResponse {
+  rules: string[]
+  summary: string | null
+  recentConversations: RecentConversation[]
+  totalConversationCount: number
+  needsSummary: boolean
+  summaryLocked: boolean
+  lockId: string | null
+}
+
+export interface RecentConversation {
+  userMessage: string
+  response: string | null
+  timestamp: string
+}
+
+// Error Stats
+export interface ErrorStats {
+  errorType: string
+  count: number
+  lastOccurred: string
 }

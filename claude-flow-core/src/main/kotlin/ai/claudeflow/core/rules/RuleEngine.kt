@@ -11,7 +11,7 @@ private val logger = KotlinLogging.logger {}
 /**
  * Rules 조건부 라우팅 시스템
  *
- * Claudio 스타일의 규칙 기반 라우팅:
+ * Claude Flow 스타일의 규칙 기반 라우팅:
  * - 조건 매칭 (채널, 사용자, 시간대 등)
  * - 우선순위 기반 규칙 평가
  * - 다양한 액션 지원

@@ -1,0 +1,300 @@
+{
+  "name": "user-context-handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "user-context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "user-context-webhook"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://claude-flow:8080/api/v1/users/{{ $json.user_id }}/context?acquire_lock=true&lock_id={{ $json.execution_id }}",
+        "options": {}
+      },
+      "id": "fetch-context",
+      "name": "Fetch Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needsSummary }}",
+              "value2": true
+            },
+            {
+              "value1": "={{ $json.lockId !== null }}",
+              "value2": true
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "should-summarize",
+      "name": "Should Summarize?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [690, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://claude-flow:8080/api/v1/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"prompt\": \"다음 사용자의 대화 내역을 분석하여 간결한 요약을 작성해주세요. 요약은 200자 이내로, 사용자의 관심사, 전문 분야, 선호하는 응답 스타일을 포함해야 합니다.\\n\\n### 사용자 규칙:\\n{{ $json.rules.join('\\n') }}\\n\\n### 최근 대화:\\n{{ $json.recentConversations.map(c => '사용자: ' + c.userMessage.substring(0, 200) + '\\n어시스턴트: ' + (c.response || '').substring(0, 200)).join('\\n\\n') }}\\n\\n### 요약을 JSON 형식으로 작성:\\n{\\\"summary\\\": \\\"...\\\"}\",\n  \"systemPrompt\": \"You are a helpful assistant that summarizes user conversations. Always respond in Korean. Output only valid JSON.\",\n  \"model\": \"haiku\"\n}",
+        "options": {}
+      },
+      "id": "summarize",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [910, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "summarize-ok",
+      "name": "Summarize OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1130, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the summary from Claude's response\nconst result = $input.first().json.result;\nlet summary = '';\n\ntry {\n  // Try to extract JSON from the response\n  const jsonMatch = result.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    summary = parsed.summary || '';\n  }\n} catch (e) {\n  // If JSON parsing fails, use the raw result (trimmed)\n  summary = result.trim().substring(0, 500);\n}\n\nreturn {\n  json: {\n    summary: summary,\n    user_id: $('Webhook').item.json.user_id,\n    lock_id: $('Fetch Context').item.json.lockId\n  }\n};"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 200]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=http://claude-flow:8080/api/v1/users/{{ $json.user_id }}/context",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"summary\": \"{{ $json.summary }}\"\n}",
+        "options": {}
+      },
+      "id": "save-context",
+      "name": "Save Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1570, 200]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=http://claude-flow:8080/api/v1/users/{{ $json.user_id }}/context/lock?lock_id={{ $json.lock_id }}",
+        "options": {}
+      },
+      "id": "release-lock",
+      "name": "Release Lock",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1790, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Context updated\",\n  \"user_id\": \"{{ $('Webhook').item.json.user_id }}\"\n}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2010, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"No summary needed\",\n  \"user_id\": \"{{ $('Webhook').item.json.user_id }}\"\n}",
+        "options": {}
+      },
+      "id": "respond-skip",
+      "name": "Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 400]
+    },
+    {
+      "parameters": {
+        "method": "DELETE",
+        "url": "=http://claude-flow:8080/api/v1/users/{{ $('Webhook').item.json.user_id }}/context/lock?lock_id={{ $('Fetch Context').item.json.lockId }}",
+        "options": {}
+      },
+      "id": "release-lock-error",
+      "name": "Release Lock (Error)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 350]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"message\": \"Failed to summarize\",\n  \"user_id\": \"{{ $('Webhook').item.json.user_id }}\"\n}",
+        "options": {}
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1570, 350]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Fetch Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Context": {
+      "main": [
+        [
+          {
+            "node": "Should Summarize?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Summarize?": {
+      "main": [
+        [
+          {
+            "node": "Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize": {
+      "main": [
+        [
+          {
+            "node": "Summarize OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize OK?": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Release Lock (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Save Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Context": {
+      "main": [
+        [
+          {
+            "node": "Release Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Lock": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Lock (Error)": {
+      "main": [
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "claude-flow"
+    },
+    {
+      "name": "user-context"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-14T00:00:00.000Z",
+  "versionId": "1"
+}

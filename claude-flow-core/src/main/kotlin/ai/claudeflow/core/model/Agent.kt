@@ -25,7 +25,7 @@ data class Agent(
     val allowedTools: List<String> = emptyList(),
     val workingDirectory: String? = null,
     val enabled: Boolean = true,
-    val priority: Int = 0,  // 0-1000, Claudio 스타일 우선순위
+    val priority: Int = 0,  // 0-1000, Claude Flow 스타일 우선순위
     val examples: List<String> = emptyList(),  // 시맨틱 라우팅 예제
     val projectId: String? = null  // 프로젝트별 에이전트 지원
 ) {

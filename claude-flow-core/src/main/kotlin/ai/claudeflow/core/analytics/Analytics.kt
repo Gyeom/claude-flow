@@ -10,7 +10,7 @@ private val logger = KotlinLogging.logger {}
 /**
  * Analytics 분석 모듈
  *
- * Claudio 스타일의 상세 분석 기능 제공:
+ * Claude Flow 스타일의 상세 분석 기능 제공:
  * - 사용자별 사용량 통계
  * - 에이전트별 성능 분석
  * - 시간대별 트렌드

@@ -30,7 +30,7 @@ class SemanticRouter(
     /**
      * 시맨틱 검색으로 에이전트 분류
      *
-     * Claudio 스타일 우선순위 보너스 적용:
+     * Claude Flow 스타일 우선순위 보너스 적용:
      * adjusted_score = score * (1.0 + priority/1000.0)
      */
     fun classify(message: String, agents: List<Agent>): AgentMatch? {
@@ -46,7 +46,7 @@ class SemanticRouter(
             val scoredMatches = searchResults.mapNotNull { result ->
                 val agent = agents.find { it.id == result.agentId }
                 if (agent != null && result.score >= minScore) {
-                    // Claudio 스타일: adjusted_score = score * (1.0 + priority/1000.0)
+                    // Claude Flow 스타일: adjusted_score = score * (1.0 + priority/1000.0)
                     val adjustedScore = result.score * (1.0 + agent.priority / 1000.0)
                     Triple(agent, adjustedScore, result)
                 } else null

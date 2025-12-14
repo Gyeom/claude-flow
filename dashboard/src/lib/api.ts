@@ -6,6 +6,15 @@ import type {
   TokenUsage,
   RoutingEfficiency,
   ProjectStat,
+  UserContext,
+  UserContextResponse,
+  SummaryStats,
+  TimeSeriesData,
+  ModelStats,
+  SourceStats,
+  RoutingStats,
+  RequesterStats,
+  ErrorStats,
 } from '@/types'
 
 const API_BASE_V1 = '/api/v1'
@@ -24,13 +33,21 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, base = API_B
     throw new Error(`API Error: ${response.status} ${response.statusText}`)
   }
 
-  return response.json()
+  return response.json
 }
 
 // Dashboard
 export const dashboardApi = {
-  getStats: (days = 30) =>
-    fetchApi<DashboardStats>(`/analytics/dashboard?days=${days}`),
+  getStats: (period = '7d') =>
+    fetchApi<DashboardStats>(`/analytics/dashboard?period=${period}`),
+
+  getOverview: (period = '7d') =>
+    fetchApi<{ period: string; summary: SummaryStats }>(`/analytics/overview?period=${period}`),
+
+  getTimeseries: (granularity = 'daily', days = 7) =>
+    fetchApi<{ granularity: string; days: number; data: TimeSeriesData[] }>(
+      `/analytics/timeseries?granularity=${granularity}&days=${days}`
+    ),
 }
 
 // Executions
@@ -47,7 +64,7 @@ export const executionsApi = {
 
 // Agents (v2 API)
 export const agentsApi = {
-  getAll: () =>
+  getAll: =>
     fetchApi<Agent[]>('/agents', undefined, API_BASE_V2),
 
   getByProject: (projectId: string) =>
@@ -82,21 +99,80 @@ export const agentsApi = {
 
 // Analytics
 export const analyticsApi = {
-  getFeedback: (days = 30) =>
-    fetchApi<FeedbackAnalysis>(`/analytics/feedback?days=${days}`),
+  getFeedback: (period = '7d') =>
+    fetchApi<FeedbackAnalysis>(`/analytics/feedback?period=${period}`),
 
-  getTokenUsage: (days = 30) =>
-    fetchApi<TokenUsage>(`/analytics/tokens?days=${days}`),
+  getTokenUsage: (period = '7d') =>
+    fetchApi<TokenUsage>(`/analytics/tokens?period=${period}`),
 
-  getRoutingEfficiency: () =>
-    fetchApi<RoutingEfficiency>('/analytics/routing'),
+  getRoutingEfficiency: (period = '7d') =>
+    fetchApi<{ period: string; routing: RoutingStats[] }>(`/analytics/routing?period=${period}`),
 
-  getProjectStats: () =>
+  getProjectStats: =>
     fetchApi<ProjectStat[]>('/analytics/projects'),
+
+  getModels: (period = '7d') =>
+    fetchApi<{ period: string; models: ModelStats[] }>(`/analytics/models?period=${period}`),
+
+  getErrors: (period = '7d') =>
+    fetchApi<{ period: string; errors: ErrorStats[] }>(`/analytics/errors?period=${period}`),
+
+  getSources: (period = '7d') =>
+    fetchApi<{ period: string; sources: SourceStats[] }>(`/analytics/sources?period=${period}`),
+
+  getRequesters: (period = '7d') =>
+    fetchApi<{ period: string; requesters: RequesterStats[] }>(`/analytics/requesters?period=${period}`),
+}
+
+// Users
+export const usersApi = {
+  getAll: =>
+    fetchApi<UserContext[]>('/users'),
+
+  getById: (userId: string) =>
+    fetchApi<UserContext>(`/users/${userId}`),
+
+  getContext: (userId: string, acquireLock = false, lockId?: string) => {
+    const params = new URLSearchParams
+    params.set('acquire_lock', acquireLock.toString)
+    if (lockId) params.set('lock_id', lockId)
+    return fetchApi<UserContextResponse>(`/users/${userId}/context?${params}`)
+  },
+
+  saveContext: (userId: string, data: { summary?: string; displayName?: string }) =>
+    fetchApi<{ success: boolean }>(`/users/${userId}/context`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  getFormattedContext: (userId: string) =>
+    fetchApi<{ userId: string; formattedContext: string; totalRules: number; totalConversations: number }>(
+      `/users/${userId}/context/formatted`
+    ),
+
+  getRules: (userId: string) =>
+    fetchApi<{ userId: string; rules: string[] }>(`/users/${userId}/rules`),
+
+  addRule: (userId: string, rule: string) =>
+    fetchApi<{ success: boolean; rule?: string }>(`/users/${userId}/rules`, {
+      method: 'POST',
+      body: JSON.stringify({ rule }),
+    }),
+
+  deleteRule: (userId: string, rule: string) =>
+    fetchApi<{ success: boolean }>(`/users/${userId}/rules`, {
+      method: 'DELETE',
+      body: JSON.stringify({ rule }),
+    }),
+
+  releaseLock: (userId: string, lockId: string) =>
+    fetchApi<{ success: boolean }>(`/users/${userId}/context/lock?lock_id=${lockId}`, {
+      method: 'DELETE',
+    }),
 }
 
 // Health
 export const healthApi = {
-  check: () =>
+  check: =>
     fetchApi<{ status: string; version: string }>('/health'),
 }

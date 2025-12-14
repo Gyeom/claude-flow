@@ -238,7 +238,7 @@ data class AgentUpdate(
     val allowedTools: List<String>? = null,
     val workingDirectory: String? = null,
     val enabled: Boolean? = null,
-    val priority: Int? = null,           // Claudio 스타일 우선순위
+    val priority: Int? = null,           // Claude Flow 스타일 우선순위
     val examples: List<String>? = null,  // 시맨틱 라우팅 예제
     val projectId: String? = null        // 프로젝트별 에이전트
 )

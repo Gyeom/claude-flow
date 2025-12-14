@@ -79,7 +79,7 @@ class Storage(dbPath: String = "claude-flow.db") {
                 )
             """)
 
-            // 사용자 컨텍스트 테이블
+            // 사용자 컨텍스트 테이블 (확장)
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS user_contexts (
                     user_id TEXT PRIMARY KEY,
@@ -87,7 +87,22 @@ class Storage(dbPath: String = "claude-flow.db") {
                     preferred_language TEXT DEFAULT 'ko',
                     domain TEXT,
                     last_seen TEXT NOT NULL,
-                    total_interactions INTEGER DEFAULT 0
+                    total_interactions INTEGER DEFAULT 0,
+                    summary TEXT,
+                    summary_updated_at TEXT,
+                    summary_lock_id TEXT,
+                    summary_lock_at TEXT,
+                    total_chars INTEGER DEFAULT 0
+                )
+            """)
+
+            // 사용자 규칙 테이블
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS user_rules (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    rule TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
             """)
 
@@ -99,7 +114,7 @@ class Storage(dbPath: String = "claude-flow.db") {
                 )
             """)
 
-            // 에이전트 테이블 (Claudio 스타일 프로젝트별 에이전트 지원)
+            // 에이전트 테이블 (프로젝트별 에이전트 지원)
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS agents (
                     id TEXT NOT NULL,
@@ -124,8 +139,10 @@ class Storage(dbPath: String = "claude-flow.db") {
             // 인덱스 생성
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_channel ON executions(channel)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_created ON executions(created_at)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_user ON executions(user_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_feedback_execution ON feedback(execution_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_id)")
         }
     }
 
@@ -314,14 +331,7 @@ class Storage(dbPath: String = "claude-flow.db") {
             stmt.setString(1, userId)
             stmt.executeQuery().use { rs ->
                 if (rs.next()) {
-                    return UserContext(
-                        userId = rs.getString("user_id"),
-                        displayName = rs.getString("display_name"),
-                        preferredLanguage = rs.getString("preferred_language") ?: "ko",
-                        domain = rs.getString("domain"),
-                        lastSeen = Instant.parse(rs.getString("last_seen")),
-                        totalInteractions = rs.getInt("total_interactions")
-                    )
+                    return rowToUserContext(rs)
                 }
             }
         }
@@ -331,8 +341,9 @@ class Storage(dbPath: String = "claude-flow.db") {
     fun saveUserContext(context: UserContext) {
         val sql = """
             INSERT OR REPLACE INTO user_contexts
-            (user_id, display_name, preferred_language, domain, last_seen, total_interactions)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (user_id, display_name, preferred_language, domain, last_seen, total_interactions,
+             summary, summary_updated_at, summary_lock_id, summary_lock_at, total_chars)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         connection.prepareStatement(sql).use { stmt ->
             stmt.setString(1, context.userId)
@@ -341,6 +352,11 @@ class Storage(dbPath: String = "claude-flow.db") {
             stmt.setString(4, context.domain)
             stmt.setString(5, context.lastSeen.toString())
             stmt.setInt(6, context.totalInteractions)
+            stmt.setString(7, context.summary)
+            stmt.setString(8, context.summaryUpdatedAt?.toString())
+            stmt.setString(9, context.summaryLockId)
+            stmt.setString(10, context.summaryLockAt?.toString())
+            stmt.setLong(11, context.totalChars)
             stmt.executeUpdate()
         }
     }
@@ -351,20 +367,220 @@ class Storage(dbPath: String = "claude-flow.db") {
         connection.createStatement().use { stmt ->
             stmt.executeQuery(sql).use { rs ->
                 while (rs.next()) {
+                    results.add(rowToUserContext(rs))
+                }
+            }
+        }
+        return results
+    }
+
+    /**
+     * 사용자 컨텍스트 응답 조회 (규칙, 요약, 최근 대화 포함)
+     */
+    fun getUserContextResponse(
+        userId: String,
+        acquireLock: Boolean = false,
+        lockId: String? = null
+    ): UserContextResponse {
+        val context = getUserContext(userId)
+        val rules = getUserRules(userId)
+        val recentConversations = getRecentConversations(userId)
+        val conversationCount = getConversationCount(userId)
+
+        val needsSummary = context?.let {
+            UserContextResponse.needsSummary(
+                it.totalChars,
+                conversationCount,
+                it.summaryUpdatedAt,
+                it.summary
+            )
+        } ?: false
+
+        var newLockId: String? = null
+        var summaryLocked = context?.summaryLockId != null &&
+            context.summaryLockAt?.let {
+                Instant.now().epochSecond - it.epochSecond < UserContextResponse.SUMMARY_LOCK_TTL_SECS
+            } ?: false
+
+        if (acquireLock && needsSummary && !summaryLocked) {
+            newLockId = lockId ?: java.util.UUID.randomUUID().toString()
+            acquireSummaryLock(userId, newLockId)
+            summaryLocked = true
+        }
+
+        return UserContextResponse(
+            rules = rules,
+            summary = context?.summary,
+            recentConversations = recentConversations,
+            totalConversationCount = conversationCount,
+            needsSummary = needsSummary,
+            summaryLocked = summaryLocked,
+            lockId = newLockId
+        )
+    }
+
+    /**
+     * 사용자 요약 저장
+     */
+    fun saveUserSummary(userId: String, summary: String) {
+        val sql = """
+            UPDATE user_contexts
+            SET summary = ?, summary_updated_at = ?, summary_lock_id = NULL, summary_lock_at = NULL
+            WHERE user_id = ?
+        """
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, summary)
+            stmt.setString(2, Instant.now().toString())
+            stmt.setString(3, userId)
+            stmt.executeUpdate()
+        }
+    }
+
+    /**
+     * 요약 잠금 획득
+     */
+    fun acquireSummaryLock(userId: String, lockId: String): Boolean {
+        val sql = """
+            UPDATE user_contexts
+            SET summary_lock_id = ?, summary_lock_at = ?
+            WHERE user_id = ? AND (summary_lock_id IS NULL OR summary_lock_at < ?)
+        """
+        val now = Instant.now()
+        val expiredBefore = now.minusSeconds(UserContextResponse.SUMMARY_LOCK_TTL_SECS)
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, lockId)
+            stmt.setString(2, now.toString())
+            stmt.setString(3, userId)
+            stmt.setString(4, expiredBefore.toString())
+            return stmt.executeUpdate() > 0
+        }
+    }
+
+    /**
+     * 요약 잠금 해제
+     */
+    fun releaseSummaryLock(userId: String, lockId: String): Boolean {
+        val sql = "UPDATE user_contexts SET summary_lock_id = NULL, summary_lock_at = NULL WHERE user_id = ? AND summary_lock_id = ?"
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, userId)
+            stmt.setString(2, lockId)
+            return stmt.executeUpdate() > 0
+        }
+    }
+
+    /**
+     * 최근 대화 조회
+     */
+    fun getRecentConversations(userId: String, limit: Int = 10): List<RecentConversation> {
+        val sql = """
+            SELECT e.id, e.prompt, e.result, e.created_at,
+                   EXISTS(SELECT 1 FROM feedback f WHERE f.execution_id = e.id) as has_reactions
+            FROM executions e
+            WHERE e.user_id = ?
+            ORDER BY e.created_at DESC
+            LIMIT ?
+        """
+        val results = mutableListOf<RecentConversation>()
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, userId)
+            stmt.setInt(2, limit)
+            stmt.executeQuery().use { rs ->
+                while (rs.next()) {
                     results.add(
-                        UserContext(
-                            userId = rs.getString("user_id"),
-                            displayName = rs.getString("display_name"),
-                            preferredLanguage = rs.getString("preferred_language") ?: "ko",
-                            domain = rs.getString("domain"),
-                            lastSeen = Instant.parse(rs.getString("last_seen")),
-                            totalInteractions = rs.getInt("total_interactions")
+                        RecentConversation(
+                            id = rs.getString("id"),
+                            userMessage = rs.getString("prompt"),
+                            response = rs.getString("result"),
+                            createdAt = rs.getString("created_at"),
+                            hasReactions = rs.getBoolean("has_reactions")
                         )
                     )
                 }
             }
         }
         return results
+    }
+
+    /**
+     * 사용자 대화 수 조회
+     */
+    fun getConversationCount(userId: String): Int {
+        val sql = "SELECT COUNT(*) FROM executions WHERE user_id = ?"
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, userId)
+            stmt.executeQuery().use { rs ->
+                if (rs.next()) {
+                    return rs.getInt(1)
+                }
+            }
+        }
+        return 0
+    }
+
+    // ==================== User Rules ====================
+
+    /**
+     * 사용자 규칙 조회
+     */
+    fun getUserRules(userId: String): List<String> {
+        val sql = "SELECT rule FROM user_rules WHERE user_id = ? ORDER BY created_at"
+        val results = mutableListOf<String>()
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, userId)
+            stmt.executeQuery().use { rs ->
+                while (rs.next()) {
+                    results.add(rs.getString("rule"))
+                }
+            }
+        }
+        return results
+    }
+
+    /**
+     * 사용자 규칙 추가
+     */
+    fun addUserRule(userId: String, rule: String): Boolean {
+        // 중복 체크
+        val existing = getUserRules(userId)
+        if (existing.contains(rule)) return false
+
+        val sql = "INSERT INTO user_rules (id, user_id, rule, created_at) VALUES (?, ?, ?, ?)"
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, java.util.UUID.randomUUID().toString())
+            stmt.setString(2, userId)
+            stmt.setString(3, rule)
+            stmt.setString(4, Instant.now().toString())
+            stmt.executeUpdate()
+        }
+        return true
+    }
+
+    /**
+     * 사용자 규칙 삭제
+     */
+    fun deleteUserRule(userId: String, rule: String): Boolean {
+        val sql = "DELETE FROM user_rules WHERE user_id = ? AND rule = ?"
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, userId)
+            stmt.setString(2, rule)
+            return stmt.executeUpdate() > 0
+        }
+    }
+
+    private fun rowToUserContext(rs: java.sql.ResultSet): UserContext {
+        return UserContext(
+            userId = rs.getString("user_id"),
+            displayName = rs.getString("display_name"),
+            preferredLanguage = rs.getString("preferred_language") ?: "ko",
+            domain = rs.getString("domain"),
+            lastSeen = Instant.parse(rs.getString("last_seen")),
+            totalInteractions = rs.getInt("total_interactions"),
+            summary = rs.getString("summary"),
+            summaryUpdatedAt = rs.getString("summary_updated_at")?.let { Instant.parse(it) },
+            summaryLockId = rs.getString("summary_lock_id"),
+            summaryLockAt = rs.getString("summary_lock_at")?.let { Instant.parse(it) },
+            totalChars = rs.getLong("total_chars")
+        )
     }
 
     // ==================== Settings ====================
@@ -447,7 +663,7 @@ class Storage(dbPath: String = "claude-flow.db") {
     // ==================== Agent ====================
 
     /**
-     * 에이전트 저장 (Claudio 스타일 프로젝트별 에이전트)
+     * 에이전트 저장 (프로젝트별 에이전트)
      */
     fun saveAgent(agent: Agent) {
         val sql = """
