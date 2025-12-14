@@ -12,7 +12,8 @@ enum class SlackEventType {
     MESSAGE,        // 일반 메시지
     REACTION_ADDED, // 리액션 추가
     REACTION_REMOVED, // 리액션 제거
-    COMMAND         // 슬래시 커맨드
+    COMMAND,        // 슬래시 커맨드
+    ACTION_TRIGGER  // 액션 트리거 (특정 이모지)
 }
 
 /**
@@ -59,5 +60,17 @@ data class WebhookPayload(
     val reaction: String? = null,
     val files: List<SlackFile> = emptyList(),
     val matchedAgent: String? = null,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    val action: ActionPayload? = null  // 액션 트리거 정보
+)
+
+/**
+ * 액션 트리거 페이로드
+ */
+@Serializable
+data class ActionPayload(
+    val actionType: String,      // create_ticket, fix_code, summarize, etc.
+    val emoji: String,
+    val description: String,
+    val targetMessageTs: String  // 리액션이 달린 메시지의 timestamp
 )

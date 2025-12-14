@@ -1,0 +1,17 @@
+# Local development profile
+server:
+  port: 8080
+
+claude-flow:
+  workspace:
+    path: ${WORKSPACE_PATH:${user.home}/.claude-flow}
+
+  # Disable Qdrant/Ollama for local dev (optional)
+  qdrant:
+    url: ""
+  ollama:
+    url: ""
+
+logging:
+  level:
+    ai.claudeflow: DEBUG

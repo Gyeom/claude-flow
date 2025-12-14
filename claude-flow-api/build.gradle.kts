@@ -21,8 +21,8 @@ dependencies {
     // Slack Bolt (Socket Mode)
     implementation("com.slack.api:bolt-socket-mode:1.46.0")
     implementation("com.slack.api:slack-api-client:1.46.0")
-    implementation("javax.websocket:javax.websocket-api:1.1")
-    implementation("org.glassfish.tyrus.bundles:tyrus-standalone-client:1.20")
+    // Java-WebSocket backend (more stable than Tyrus for long-running connections)
+    implementation("org.java-websocket:Java-WebSocket:1.5.7")
 
     // HTTP Client for webhooks
     implementation("io.ktor:ktor-client-core:3.1.1")

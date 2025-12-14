@@ -1,7 +1,10 @@
 package ai.claudeflow.api.slack
 
+import ai.claudeflow.core.alert.AlertService
+import ai.claudeflow.core.config.ActionTriggerConfig
 import ai.claudeflow.core.config.SlackConfig
 import ai.claudeflow.core.config.WebhookConfig
+import ai.claudeflow.core.event.ActionPayload
 import ai.claudeflow.core.event.SlackEvent
 import ai.claudeflow.core.event.SlackEventType
 import ai.claudeflow.core.event.SlackFile
@@ -10,42 +13,112 @@ import com.slack.api.Slack
 import com.slack.api.bolt.App
 import com.slack.api.bolt.AppConfig
 import com.slack.api.bolt.socket_mode.SocketModeApp
+import com.slack.api.socket_mode.SocketModeClient
 import com.slack.api.model.event.AppMentionEvent
 import com.slack.api.model.event.MessageEvent
 import com.slack.api.model.event.ReactionAddedEvent
 import com.slack.api.model.event.ReactionRemovedEvent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import mu.KotlinLogging
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 private val logger = KotlinLogging.logger {}
 
 /**
- * Slack Socket Mode 브릿지
+ * Slack Socket Mode Bridge with Auto-Reconnect
  *
- * WebSocket을 통해 Slack과 연결하여 이벤트를 수신하고
- * n8n webhook으로 전달
+ * WebSocket connection to Slack with automatic reconnection,
+ * health monitoring, and message retry queue
  */
 class SlackSocketModeBridge(
     private val slackConfig: SlackConfig,
     private val webhookConfig: WebhookConfig,
-    private val webhookSender: WebhookSender
+    private val webhookSender: WebhookSender,
+    private val actionTriggerConfig: ActionTriggerConfig = ActionTriggerConfig(),
+    private val alertService: AlertService? = null,
+    private val maxReconnectAttempts: Int = 10,
+    private val initialReconnectDelayMs: Long = 1000,
+    private val maxReconnectDelayMs: Long = 60000
 ) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val isRunning = AtomicBoolean(false)
     private var socketModeApp: SocketModeApp? = null
     private var botUserId: String? = null
 
-    // 피드백 이모지 (👍, 👎)
+    // Connection state tracking
+    private val connectionState = AtomicReference(ConnectionState.DISCONNECTED)
+    private val lastEventTime = AtomicLong(0)
+    private val reconnectAttempts = AtomicInteger(0)
+    private val totalReconnects = AtomicInteger(0)
+    private var connectionStartTime: Instant? = null
+
+    // Failed message queue for retry
+    private val failedMessageQueue = ConcurrentLinkedQueue<FailedMessage>()
+    private val maxQueueSize = 1000
+
+    // Health check job
+    private var healthCheckJob: Job? = null
+    private var retryJob: Job? = null
+
+    // Feedback emojis
     private val feedbackReactions = setOf("+1", "-1", "thumbsup", "thumbsdown")
+    private val actionTriggerEmojis = actionTriggerConfig.triggers.keys
+
+    enum class ConnectionState {
+        DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, FAILED
+    }
+
+    data class FailedMessage(
+        val event: SlackEvent,
+        val endpoint: String,
+        val actionPayload: ActionPayload? = null,
+        val failedAt: Instant = Clock.System.now(),
+        val retryCount: Int = 0
+    )
 
     /**
-     * Socket Mode 연결 시작
+     * Get current connection status
+     */
+    fun getStatus(): Map<String, Any> {
+        return mapOf(
+            "state" to connectionState.get().name,
+            "isRunning" to isRunning.get(),
+            "lastEventTime" to lastEventTime.get(),
+            "reconnectAttempts" to reconnectAttempts.get(),
+            "totalReconnects" to totalReconnects.get(),
+            "failedMessageQueueSize" to failedMessageQueue.size,
+            "uptime" to (connectionStartTime?.let {
+                Clock.System.now().toEpochMilliseconds() - it.toEpochMilliseconds()
+            } ?: 0),
+            "botUserId" to (botUserId ?: "unknown")
+        )
+    }
+
+    /**
+     * Check if connection is healthy
+     */
+    fun isHealthy(): Boolean {
+        if (connectionState.get() != ConnectionState.CONNECTED) {
+            return false
+        }
+        // Consider unhealthy if no events for 5 minutes (Slack sends heartbeats)
+        val lastEvent = lastEventTime.get()
+        if (lastEvent > 0) {
+            val timeSinceLastEvent = System.currentTimeMillis() - lastEvent
+            return timeSinceLastEvent < 300_000 // 5 minutes
+        }
+        return true
+    }
+
+    /**
+     * Start Socket Mode connection with auto-reconnect
      */
     fun start() {
         if (isRunning.getAndSet(true)) {
@@ -53,37 +126,197 @@ class SlackSocketModeBridge(
             return
         }
 
-        logger.info { "Starting Slack Socket Mode Bridge..." }
+        logger.info { "Starting Slack Socket Mode Bridge with auto-reconnect..." }
+        connectionStartTime = Clock.System.now()
 
-        try {
-            val appConfig = AppConfig.builder()
-                .singleTeamBotToken(slackConfig.botToken)
-                .build()
+        // Start connection
+        scope.launch {
+            connectWithRetry()
+        }
 
-            val app = App(appConfig).apply {
-                // Bot User ID 조회
-                initializeBotUserId()
+        // Start health check
+        startHealthCheck()
 
-                // 이벤트 핸들러 등록
-                registerMentionHandler()
-                registerMessageHandler()
-                registerReactionHandlers()
+        // Start retry processor
+        startRetryProcessor()
+    }
+
+    private suspend fun connectWithRetry() {
+        while (isRunning.get() && reconnectAttempts.get() < maxReconnectAttempts) {
+            try {
+                connectionState.set(
+                    if (reconnectAttempts.get() > 0) ConnectionState.RECONNECTING
+                    else ConnectionState.CONNECTING
+                )
+
+                connect()
+
+                // Connection successful
+                connectionState.set(ConnectionState.CONNECTED)
+                reconnectAttempts.set(0)
+                logger.info { "Socket Mode connected successfully" }
+
+                // Wait for disconnection
+                while (isRunning.get() && socketModeApp != null) {
+                    delay(1000)
+                }
+
+            } catch (e: Exception) {
+                val attempt = reconnectAttempts.incrementAndGet()
+                totalReconnects.incrementAndGet()
+
+                val delay = calculateBackoffDelay(attempt)
+                logger.error(e) { "Connection failed (attempt $attempt/$maxReconnectAttempts), retrying in ${delay}ms..." }
+
+                // Alert on repeated failures
+                if (attempt >= 3) {
+                    alertService?.warning(
+                        component = "SlackSocketModeBridge",
+                        title = "Connection Retry",
+                        message = "Slack connection failed, retry attempt $attempt/$maxReconnectAttempts",
+                        metadata = mapOf(
+                            "error" to (e.message ?: "Unknown"),
+                            "nextRetryMs" to delay
+                        )
+                    )
+                }
+
+                connectionState.set(ConnectionState.RECONNECTING)
+                delay(delay)
+            }
+        }
+
+        if (reconnectAttempts.get() >= maxReconnectAttempts) {
+            connectionState.set(ConnectionState.FAILED)
+            logger.error { "Max reconnect attempts reached. Socket Mode Bridge stopped." }
+
+            // Critical alert - manual intervention needed
+            alertService?.critical(
+                component = "SlackSocketModeBridge",
+                title = "Connection Failed",
+                message = "Slack Socket Mode connection failed after $maxReconnectAttempts attempts. Manual restart required!",
+                metadata = mapOf(
+                    "totalReconnects" to totalReconnects.get(),
+                    "failedMessageQueueSize" to failedMessageQueue.size
+                )
+            )
+        }
+    }
+
+    private fun calculateBackoffDelay(attempt: Int): Long {
+        val delay = initialReconnectDelayMs * (1L shl minOf(attempt - 1, 6))
+        return minOf(delay, maxReconnectDelayMs)
+    }
+
+    private fun connect() {
+        logger.info { "Connecting to Slack Socket Mode (JavaWebSocket backend)..." }
+
+        val appConfig = AppConfig.builder()
+            .singleTeamBotToken(slackConfig.botToken)
+            .build()
+
+        val app = App(appConfig).apply {
+            initializeBotUserId()
+            registerMentionHandler()
+            registerMessageHandler()
+            registerReactionHandlers()
+        }
+
+        // Use JavaWebSocket backend (more stable for long-running connections)
+        socketModeApp = SocketModeApp(
+            slackConfig.appToken,
+            SocketModeClient.Backend.JavaWebSocket,
+            app
+        )
+        socketModeApp?.start()
+
+        logger.info { "Socket Mode connected (JavaWebSocket)" }
+    }
+
+    private fun startHealthCheck() {
+        healthCheckJob = scope.launch {
+            while (isRunning.get()) {
+                delay(60_000) // Check every minute
+
+                if (!isHealthy() && connectionState.get() == ConnectionState.CONNECTED) {
+                    logger.warn { "Connection appears unhealthy, triggering reconnect..." }
+
+                    alertService?.warning(
+                        component = "SlackSocketModeBridge",
+                        title = "Connection Unhealthy",
+                        message = "No events received for 5+ minutes, triggering reconnect",
+                        metadata = getStatus()
+                    )
+
+                    triggerReconnect()
+                }
+
+                // Alert if message queue is growing
+                if (failedMessageQueue.size > 100) {
+                    alertService?.warning(
+                        component = "SlackSocketModeBridge",
+                        title = "Message Queue Growing",
+                        message = "Failed message queue has ${failedMessageQueue.size} messages",
+                        metadata = mapOf("queueSize" to failedMessageQueue.size)
+                    )
+                }
+
+                // Log status periodically
+                logger.debug { "Health check: ${getStatus()}" }
+            }
+        }
+    }
+
+    private fun startRetryProcessor() {
+        retryJob = scope.launch {
+            while (isRunning.get()) {
+                delay(10_000) // Process every 10 seconds
+
+                processFailedMessages()
+            }
+        }
+    }
+
+    private suspend fun processFailedMessages() {
+        if (failedMessageQueue.isEmpty()) return
+
+        val toRetry = mutableListOf<FailedMessage>()
+        repeat(minOf(10, failedMessageQueue.size)) {
+            failedMessageQueue.poll()?.let { toRetry.add(it) }
+        }
+
+        for (msg in toRetry) {
+            if (msg.retryCount >= 5) {
+                logger.error { "Message permanently failed after ${msg.retryCount} retries: ${msg.event.id}" }
+                // TODO: Store in dead letter storage
+                continue
             }
 
-            socketModeApp = SocketModeApp(slackConfig.appToken, app).apply {
-                startAsync()
+            val success = sendToWebhookInternal(msg.event, msg.endpoint, msg.actionPayload)
+            if (!success) {
+                // Re-queue with incremented retry count
+                if (failedMessageQueue.size < maxQueueSize) {
+                    failedMessageQueue.offer(msg.copy(retryCount = msg.retryCount + 1))
+                }
+            } else {
+                logger.info { "Successfully retried message: ${msg.event.id}" }
             }
+        }
+    }
 
-            logger.info { "Slack Socket Mode Bridge started successfully" }
-        } catch (e: Exception) {
-            isRunning.set(false)
-            logger.error(e) { "Failed to start Slack Socket Mode Bridge" }
-            throw e
+    private fun triggerReconnect() {
+        scope.launch {
+            try {
+                socketModeApp?.stop()
+            } catch (e: Exception) {
+                logger.warn(e) { "Error stopping socket mode app" }
+            }
+            socketModeApp = null
         }
     }
 
     /**
-     * 연결 종료
+     * Stop connection
      */
     fun stop() {
         if (!isRunning.getAndSet(false)) {
@@ -91,8 +324,23 @@ class SlackSocketModeBridge(
         }
 
         logger.info { "Stopping Slack Socket Mode Bridge..." }
-        socketModeApp?.stop()
+        connectionState.set(ConnectionState.DISCONNECTED)
+
+        healthCheckJob?.cancel()
+        retryJob?.cancel()
+
+        try {
+            socketModeApp?.stop()
+        } catch (e: Exception) {
+            logger.warn(e) { "Error stopping socket mode app" }
+        }
         socketModeApp = null
+
+        // Process remaining failed messages
+        if (failedMessageQueue.isNotEmpty()) {
+            logger.warn { "Stopping with ${failedMessageQueue.size} messages in queue" }
+            // TODO: Persist to storage for recovery on restart
+        }
     }
 
     private fun App.initializeBotUserId() {
@@ -109,18 +357,17 @@ class SlackSocketModeBridge(
     }
 
     /**
-     * @멘션 이벤트 핸들러
+     * @mention event handler
      */
     private fun App.registerMentionHandler() {
         event(AppMentionEvent::class.java) { payload, ctx ->
+            lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
 
-            // 봇 자신의 메시지는 무시
             if (event.user == botUserId) {
                 return@event ctx.ack()
             }
 
-            // 멘션 텍스트에서 봇 ID 제거
             val cleanText = event.text
                 .replace(Regex("<@[A-Z0-9]+>"), "")
                 .trim()
@@ -150,13 +397,13 @@ class SlackSocketModeBridge(
     }
 
     /**
-     * 일반 메시지 이벤트 핸들러
+     * Message event handler
      */
     private fun App.registerMessageHandler() {
         event(MessageEvent::class.java) { payload, ctx ->
+            lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
 
-            // 봇 메시지, 서브타입 있는 메시지 무시
             if (event.user == botUserId || event.subtype != null) {
                 return@event ctx.ack()
             }
@@ -191,40 +438,58 @@ class SlackSocketModeBridge(
     }
 
     /**
-     * 리액션 이벤트 핸들러
+     * Reaction event handlers
      */
     private fun App.registerReactionHandlers() {
-        // 리액션 추가
         event(ReactionAddedEvent::class.java) { payload, ctx ->
+            lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
+            val reaction = event.reaction
 
-            val isFeedback = feedbackReactions.contains(event.reaction)
-            val endpoint = if (isFeedback) {
-                webhookConfig.endpoints.feedback
-            } else {
-                webhookConfig.endpoints.reaction
+            val isActionTrigger = actionTriggerEmojis.contains(reaction)
+            val isFeedback = feedbackReactions.contains(reaction)
+
+            val (eventType, endpoint) = when {
+                isActionTrigger -> SlackEventType.ACTION_TRIGGER to webhookConfig.endpoints.actionTrigger
+                isFeedback -> SlackEventType.REACTION_ADDED to webhookConfig.endpoints.feedback
+                else -> SlackEventType.REACTION_ADDED to webhookConfig.endpoints.reaction
             }
+
+            val actionPayload = if (isActionTrigger) {
+                actionTriggerConfig.triggers[reaction]?.let { trigger ->
+                    ActionPayload(
+                        actionType = trigger.action,
+                        emoji = trigger.emoji,
+                        description = trigger.description,
+                        targetMessageTs = event.item.ts
+                    )
+                }
+            } else null
 
             val slackEvent = SlackEvent(
                 id = UUID.randomUUID().toString(),
-                type = SlackEventType.REACTION_ADDED,
+                type = eventType,
                 channel = event.item.channel,
                 user = event.user,
                 text = "",
                 timestamp = event.item.ts,
-                reaction = event.reaction,
+                reaction = reaction,
                 receivedAt = Clock.System.now()
             )
 
             scope.launch {
-                sendToWebhook(slackEvent, endpoint)
+                sendToWebhook(slackEvent, endpoint, actionPayload)
+            }
+
+            if (isActionTrigger) {
+                logger.info { "Action trigger detected: $reaction -> ${actionPayload?.actionType}" }
             }
 
             ctx.ack()
         }
 
-        // 리액션 제거
         event(ReactionRemovedEvent::class.java) { payload, ctx ->
+            lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
 
             if (!feedbackReactions.contains(event.reaction)) {
@@ -250,7 +515,28 @@ class SlackSocketModeBridge(
         }
     }
 
-    private suspend fun sendToWebhook(event: SlackEvent, endpoint: String) {
+    private suspend fun sendToWebhook(
+        event: SlackEvent,
+        endpoint: String,
+        actionPayload: ActionPayload? = null
+    ) {
+        val success = sendToWebhookInternal(event, endpoint, actionPayload)
+        if (!success) {
+            // Queue for retry
+            if (failedMessageQueue.size < maxQueueSize) {
+                failedMessageQueue.offer(FailedMessage(event, endpoint, actionPayload))
+                logger.warn { "Message queued for retry: ${event.id} (queue size: ${failedMessageQueue.size})" }
+            } else {
+                logger.error { "Failed message queue full, dropping message: ${event.id}" }
+            }
+        }
+    }
+
+    private suspend fun sendToWebhookInternal(
+        event: SlackEvent,
+        endpoint: String,
+        actionPayload: ActionPayload? = null
+    ): Boolean {
         val payload = WebhookPayload(
             eventId = event.id,
             eventType = event.type,
@@ -260,10 +546,11 @@ class SlackSocketModeBridge(
             threadTs = event.threadTs,
             timestamp = event.timestamp,
             reaction = event.reaction,
-            files = event.files
+            files = event.files,
+            action = actionPayload
         )
 
         val url = "${webhookConfig.baseUrl}$endpoint"
-        webhookSender.send(url, payload)
+        return webhookSender.send(url, payload)
     }
 }

@@ -3,11 +3,24 @@ package ai.claudeflow.api.slack
 import com.slack.api.Slack
 import com.slack.api.methods.MethodsClient
 import com.slack.api.methods.request.chat.ChatPostMessageRequest
+import com.slack.api.methods.request.conversations.ConversationsRepliesRequest
 import com.slack.api.methods.request.reactions.ReactionsAddRequest
 import com.slack.api.methods.request.reactions.ReactionsRemoveRequest
+import com.slack.api.methods.request.users.UsersInfoRequest
 import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
+
+/**
+ * 스레드 메시지
+ */
+data class ThreadMessage(
+    val user: String,
+    val userName: String?,
+    val text: String,
+    val timestamp: String,
+    val isBot: Boolean
+)
 
 /**
  * Slack 메시지 발송기
@@ -113,6 +126,72 @@ class SlackMessageSender(
         } catch (e: Exception) {
             logger.error(e) { "Failed to remove reaction '$emoji'" }
             false
+        }
+    }
+
+    /**
+     * 스레드 히스토리 조회
+     */
+    fun getThreadHistory(
+        channel: String,
+        threadTs: String,
+        limit: Int = 20
+    ): Result<List<ThreadMessage>> {
+        return try {
+            val response = client.conversationsReplies(
+                ConversationsRepliesRequest.builder()
+                    .channel(channel)
+                    .ts(threadTs)
+                    .limit(limit)
+                    .build()
+            )
+
+            if (response.isOk) {
+                val messages = response.messages.map { msg ->
+                    ThreadMessage(
+                        user = msg.user ?: "unknown",
+                        userName = getUserName(msg.user),
+                        text = msg.text ?: "",
+                        timestamp = msg.ts,
+                        isBot = msg.botId != null
+                    )
+                }
+                logger.info { "Retrieved ${messages.size} messages from thread $threadTs" }
+                Result.success(messages)
+            } else {
+                logger.error { "Failed to get thread history: ${response.error}" }
+                Result.failure(RuntimeException(response.error))
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get thread history for $channel:$threadTs" }
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 사용자 이름 조회 (캐시 사용)
+     */
+    private val userNameCache = mutableMapOf<String, String>()
+
+    fun getUserName(userId: String?): String? {
+        if (userId == null) return null
+
+        return userNameCache.getOrPut(userId) {
+            try {
+                val response = client.usersInfo(
+                    UsersInfoRequest.builder()
+                        .user(userId)
+                        .build()
+                )
+                if (response.isOk) {
+                    response.user?.realName ?: response.user?.name ?: userId
+                } else {
+                    userId
+                }
+            } catch (e: Exception) {
+                logger.warn { "Failed to get user name for $userId: ${e.message}" }
+                userId
+            }
         }
     }
 }

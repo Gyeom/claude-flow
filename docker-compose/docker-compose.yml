@@ -17,11 +17,26 @@ services:
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
       - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-300}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # 컨테이너 내부 작업 디렉토리
+      - WORKSPACE_PATH=/workspace
+      # Qdrant 벡터 DB
+      - QDRANT_URL=http://qdrant:6333
+      # Ollama 임베딩 서비스
+      - OLLAMA_URL=http://ollama:11434
+      # GitLab/Jira 설정
+      - GITLAB_URL=${GITLAB_URL:-}
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      - JIRA_URL=${JIRA_URL:-}
+      - JIRA_EMAIL=${JIRA_EMAIL:-}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
     volumes:
-      # Claude Code가 접근할 프로젝트 디렉토리
-      - ${PROJECT_PATH:-../..}:/workspace:rw
+      # ~/42dot 전체를 /workspace로 마운트
+      - ${HOST_WORKSPACE:-~/42dot}:/workspace:rw
+      - claude_flow_data:/app/data
     depends_on:
       - n8n
+      - qdrant
+      - ollama
     networks:
       - claude-flow-network
     restart: unless-stopped
@@ -37,17 +52,81 @@ services:
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://localhost:5678
+      - N8N_WEBHOOK_URL=http://localhost:5678
       - GENERIC_TIMEZONE=Asia/Seoul
       - N8N_SECURE_COOKIE=false
+      # Code 노드에서 환경변수 접근 허용
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      # GitLab 설정 (optional - MR review 기능 사용 시 필요)
+      - GITLAB_URL=${GITLAB_URL:-}
+      - GITLAB_PROJECT=${GITLAB_PROJECT:-}
+      - GITLAB_GROUP=${GITLAB_GROUP:-}
+      - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      # Slack 설정
+      - SLACK_REVIEW_CHANNEL=${SLACK_REVIEW_CHANNEL:-general}
+    entrypoint: ["/bin/sh", "/home/node/scripts/n8n-entrypoint.sh"]
+    command: ["start"]
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n-workflows:/home/node/workflows:ro
+      - ./scripts:/home/node/scripts:ro
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+
+  # Qdrant 벡터 데이터베이스
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: claude-flow-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+
+  # Ollama 임베딩 서비스
+  ollama:
+    image: ollama/ollama:latest
+    container_name: claude-flow-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # GPU가 없는 환경에서는 위 deploy 섹션 제거
+
+  # Redis (세션/캐시용, 선택적)
+  redis:
+    image: redis:7-alpine
+    container_name: claude-flow-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
     networks:
       - claude-flow-network
     restart: unless-stopped
 
 volumes:
   n8n_data:
+  qdrant_data:
+  ollama_data:
+  redis_data:
+  claude_flow_data:
 
 networks:
   claude-flow-network:

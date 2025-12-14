@@ -22,9 +22,16 @@ Thumbs.db
 .env
 *.local
 
+# Claude Code local settings (may contain sensitive data)
+.claude/settings.local.json
+
 # Logs
 *.log
 logs/
 
 # Docker
 docker-compose/n8n_data/
+
+# Node modules
+node_modules/
+dashboard/node_modules/

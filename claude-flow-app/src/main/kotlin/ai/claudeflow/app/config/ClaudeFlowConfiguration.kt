@@ -7,8 +7,19 @@ import ai.claudeflow.api.slack.WebhookSender
 import ai.claudeflow.core.config.SlackConfig
 import ai.claudeflow.core.config.WebhookConfig
 import ai.claudeflow.core.config.WebhookEndpoints
+import ai.claudeflow.core.model.Project
+import ai.claudeflow.core.ratelimit.RateLimiter
+import ai.claudeflow.core.registry.ProjectRegistry
+import ai.claudeflow.core.routing.AgentRouter
+import ai.claudeflow.core.routing.SemanticRouter
+import ai.claudeflow.core.session.SessionManager
+import ai.claudeflow.core.plugin.PluginManager
+import ai.claudeflow.core.plugin.GitLabPlugin
+import ai.claudeflow.core.plugin.GitHubPlugin
+import ai.claudeflow.core.plugin.JiraPlugin
+import ai.claudeflow.core.storage.Storage
 import ai.claudeflow.executor.ClaudeExecutor
-import jakarta.annotation.PostConstruct
+import kotlinx.coroutines.runBlocking
 import jakarta.annotation.PreDestroy
 import mu.KotlinLogging
 import org.springframework.boot.context.properties.ConfigurationProperties
@@ -22,7 +33,13 @@ private val logger = KotlinLogging.logger {}
 data class ClaudeFlowProperties(
     val slack: SlackProperties = SlackProperties(),
     val webhook: WebhookProperties = WebhookProperties(),
-    val claude: ClaudeProperties = ClaudeProperties()
+    val claude: ClaudeProperties = ClaudeProperties(),
+    val workspace: WorkspaceProperties = WorkspaceProperties(),
+    val qdrant: QdrantProperties = QdrantProperties(),
+    val ollama: OllamaProperties = OllamaProperties(),
+    val gitlab: GitLabProperties = GitLabProperties(),
+    val github: GitHubProperties = GitHubProperties(),
+    val jira: JiraProperties = JiraProperties()
 )
 
 data class SlackProperties(
@@ -43,6 +60,35 @@ data class ClaudeProperties(
     val model: String = "claude-sonnet-4-20250514",
     val maxTokens: Int = 4096,
     val timeoutSeconds: Int = 300
+)
+
+data class WorkspaceProperties(
+    val path: String = "/workspace"  // 여러 프로젝트가 있는 상위 디렉토리
+)
+
+data class QdrantProperties(
+    val url: String = "http://localhost:6333",
+    val collection: String = "claude-flow-agents"
+)
+
+data class OllamaProperties(
+    val url: String = "http://localhost:11434",
+    val model: String = "nomic-embed-text"
+)
+
+data class GitLabProperties(
+    val url: String = "",
+    val token: String = ""
+)
+
+data class JiraProperties(
+    val url: String = "",
+    val email: String = "",
+    val apiToken: String = ""
+)
+
+data class GitHubProperties(
+    val token: String = ""
 )
 
 @Configuration
@@ -78,35 +124,202 @@ class ClaudeFlowConfiguration(
         SlackMessageSender(slackConfig.botToken)
 
     @Bean
+    fun projectRegistry(): ProjectRegistry {
+        // 단일 workspace로 설정 - Claude가 알아서 하위 프로젝트 탐색
+        val workspacePath = properties.workspace.path
+
+        val registry = ProjectRegistry(listOf(
+            Project(
+                id = "workspace",
+                name = "Workspace",
+                description = "Multi-project workspace",
+                workingDirectory = workspacePath
+            )
+        ))
+
+        logger.info { "Workspace configured: $workspacePath" }
+        logger.info { "Claude will automatically explore subdirectories" }
+
+        return registry
+    }
+
+    @Bean
     fun claudeExecutor(): ClaudeExecutor = ClaudeExecutor()
+
+    @Bean
+    fun storage(): Storage {
+        val dbPath = "${properties.workspace.path}/claude-flow.db"
+        logger.info { "Initializing SQLite storage: $dbPath" }
+        return Storage(dbPath)
+    }
+
+    @Bean
+    fun rateLimiter(): RateLimiter {
+        logger.info { "Initializing rate limiter (60 rpm default)" }
+        return RateLimiter(defaultRpm = 60)
+    }
+
+    @Bean
+    fun semanticRouter(): SemanticRouter? {
+        val qdrantUrl = properties.qdrant.url
+        val ollamaUrl = properties.ollama.url
+
+        if (qdrantUrl.isEmpty() || ollamaUrl.isEmpty()) {
+            logger.info { "Semantic router disabled (Qdrant/Ollama not configured)" }
+            return null
+        }
+
+        logger.info { "Initializing SemanticRouter: Qdrant=$qdrantUrl, Ollama=$ollamaUrl" }
+        val router = SemanticRouter(
+            embeddingServiceUrl = ollamaUrl,
+            vectorDbUrl = qdrantUrl,
+            collectionName = properties.qdrant.collection
+        )
+
+        // 에이전트 예제 인덱싱
+        val agentExamples = mapOf(
+            "code-reviewer" to listOf(
+                "이 코드 리뷰해줘",
+                "MR 좀 봐줘",
+                "코드 검토 부탁해",
+                "PR 리뷰 해줘",
+                "이 변경사항 확인해줘",
+                "코드 품질 체크해줘"
+            ),
+            "bug-fixer" to listOf(
+                "버그 수정해줘",
+                "에러 발생하는데 고쳐줘",
+                "오류 해결해줘",
+                "이거 왜 안되지",
+                "NullPointerException 발생",
+                "테스트 실패 원인 찾아줘"
+            ),
+            "general" to listOf(
+                "이거 어떻게 하는거야",
+                "설명해줘",
+                "뭐야 이거",
+                "도움이 필요해",
+                "구현 방법 알려줘",
+                "아키텍처 설명해줘"
+            )
+        )
+
+        try {
+            router.indexAgentExamples(
+                ai.claudeflow.core.routing.AgentRouter.defaultAgents(),
+                agentExamples
+            )
+            logger.info { "Agent examples indexed to vector DB" }
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to index agent examples (vector DB may not be ready)" }
+        }
+
+        return router
+    }
+
+    @Bean
+    fun agentRouter(semanticRouter: SemanticRouter?): AgentRouter {
+        logger.info { "Initializing AgentRouter with default agents" }
+        return AgentRouter(
+            initialAgents = AgentRouter.defaultAgents(),
+            semanticRouter = semanticRouter
+        )
+    }
+
+    @Bean
+    fun sessionManager(): SessionManager {
+        logger.info { "Initializing SessionManager (TTL: 60 min)" }
+        return SessionManager(sessionTtlMinutes = 60, maxSessions = 1000)
+    }
+
+    @Bean
+    fun pluginManager(): PluginManager {
+        val manager = PluginManager()
+
+        // GitLab 플러그인 등록
+        if (properties.gitlab.url.isNotEmpty() && properties.gitlab.token.isNotEmpty()) {
+            val gitlabConfig = mapOf(
+                "GITLAB_URL" to properties.gitlab.url,
+                "GITLAB_TOKEN" to properties.gitlab.token
+            )
+            manager.register(GitLabPlugin(), gitlabConfig)
+            logger.info { "GitLab plugin registered: ${properties.gitlab.url}" }
+        }
+
+        // GitHub 플러그인 등록
+        if (properties.github.token.isNotEmpty()) {
+            val githubConfig = mapOf(
+                "GITHUB_TOKEN" to properties.github.token
+            )
+            manager.register(GitHubPlugin(), githubConfig)
+            logger.info { "GitHub plugin registered" }
+        }
+
+        // Jira 플러그인 등록
+        if (properties.jira.url.isNotEmpty() && properties.jira.email.isNotEmpty()) {
+            val jiraConfig = mapOf(
+                "JIRA_URL" to properties.jira.url,
+                "JIRA_EMAIL" to properties.jira.email,
+                "JIRA_API_TOKEN" to properties.jira.apiToken
+            )
+            manager.register(JiraPlugin(), jiraConfig)
+            logger.info { "Jira plugin registered: ${properties.jira.url}" }
+        }
+
+        // 플러그인 초기화
+        runBlocking {
+            manager.initializeAll()
+        }
+
+        return manager
+    }
 
     @Bean
     fun claudeFlowController(
         claudeExecutor: ClaudeExecutor,
-        slackMessageSender: SlackMessageSender
-    ): ClaudeFlowController = ClaudeFlowController(claudeExecutor, slackMessageSender)
+        slackMessageSender: SlackMessageSender,
+        projectRegistry: ProjectRegistry,
+        storage: Storage,
+        rateLimiter: RateLimiter
+    ): ClaudeFlowController = ClaudeFlowController(
+        claudeExecutor,
+        slackMessageSender,
+        projectRegistry,
+        storage,
+        rateLimiter
+    )
 
     @Bean
     fun slackSocketModeBridge(
         slackConfig: SlackConfig,
         webhookConfig: WebhookConfig,
         webhookSender: WebhookSender
-    ): SlackSocketModeBridge = SlackSocketModeBridge(
-        slackConfig = slackConfig,
-        webhookConfig = webhookConfig,
-        webhookSender = webhookSender
-    ).also {
-        socketModeBridge = it
-    }
+    ): SlackSocketModeBridge {
+        logger.info { "Creating SlackSocketModeBridge..." }
+        logger.info { "App Token present: ${slackConfig.appToken.isNotEmpty()}, length: ${slackConfig.appToken.length}" }
+        logger.info { "Bot Token present: ${slackConfig.botToken.isNotEmpty()}, length: ${slackConfig.botToken.length}" }
 
-    @PostConstruct
-    fun startSlackBridge() {
-        if (properties.slack.appToken.isNotEmpty() && properties.slack.botToken.isNotEmpty()) {
+        val bridge = SlackSocketModeBridge(
+            slackConfig = slackConfig,
+            webhookConfig = webhookConfig,
+            webhookSender = webhookSender
+        )
+
+        // Bean 생성 시 바로 시작
+        if (slackConfig.appToken.isNotEmpty() && slackConfig.botToken.isNotEmpty()) {
             logger.info { "Starting Slack Socket Mode Bridge..." }
-            socketModeBridge?.start()
+            try {
+                bridge.start()
+                logger.info { "Slack Socket Mode Bridge started" }
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to start Slack Socket Mode Bridge" }
+            }
         } else {
             logger.warn { "Slack tokens not configured, Socket Mode Bridge not started" }
         }
+
+        socketModeBridge = bridge
+        return bridge
     }
 
     @PreDestroy

@@ -1,0 +1,290 @@
+{
+  "name": "Slack Reaction Action Handler",
+  "versionId": "reaction-action-v1",
+  "description": "Claudio 스타일 Reaction 기반 액션 핸들러 - 다양한 이모지로 작업 트리거",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-reaction",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "slack-reaction"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Claudio 스타일 Reaction 액션 매핑\nconst REACTION_ACTIONS = {\n  // 피드백\n  'thumbsup': { action: 'feedback', value: 'positive' },\n  'thumbsdown': { action: 'feedback', value: 'negative' },\n  '+1': { action: 'feedback', value: 'positive' },\n  '-1': { action: 'feedback', value: 'negative' },\n  \n  // 코드 작업\n  'eyes': { action: 'review', description: '코드 리뷰 요청' },\n  'mag': { action: 'analyze', description: '상세 분석 요청' },\n  'rocket': { action: 'deploy', description: '배포 요청' },\n  'white_check_mark': { action: 'approve', description: '승인' },\n  'x': { action: 'reject', description: '거절' },\n  \n  // 작업 관리\n  'bookmark': { action: 'save', description: '북마크 저장' },\n  'pushpin': { action: 'pin', description: '핀 고정' },\n  'bulb': { action: 'idea', description: '아이디어 저장' },\n  'memo': { action: 'note', description: '노트 추가' },\n  \n  // Jira 연동\n  'ticket': { action: 'jira_create', description: 'Jira 티켓 생성' },\n  'link': { action: 'jira_link', description: 'Jira 티켓 연결' },\n  \n  // GitLab 연동\n  'gitlab': { action: 'gitlab_mr', description: 'GitLab MR 확인' },\n  'hammer_and_wrench': { action: 'gitlab_pipeline', description: '파이프라인 트리거' },\n  \n  // 재실행\n  'repeat': { action: 'retry', description: '다시 실행' },\n  'arrows_counterclockwise': { action: 'retry', description: '다시 실행' },\n  \n  // 공유\n  'speech_balloon': { action: 'share_thread', description: '스레드 공유' },\n  'envelope': { action: 'share_dm', description: 'DM으로 공유' }\n};\n\nconst body = $input.item.json.body || $input.item.json;\nconst eventType = body.type || body.event?.type;\nconst reaction = body.reaction || body.event?.reaction;\nconst userId = body.user || body.event?.user;\nconst itemTs = body.item?.ts || body.event?.item?.ts;\nconst channel = body.item?.channel || body.event?.item?.channel;\nconst itemType = body.item?.type || body.event?.item?.type;\n\n// reaction_added만 처리\nif (eventType !== 'reaction_added') {\n  return { json: { skip: true, reason: 'Not a reaction_added event' } };\n}\n\nconst actionConfig = REACTION_ACTIONS[reaction];\nif (!actionConfig) {\n  return { json: { skip: true, reason: `Unknown reaction: ${reaction}` } };\n}\n\nreturn {\n  json: {\n    skip: false,\n    action: actionConfig.action,\n    actionValue: actionConfig.value,\n    actionDescription: actionConfig.description,\n    reaction: reaction,\n    userId: userId,\n    messageTs: itemTs,\n    channel: channel,\n    itemType: itemType,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "parse-reaction",
+      "name": "Parse Reaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "should-process",
+      "name": "Should Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "feedback",
+              "outputKey": "feedback"
+            },
+            {
+              "value": "review",
+              "outputKey": "review"
+            },
+            {
+              "value": "analyze",
+              "outputKey": "analyze"
+            },
+            {
+              "value": "jira_create",
+              "outputKey": "jira"
+            },
+            {
+              "value": "gitlab_mr",
+              "outputKey": "gitlab"
+            },
+            {
+              "value": "gitlab_pipeline",
+              "outputKey": "gitlab"
+            },
+            {
+              "value": "retry",
+              "outputKey": "retry"
+            },
+            {
+              "value": "save",
+              "outputKey": "bookmark"
+            },
+            {
+              "value": "pin",
+              "outputKey": "bookmark"
+            }
+          ],
+          "fallbackOutput": "other"
+        },
+        "dataPropertyName": "={{ $json.action }}"
+      },
+      "id": "route-action",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/feedback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messageTs: $json.messageTs, userId: $json.userId, reaction: $json.reaction, action: 'upsert', value: $json.actionValue }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "handle-feedback",
+      "name": "Handle Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, threadTs: $json.messageTs, userId: $json.userId, message: '코드 리뷰를 요청합니다. 분석을 시작합니다...', agentHint: 'code-reviewer' }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "handle-review",
+      "name": "Handle Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, threadTs: $json.messageTs, userId: $json.userId, message: '상세 분석을 요청합니다...', agentHint: 'general' }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "handle-analyze",
+      "name": "Handle Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source: 'slack_reaction', messageTs: $json.messageTs, channel: $json.channel, requestedBy: $json.userId }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "handle-jira",
+      "name": "Handle Jira",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/gitlab/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: $json.action === 'gitlab_pipeline' ? 'trigger-pipeline' : 'mr-info', source: 'slack_reaction', messageTs: $json.messageTs }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "handle-gitlab",
+      "name": "Handle GitLab",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/executions/retry",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messageTs: $json.messageTs, channel: $json.channel, requestedBy: $json.userId }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "handle-retry",
+      "name": "Handle Retry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 600],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/bookmarks",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ type: $json.action, messageTs: $json.messageTs, channel: $json.channel, userId: $json.userId }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "handle-bookmark",
+      "name": "Handle Bookmark",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 700],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 로깅용 - 처리되지 않은 액션\nconsole.log('Unhandled action:', $json.action);\nreturn { json: { handled: false, action: $json.action } };"
+      },
+      "id": "handle-other",
+      "name": "Handle Other",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 800]
+    },
+    {
+      "parameters": {},
+      "id": "no-op",
+      "name": "Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [850, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Slack 응답 알림 전송\nconst action = $('Parse Reaction').item.json.action;\nconst channel = $('Parse Reaction').item.json.channel;\nconst userId = $('Parse Reaction').item.json.userId;\n\nreturn {\n  json: {\n    success: true,\n    action: action,\n    message: `Action '${action}' processed for user ${userId}`\n  }\n};"
+      },
+      "id": "log-result",
+      "name": "Log Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Parse Reaction", "type": "main", "index": 0 }]]
+    },
+    "Parse Reaction": {
+      "main": [[{ "node": "Should Process?", "type": "main", "index": 0 }]]
+    },
+    "Should Process?": {
+      "main": [
+        [{ "node": "Route by Action", "type": "main", "index": 0 }],
+        [{ "node": "Skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "Route by Action": {
+      "main": [
+        [{ "node": "Handle Feedback", "type": "main", "index": 0 }],
+        [{ "node": "Handle Review", "type": "main", "index": 0 }],
+        [{ "node": "Handle Analyze", "type": "main", "index": 0 }],
+        [{ "node": "Handle Jira", "type": "main", "index": 0 }],
+        [{ "node": "Handle GitLab", "type": "main", "index": 0 }],
+        [{ "node": "Handle Retry", "type": "main", "index": 0 }],
+        [{ "node": "Handle Bookmark", "type": "main", "index": 0 }],
+        [{ "node": "Handle Other", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handle Feedback": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    },
+    "Handle Review": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    },
+    "Handle Analyze": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    },
+    "Handle Jira": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    },
+    "Handle GitLab": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    },
+    "Handle Retry": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    },
+    "Handle Bookmark": {
+      "main": [[{ "node": "Log Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

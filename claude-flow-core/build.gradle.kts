@@ -7,6 +7,27 @@ dependencies {
     // JSON Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
+    // Jackson for JSON
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
+
     // DateTime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
+
+    // SQLite
+    implementation("org.xerial:sqlite-jdbc:3.45.1.0")
+
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+
+    // Logging
+    implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")
+
+    // Test dependencies
+    testImplementation("io.kotest:kotest-runner-junit5:5.8.0")
+    testImplementation("io.kotest:kotest-assertions-core:5.8.0")
+    testImplementation("io.mockk:mockk:1.13.9")
+}
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
 }

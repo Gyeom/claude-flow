@@ -23,6 +23,11 @@ claude-flow:
     max-tokens: ${CLAUDE_MAX_TOKENS:4096}
     timeout-seconds: ${CLAUDE_TIMEOUT:300}
 
+  # 작업 디렉토리 (여러 프로젝트의 상위 디렉토리)
+  # Claude가 알아서 하위 프로젝트를 탐색함
+  workspace:
+    path: ${WORKSPACE_PATH:/workspace}
+
 management:
   endpoints:
     web:
@@ -35,4 +40,6 @@ management:
 logging:
   level:
     ai.claudeflow: DEBUG
-    com.slack.api: INFO
+    com.slack.api: DEBUG
+    com.slack.api.bolt: DEBUG
+    com.slack.api.socket_mode: DEBUG

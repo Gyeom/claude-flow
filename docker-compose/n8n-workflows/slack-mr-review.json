@@ -1,0 +1,365 @@
+{
+  "name": "Slack MR Review Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-mr-review",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "slack-mr-review"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Slack 메시지에서 MR 번호와 프로젝트 추출\nconst body = $input.item.json.body;\nconst text = body.text || '';\n\n// 프로젝트 패턴: authorization-server, ccds-server, vlc-gateway-server 등\nconst projectPatterns = [\n  /([a-z-]+)-server/i,\n  /([a-z-]+)\\s+!\\d+/i,\n  /([a-z-]+)\\s+MR/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase();\n    break;\n  }\n}\n\n// MR 번호 패턴: !123, MR 123, MR#123, merge_requests/123\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests\\/([0-9]+)/i\n];\n\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = parseInt(match[1]);\n    break;\n  }\n}\n\nif (!mrNumber) {\n  return { json: { error: 'MR 번호를 찾을 수 없습니다. \"!123\" 또는 \"MR 123\" 형식으로 입력해주세요.', channel: body.channel, threadTs: body.threadTs || body.timestamp } };\n}\n\nreturn {\n  json: {\n    mr_iid: mrNumber,\n    project_hint: projectHint,\n    channel: body.channel,\n    threadTs: body.threadTs || body.timestamp,\n    timestamp: body.timestamp,\n    user: body.user,\n    text: text\n  }\n};"
+      },
+      "id": "extract-mr",
+      "name": "Extract MR Number",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error }}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "has-mr",
+      "name": "Has MR?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, timestamp: $json.timestamp, emoji: 'hourglass_flowing_sand', remove: false }) }}"
+      },
+      "id": "add-loading",
+      "name": "Add Loading",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/groups/{{ encodeURIComponent($env.GITLAB_GROUP) }}/merge_requests",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "state", "value": "all" },
+            { "name": "per_page", "value": "100" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "get-mrs",
+      "name": "Get Group MRs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1040, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{GITLAB_CREDENTIAL_ID}}",
+          "name": "GitLab Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MR 번호로 해당 MR 찾기\nconst mrIid = $('Extract MR Number').item.json.mr_iid;\nconst projectHint = $('Extract MR Number').item.json.project_hint;\nconst allMrs = $input.all().map(i => i.json);\n\n// 동일한 IID를 가진 MR 찾기\nlet candidates = allMrs.filter(mr => mr.iid === mrIid);\n\n// 프로젝트 힌트가 있으면 필터링\nif (projectHint && candidates.length > 1) {\n  const filtered = candidates.filter(mr => {\n    const projectPath = (mr.references?.full || mr.web_url || '').toLowerCase();\n    return projectPath.includes(projectHint);\n  });\n  if (filtered.length > 0) candidates = filtered;\n}\n\nif (candidates.length === 0) {\n  return { json: { error: `MR !${mrIid}를 찾을 수 없습니다.` } };\n}\n\n// 가장 최근 MR 선택\nconst mr = candidates.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];\nreturn { json: mr };"
+      },
+      "id": "find-mr",
+      "name": "Find MR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.iid }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "mr-exists",
+      "name": "MR Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1440, 200]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $json.project_id }}/merge_requests/{{ $json.iid }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ add_labels: 'ai-review::in-progress' }) }}",
+        "options": {}
+      },
+      "id": "label-in-progress",
+      "name": "Mark In Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1640, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{GITLAB_CREDENTIAL_ID}}",
+          "name": "GitLab Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $json.project_id }}/merge_requests/{{ $json.iid }}/changes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": { "timeout": 30000 }
+      },
+      "id": "get-changes",
+      "name": "Get Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1840, 100],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{GITLAB_CREDENTIAL_ID}}",
+          "name": "GitLab Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MR 정보와 Changes를 합쳐서 프롬프트 생성\nconst changesData = $input.item.json;\nconst mr = changesData;\nconst slackData = $('Extract MR Number').first().json;\n\n// 변경된 파일 diff 요약 (최대 10개 파일, 각 1000자)\nconst changes = changesData.changes || [];\nlet diffSummary = `총 ${changes.length}개 파일 변경됨 (상위 10개만 표시)\\n`;\nfor (const change of changes.slice(0, 10)) {\n  diffSummary += `\\n### ${change.new_path}\\n`;\n  if (change.diff) {\n    const truncatedDiff = change.diff.length > 1000 \n      ? change.diff.substring(0, 1000) + '\\n... (truncated)' \n      : change.diff;\n    diffSummary += '```diff\\n' + truncatedDiff + '\\n```\\n';\n  }\n}\n\n// 프롬프트 빌드\nlet prompt = `Review MR !${mr.iid}: ${mr.title}\\n\\n`;\nprompt += `**Branch**: \\`${mr.source_branch}\\` → \\`${mr.target_branch}\\`\\n`;\nprompt += `**Author**: ${mr.author?.username || mr.author?.name}\\n`;\nprompt += `**URL**: ${mr.web_url}\\n`;\n\nif (mr.description) {\n  prompt += `\\n**Description**:\\n${mr.description.slice(0, 500)}\\n`;\n}\n\nprompt += `\\n## Code Changes\\n${diffSummary}`;\n\nreturn {\n  json: {\n    mr_iid: mr.iid,\n    mr_title: mr.title,\n    mr_url: mr.web_url,\n    project_id: mr.project_id,\n    sha: mr.sha,\n    formatted_prompt: prompt,\n    channel: slackData.channel,\n    threadTs: slackData.threadTs,\n    timestamp: slackData.timestamp\n  }\n};"
+      },
+      "id": "build-prompt",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2040, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Execute Claude and preserve Build Prompt data\nconst buildPromptData = $input.item.json;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://host.docker.internal:8080/api/v1/execute-with-routing',\n  body: {\n    prompt: buildPromptData.formatted_prompt,\n    systemPrompt: 'You are a senior code reviewer. Review the merge request and provide:\\n1. verdict: \"approve\" (no issues), \"request_changes\" (blocking issues), or \"comment\" (suggestions only)\\n2. summary: 1-2 sentence summary in Korean\\n3. points: array of specific feedback points in Korean\\n4. gitlab_comment: formatted markdown comment for GitLab\\n\\nRespond in valid JSON format.',\n    maxTurns: 10,\n    channel: 'gitlab-review'\n  },\n  json: true,\n  timeout: 600000\n});\n\nreturn {\n  json: {\n    ...buildPromptData,\n    claudeResponse: response\n  }\n};"
+      },
+      "id": "execute-claude",
+      "name": "Execute Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Remove loading reaction and pass data through\nconst data = $input.item.json;\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://host.docker.internal:8080/api/v1/slack/reaction',\n    body: {\n      channel: data.channel,\n      timestamp: data.timestamp,\n      emoji: 'hourglass_flowing_sand',\n      remove: true\n    },\n    json: true\n  });\n} catch (e) {\n  // ignore reaction errors\n}\n\nreturn { json: data };"
+      },
+      "id": "remove-loading",
+      "name": "Remove Loading",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.claudeResponse?.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-success",
+      "name": "Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2640, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Claude 응답 파싱 - 모든 데이터가 현재 입력에 포함됨\nconst data = $input.item.json;\nconst rawResult = data.claudeResponse?.result || '';\n\nlet review = {\n  verdict: 'comment',\n  summary: '리뷰 완료',\n  points: [],\n  gitlab_comment: '## AI Code Review\\n\\n' + rawResult\n};\n\n// JSON 응답 파싱 시도\ntry {\n  const jsonMatch = rawResult.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    review = {\n      verdict: parsed.verdict || 'comment',\n      summary: parsed.summary || '리뷰 완료',\n      points: parsed.points || [],\n      gitlab_comment: parsed.gitlab_comment || ('## AI Code Review\\n\\n' + rawResult)\n    };\n  }\n} catch (e) {\n  // JSON 파싱 실패 시 원본 사용\n}\n\nconst verdictEmoji = { approve: ':white_check_mark:', request_changes: ':warning:', comment: ':speech_balloon:' };\nconst emoji = verdictEmoji[review.verdict] || ':speech_balloon:';\n\nif (!review.gitlab_comment.startsWith('##')) {\n  review.gitlab_comment = `## ${emoji} AI Code Review\\n\\n${review.gitlab_comment}`;\n}\nreview.gitlab_comment += '\\n\\n---\\n_Generated by Claude Flow_';\n\n// Slack 메시지 빌드\nconst header = `${emoji} <${data.mr_url}|!${data.mr_iid}> ${data.mr_title}`;\nconst summary = review.summary;\nconst points = (review.points || []).slice(0, 5).map(p => `• ${p}`).join('\\n');\nlet slackMessage = header + '\\n' + summary;\nif (points) slackMessage += '\\n' + points;\n\nreturn { json: { ...data, review, slackMessage } };"
+      },
+      "id": "parse-review",
+      "name": "Parse Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2840, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Post GitLab comment and pass data through\nconst data = $input.item.json;\nconst gitlabUrl = process.env.GITLAB_URL || 'https://gitlab.example.com';\nconst gitlabToken = process.env.GITLAB_TOKEN || '';\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${gitlabUrl}/api/v4/projects/${data.project_id}/merge_requests/${data.mr_iid}/notes`,\n    headers: { 'PRIVATE-TOKEN': gitlabToken },\n    body: { body: data.review.gitlab_comment },\n    json: true\n  });\n} catch (e) {\n  console.log('Post GitLab error:', e.message);\n}\n\nreturn { json: data };"
+      },
+      "id": "post-gitlab",
+      "name": "Post GitLab",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3040, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Final step: Post Slack, Update GitLab Labels, Add Success Reaction\nconst data = $input.item.json;\nconst gitlabUrl = process.env.GITLAB_URL || 'https://gitlab.example.com';\nconst gitlabToken = process.env.GITLAB_TOKEN || '';\n\n// 1. Post Slack message\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://host.docker.internal:8080/api/v1/slack/message',\n    body: {\n      channel: data.channel,\n      text: data.slackMessage,\n      threadTs: data.threadTs\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Post Slack error:', e.message);\n}\n\n// 2. Update GitLab labels\ntry {\n  await this.helpers.httpRequest({\n    method: 'PUT',\n    url: `${gitlabUrl}/api/v4/projects/${data.project_id}/merge_requests/${data.mr_iid}`,\n    headers: { 'PRIVATE-TOKEN': gitlabToken },\n    body: {\n      add_labels: 'ai-review::done',\n      remove_labels: 'ai-review::in-progress'\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Mark Done error:', e.message);\n}\n\n// 3. Add success reaction\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://host.docker.internal:8080/api/v1/slack/reaction',\n    body: {\n      channel: data.channel,\n      timestamp: data.timestamp,\n      emoji: 'white_check_mark',\n      remove: false\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Add Success error:', e.message);\n}\n\nreturn { json: { success: true } };"
+      },
+      "id": "post-slack-success",
+      "name": "Complete Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3240, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: ':x: MR 리뷰 실패: ' + ($json.claudeResponse?.error || 'Unknown error'), threadTs: $json.threadTs }) }}"
+      },
+      "id": "post-slack-error",
+      "name": "Post Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2840, 200],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $json.project_id }}/merge_requests/{{ $json.mr_iid }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ add_labels: 'ai-review::failed', remove_labels: 'ai-review::in-progress' }) }}",
+        "options": {}
+      },
+      "id": "label-failed",
+      "name": "Mark Failed",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3040, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "{{GITLAB_CREDENTIAL_ID}}",
+          "name": "GitLab Token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// MR Not Found - Extract MR Number 데이터 조회\nconst extractData = $('Extract MR Number').first().json;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://host.docker.internal:8080/api/v1/slack/message',\n  body: {\n    channel: extractData.channel,\n    text: ':x: MR을 찾을 수 없습니다: !' + extractData.mr_iid,\n    threadTs: extractData.threadTs\n  },\n  json: true\n});\n\nreturn { json: { sent: true } };"
+      },
+      "id": "mr-not-found",
+      "name": "MR Not Found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.error, threadTs: $json.threadTs }) }}"
+      },
+      "id": "no-mr-error",
+      "name": "No MR Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 400],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Extract MR Number", "type": "main", "index": 0 }]]
+    },
+    "Extract MR Number": {
+      "main": [[{ "node": "Has MR?", "type": "main", "index": 0 }]]
+    },
+    "Has MR?": {
+      "main": [
+        [{ "node": "Add Loading", "type": "main", "index": 0 }],
+        [{ "node": "No MR Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add Loading": {
+      "main": [[{ "node": "Get Group MRs", "type": "main", "index": 0 }]]
+    },
+    "Get Group MRs": {
+      "main": [[{ "node": "Find MR", "type": "main", "index": 0 }]]
+    },
+    "Find MR": {
+      "main": [[{ "node": "MR Exists?", "type": "main", "index": 0 }]]
+    },
+    "MR Exists?": {
+      "main": [
+        [{ "node": "Mark In Progress", "type": "main", "index": 0 }],
+        [{ "node": "MR Not Found", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark In Progress": {
+      "main": [[{ "node": "Get Changes", "type": "main", "index": 0 }]]
+    },
+    "Get Changes": {
+      "main": [[{ "node": "Build Prompt", "type": "main", "index": 0 }]]
+    },
+    "Build Prompt": {
+      "main": [[{ "node": "Execute Claude", "type": "main", "index": 0 }]]
+    },
+    "Execute Claude": {
+      "main": [[{ "node": "Remove Loading", "type": "main", "index": 0 }]]
+    },
+    "Remove Loading": {
+      "main": [[{ "node": "Success?", "type": "main", "index": 0 }]]
+    },
+    "Success?": {
+      "main": [
+        [{ "node": "Parse Review", "type": "main", "index": 0 }],
+        [{ "node": "Post Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Review": {
+      "main": [[{ "node": "Post GitLab", "type": "main", "index": 0 }]]
+    },
+    "Post GitLab": {
+      "main": [[{ "node": "Complete Review", "type": "main", "index": 0 }]]
+    },
+    "Post Error": {
+      "main": [[{ "node": "Mark Failed", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

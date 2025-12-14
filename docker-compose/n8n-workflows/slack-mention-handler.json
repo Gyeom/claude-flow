@@ -1,18 +1,113 @@
 {
   "name": "Slack Mention Handler",
+  "versionId": "mention-handler-v3",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "slack-mention",
         "responseMode": "onReceived",
-        "responseData": "allEntries"
+        "options": {}
       },
       "id": "webhook-trigger",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [250, 300]
+      "position": [250, 300],
+      "webhookId": "slack-mention"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 메시지 유형 분류: command, mr-review, general\nconst body = $input.item.json.body;\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  return { json: { ...body, messageType: 'command' } };\n}\n\n// 2. MR 리뷰 요청 체크\n// 패턴: !123, MR 123, MR#123, 리뷰 + MR번호\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\nconst reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인'];\nconst hasMrNumber = mrPatterns.some(p => p.test(text));\nconst hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k));\n\nif (hasMrNumber && hasReviewKeyword) {\n  return { json: { ...body, messageType: 'mr-review' } };\n}\n\n// 3. 일반 메시지\nreturn { json: { ...body, messageType: 'general' } };"
+      },
+      "id": "classify-message",
+      "name": "Classify Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.messageType }}",
+              "operation": "notEquals",
+              "value2": "command"
+            }
+          ]
+        }
+      },
+      "id": "is-command",
+      "name": "Is Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.messageType }}",
+              "operation": "equals",
+              "value2": "mr-review"
+            }
+          ]
+        }
+      },
+      "id": "is-mr-review",
+      "name": "Is MR Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/command",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Webhook').item.json.body.text, channel: $('Webhook').item.json.body.channel }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "execute-command",
+      "name": "Execute Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 150],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: $json.response || '명령어 처리 중 오류가 발생했습니다.', threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
+      },
+      "id": "send-command-response",
+      "name": "Send Command Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1150, 150],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/slack-mr-review",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Webhook').item.json.body) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "redirect-mr-review",
+      "name": "Redirect to MR Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -20,30 +115,56 @@
         "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, timestamp: $json.timestamp, emoji: 'hourglass_flowing_sand', remove: false }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'hourglass_flowing_sand', remove: false }) }}"
       },
       "id": "add-loading",
       "name": "Add Loading",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [450, 300]
+      "position": [1100, 500],
+      "continueOnFail": true
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "url": "http://host.docker.internal:8080/api/v1/slack/thread-history",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, systemPrompt: 'You are a helpful AI assistant. Answer in Korean if the user asks in Korean. Be concise and accurate.', maxTurns: 5 }) }}",
-        "options": {
-          "timeout": 300000
-        }
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp, limit: 20 }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "get-thread-history",
+      "name": "Get Thread History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 스레드 히스토리를 대화 형식으로 변환\nconst webhookBody = $('Webhook').item.json.body;\nconst historyResponse = $input.item.json;\n\nlet conversationHistory = [];\n\nif (historyResponse && historyResponse.success && historyResponse.messages && historyResponse.messages.length > 1) {\n  const previousMessages = historyResponse.messages.slice(0, -1);\n  conversationHistory = previousMessages.map(msg => ({\n    role: msg.isBot ? 'assistant' : 'user',\n    content: msg.text.replace(/<@[A-Z0-9]+>/g, '').trim(),\n    userName: msg.userName || msg.user\n  })).filter(msg => msg.content.length > 0);\n}\n\nreturn {\n  json: {\n    channel: webhookBody.channel,\n    text: webhookBody.text,\n    threadTs: webhookBody.threadTs || webhookBody.timestamp,\n    timestamp: webhookBody.timestamp,\n    user: webhookBody.user,\n    conversationHistory: conversationHistory\n  }\n};"
+      },
+      "id": "format-history",
+      "name": "Format History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute-with-routing",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, maxTurns: 50, conversationHistory: $json.conversationHistory, channel: $json.channel }) }}",
+        "options": { "timeout": 300000 }
       },
       "id": "execute-claude",
       "name": "Execute Claude",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [650, 300]
+      "position": [1700, 500],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -51,20 +172,21 @@
         "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, timestamp: $('Webhook').item.json.timestamp, emoji: 'hourglass_flowing_sand', remove: true }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'hourglass_flowing_sand', remove: true }) }}"
       },
       "id": "remove-loading",
       "name": "Remove Loading",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [850, 300]
+      "position": [1900, 500],
+      "continueOnFail": true
     },
     {
       "parameters": {
         "conditions": {
           "boolean": [
             {
-              "value1": "={{ $json.success }}",
+              "value1": "={{ $json.success === true }}",
               "value2": true
             }
           ]
@@ -74,7 +196,7 @@
       "name": "Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1050, 300]
+      "position": [2100, 500]
     },
     {
       "parameters": {
@@ -82,13 +204,14 @@
         "url": "http://host.docker.internal:8080/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, text: $('Execute Claude').item.json.result || 'No response', threadTs: $('Webhook').item.json.threadTs || $('Webhook').item.json.timestamp }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ($('Execute Claude').item.json.projectId ? '📁 [' + $('Execute Claude').item.json.projectId + '] ' : '') + ($('Execute Claude').item.json.routedAgent ? '🤖 [' + $('Execute Claude').item.json.routedAgent + ']\\n' : '') + ($('Execute Claude').item.json.result || $('Execute Claude').item.json.error || '응답이 없습니다. 도구 권한이나 작업 범위를 확인해주세요.'), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
       },
       "id": "send-reply",
       "name": "Send Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1250, 200]
+      "position": [2300, 400],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -96,13 +219,14 @@
         "url": "http://host.docker.internal:8080/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, text: '❌ 오류가 발생했습니다: ' + ($('Execute Claude').item.json.error || 'Unknown error'), threadTs: $('Webhook').item.json.threadTs || $('Webhook').item.json.timestamp }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '❌ 오류가 발생했습니다: ' + ($('Execute Claude').item.json.error || $('Execute Claude').item.json.message || 'Unknown error'), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
       },
       "id": "send-error",
       "name": "Send Error",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1250, 400]
+      "position": [2300, 600],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -110,13 +234,14 @@
         "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, timestamp: $('Webhook').item.json.timestamp, emoji: 'white_check_mark', remove: false }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'white_check_mark', remove: false }) }}"
       },
       "id": "add-success-reaction",
       "name": "Add ✅",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1450, 200]
+      "position": [2500, 350],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -124,35 +249,82 @@
         "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.channel, timestamp: $('Webhook').item.json.timestamp, emoji: 'x', remove: false }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'x', remove: false }) }}"
       },
       "id": "add-error-reaction",
       "name": "Add ❌",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1450, 400]
+      "position": [2500, 600],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Send Reply').item.json.timestamp, emoji: 'thumbsup', remove: false }) }}"
+      },
+      "id": "add-thumbsup",
+      "name": "Add 👍",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2700, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Send Reply').item.json.timestamp, emoji: 'thumbsdown', remove: false }) }}"
+      },
+      "id": "add-thumbsdown",
+      "name": "Add 👎",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2700, 400],
+      "continueOnFail": true
     }
   ],
   "connections": {
     "Webhook": {
+      "main": [[{ "node": "Classify Message", "type": "main", "index": 0 }]]
+    },
+    "Classify Message": {
+      "main": [[{ "node": "Is Command?", "type": "main", "index": 0 }]]
+    },
+    "Is Command?": {
       "main": [
+        [{ "node": "Is MR Review?", "type": "main", "index": 0 }],
+        [{ "node": "Execute Command", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is MR Review?": {
+      "main": [
+        [{ "node": "Redirect to MR Review", "type": "main", "index": 0 }],
         [{ "node": "Add Loading", "type": "main", "index": 0 }]
       ]
     },
+    "Execute Command": {
+      "main": [[{ "node": "Send Command Response", "type": "main", "index": 0 }]]
+    },
     "Add Loading": {
-      "main": [
-        [{ "node": "Execute Claude", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Get Thread History", "type": "main", "index": 0 }]]
+    },
+    "Get Thread History": {
+      "main": [[{ "node": "Format History", "type": "main", "index": 0 }]]
+    },
+    "Format History": {
+      "main": [[{ "node": "Execute Claude", "type": "main", "index": 0 }]]
     },
     "Execute Claude": {
-      "main": [
-        [{ "node": "Remove Loading", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Remove Loading", "type": "main", "index": 0 }]]
     },
     "Remove Loading": {
-      "main": [
-        [{ "node": "Success?", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Success?", "type": "main", "index": 0 }]]
     },
     "Success?": {
       "main": [
@@ -161,14 +333,16 @@
       ]
     },
     "Send Reply": {
-      "main": [
-        [{ "node": "Add ✅", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Add ✅", "type": "main", "index": 0 }]]
     },
     "Send Error": {
-      "main": [
-        [{ "node": "Add ❌", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "Add ❌", "type": "main", "index": 0 }]]
+    },
+    "Add ✅": {
+      "main": [[
+        { "node": "Add 👍", "type": "main", "index": 0 },
+        { "node": "Add 👎", "type": "main", "index": 0 }
+      ]]
     }
   },
   "active": true,

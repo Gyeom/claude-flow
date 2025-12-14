@@ -2,16 +2,14 @@ package ai.claudeflow.executor
 
 import ai.claudeflow.core.model.ClaudeConfig
 import ai.claudeflow.core.model.OutputFormat
-import ai.claudeflow.core.model.PermissionMode
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import mu.KotlinLogging
 import java.io.File
 import java.util.UUID
-import kotlin.time.Duration.Companion.seconds
+import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
 
@@ -23,15 +21,14 @@ private val logger = KotlinLogging.logger {}
 class ClaudeExecutor(
     private val defaultConfig: ClaudeConfig = ClaudeConfig()
 ) {
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
+    private val objectMapper = jacksonObjectMapper().apply {
+        configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
 
     /**
-     * Claude CLI 실행
+     * Claude CLI 실행 (블로킹)
      */
-    suspend fun execute(request: ExecutionRequest): ExecutionResult {
+    fun execute(request: ExecutionRequest): ExecutionResult {
         val requestId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
 
@@ -50,26 +47,21 @@ class ClaudeExecutor(
 
         // CLI 인자 구성
         val args = buildArgs(request)
-        logger.debug { "[$requestId] CLI args: claude ${args.joinToString(" ")}" }
+        logger.info { "[$requestId] CLI args: claude ${args.joinToString(" ")}" }
 
-        return withContext(Dispatchers.IO) {
-            val timeoutSeconds = request.config?.timeoutSeconds ?: defaultConfig.timeoutSeconds
+        val timeoutSeconds = (request.config?.timeoutSeconds ?: defaultConfig.timeoutSeconds).toLong()
 
-            val result = withTimeoutOrNull(timeoutSeconds.seconds) {
-                runProcess(args, workingDir, requestId)
-            }
-
-            if (result == null) {
-                logger.warn { "[$requestId] Execution timed out after ${timeoutSeconds}s" }
-                ExecutionResult(
-                    requestId = requestId,
-                    status = ExecutionStatus.TIMEOUT,
-                    error = "Execution timed out after ${timeoutSeconds} seconds",
-                    durationMs = System.currentTimeMillis() - startTime
-                )
-            } else {
-                result.copy(durationMs = System.currentTimeMillis() - startTime)
-            }
+        return try {
+            val result = runProcess(args, workingDir, requestId, timeoutSeconds)
+            result.copy(durationMs = System.currentTimeMillis() - startTime)
+        } catch (e: Exception) {
+            logger.error(e) { "[$requestId] Execution failed" }
+            ExecutionResult(
+                requestId = requestId,
+                status = ExecutionStatus.ERROR,
+                error = "Execution failed: ${e.message}",
+                durationMs = System.currentTimeMillis() - startTime
+            )
         }
     }
 
@@ -86,13 +78,8 @@ class ClaudeExecutor(
         // 모델
         args.addAll(listOf("--model", request.model ?: config.model))
 
-        // 권한 모드
-        val permissionMode = when (config.permissionMode) {
-            PermissionMode.PLAN -> "plan"
-            PermissionMode.ACCEPT_EDITS -> "acceptEdits"
-            PermissionMode.DONT_ASK -> "dontAsk"
-        }
-        args.addAll(listOf("--permission-mode", permissionMode))
+        // 권한 모드 - 자동화 환경에서는 skip permissions 사용
+        args.add("--dangerously-skip-permissions")
 
         // max-turns
         request.maxTurns?.let {
@@ -122,42 +109,97 @@ class ClaudeExecutor(
         return args
     }
 
-    private suspend fun runProcess(
+    private fun findClaudePath(): String {
+        // 일반적인 Claude CLI 설치 경로들
+        val possiblePaths = listOf(
+            System.getenv("HOME") + "/.local/bin/claude",
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude",
+            "claude"  // fallback to PATH
+        )
+
+        for (path in possiblePaths) {
+            val file = File(path)
+            if (file.exists() && file.canExecute()) {
+                logger.info { "Found Claude CLI at: $path" }
+                return path
+            }
+        }
+
+        // PATH에서 찾기 시도
+        return "claude"
+    }
+
+    private fun runProcess(
         args: List<String>,
         workingDir: File?,
-        requestId: String
+        requestId: String,
+        timeoutSeconds: Long
     ): ExecutionResult {
-        return try {
-            val processBuilder = ProcessBuilder(listOf("claude") + args)
-                .apply {
-                    workingDir?.let { directory(it) }
-                    redirectErrorStream(false)
-                }
+        val claudePath = findClaudePath()
+        logger.info { "[$requestId] Running: $claudePath ${args.take(5).joinToString(" ")}..." }
 
-            val process = processBuilder.start()
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
-
-            logger.debug { "[$requestId] Exit code: $exitCode" }
-
-            if (exitCode == 0) {
-                parseSuccessResponse(stdout, requestId)
-            } else {
-                logger.error { "[$requestId] Claude CLI error: $stderr" }
-                ExecutionResult(
-                    requestId = requestId,
-                    status = ExecutionStatus.ERROR,
-                    error = stderr.ifEmpty { "Claude CLI exited with code $exitCode" },
-                    rawOutput = stdout
-                )
+        val processBuilder = ProcessBuilder(listOf(claudePath) + args)
+            .apply {
+                workingDir?.let { directory(it) }
+                redirectErrorStream(false)
+                // 환경변수 상속
+                environment().putAll(System.getenv())
             }
-        } catch (e: Exception) {
-            logger.error(e) { "[$requestId] Failed to execute Claude CLI" }
+
+        val process = processBuilder.start()
+
+        // stdin 닫기 (non-interactive 모드)
+        process.outputStream.close()
+
+        // stdout과 stderr를 별도 스레드에서 읽기
+        val stdoutBuilder = StringBuilder()
+        val stdoutThread = Thread {
+            process.inputStream.bufferedReader().use { reader ->
+                stdoutBuilder.append(reader.readText())
+            }
+        }.also { it.start() }
+
+        val stderrBuilder = StringBuilder()
+        val stderrThread = Thread {
+            process.errorStream.bufferedReader().use { reader ->
+                stderrBuilder.append(reader.readText())
+            }
+        }.also { it.start() }
+
+        // 프로세스 완료 대기 (타임아웃 적용)
+        val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+
+        if (!completed) {
+            process.destroyForcibly()
+            logger.warn { "[$requestId] Process timed out after ${timeoutSeconds}s" }
+            return ExecutionResult(
+                requestId = requestId,
+                status = ExecutionStatus.TIMEOUT,
+                error = "Execution timed out after ${timeoutSeconds} seconds"
+            )
+        }
+
+        // 스레드 완료 대기
+        stdoutThread.join(5000)
+        stderrThread.join(5000)
+
+        val stdout = stdoutBuilder.toString()
+        val stderr = stderrBuilder.toString()
+        val exitCode = process.exitValue()
+
+        logger.info { "[$requestId] Process completed with exit code: $exitCode" }
+        logger.debug { "[$requestId] stdout length: ${stdout.length}, stderr length: ${stderr.length}" }
+
+        return if (exitCode == 0) {
+            parseSuccessResponse(stdout, requestId)
+        } else {
+            logger.error { "[$requestId] Claude CLI error: $stderr" }
             ExecutionResult(
                 requestId = requestId,
                 status = ExecutionStatus.ERROR,
-                error = "Failed to spawn process: ${e.message}"
+                error = stderr.ifEmpty { "Claude CLI exited with code $exitCode" },
+                rawOutput = stdout
             )
         }
     }
@@ -165,7 +207,26 @@ class ClaudeExecutor(
     private fun parseSuccessResponse(output: String, requestId: String): ExecutionResult {
         return try {
             // JSON 출력인 경우 파싱 시도
-            val cliOutput = json.decodeFromString<ClaudeCliOutput>(output)
+            logger.debug { "[$requestId] Raw output: ${output.take(500)}..." }
+            val cliOutput = objectMapper.readValue<ClaudeCliOutput>(output)
+            logger.info { "[$requestId] Parsed - type: ${cliOutput.type}, subtype: ${cliOutput.subtype}, result length: ${cliOutput.result?.length ?: 0}" }
+
+            // error_max_turns 등의 에러 subtype 처리
+            if (cliOutput.subtype?.startsWith("error_") == true) {
+                val errorMessage = when (cliOutput.subtype) {
+                    "error_max_turns" -> "작업이 max-turns 제한(${cliOutput.usage?.let { "(input: ${it.inputTokens}, output: ${it.outputTokens} tokens)" } ?: ""})에 도달했습니다. 더 간단한 작업으로 나누어 시도해주세요."
+                    else -> "Claude CLI error: ${cliOutput.subtype}"
+                }
+                logger.warn { "[$requestId] Claude CLI returned error subtype: ${cliOutput.subtype}" }
+                return ExecutionResult(
+                    requestId = requestId,
+                    status = ExecutionStatus.ERROR,
+                    error = errorMessage,
+                    rawOutput = output,
+                    usage = cliOutput.usage
+                )
+            }
+
             ExecutionResult(
                 requestId = requestId,
                 status = ExecutionStatus.SUCCESS,
@@ -175,7 +236,8 @@ class ClaudeExecutor(
             )
         } catch (e: Exception) {
             // JSON 파싱 실패 시 원문 반환
-            logger.debug { "[$requestId] Output is not JSON, returning raw text" }
+            logger.warn { "[$requestId] Output is not JSON, returning raw text: ${e.message}" }
+            logger.debug { "[$requestId] Raw output for fallback: ${output.take(200)}..." }
             ExecutionResult(
                 requestId = requestId,
                 status = ExecutionStatus.SUCCESS,
@@ -222,15 +284,17 @@ enum class ExecutionStatus {
 /**
  * Claude CLI JSON 출력 구조
  */
-@Serializable
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class ClaudeCliOutput(
+    val type: String? = null,
+    val subtype: String? = null,
     val result: String? = null,
     val usage: TokenUsage? = null,
     val cost: Double? = null,
     val sessionId: String? = null
 )
 
-@Serializable
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class TokenUsage(
     val inputTokens: Int = 0,
     val outputTokens: Int = 0,

@@ -1,0 +1,263 @@
+{
+  "name": "Slack Action Handler",
+  "versionId": "action-handler-v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-action",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "slack-action"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.body.channel, timestamp: $json.body.timestamp, emoji: 'gear', remove: false }) }}"
+      },
+      "id": "add-processing",
+      "name": "Add Processing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Webhook').item.json.body.action.actionType }}",
+              "operation": "equals",
+              "value2": "create_ticket"
+            }
+          ]
+        }
+      },
+      "id": "is-jira",
+      "name": "Is Jira?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Webhook').item.json.body.action.actionType }}",
+              "operation": "equals",
+              "value2": "summarize"
+            }
+          ]
+        }
+      },
+      "id": "is-summarize",
+      "name": "Is Summarize?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/thread-history",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, threadTs: $('Webhook').item.json.body.action.targetMessageTs, limit: 50 }) }}"
+      },
+      "id": "get-context-jira",
+      "name": "Get Context (Jira)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/thread-history",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, threadTs: $('Webhook').item.json.body.action.targetMessageTs, limit: 50 }) }}"
+      },
+      "id": "get-context-summarize",
+      "name": "Get Context (Summarize)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 350]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: '다음 대화 내용을 바탕으로 Jira 티켓을 작성해줘. 제목, 설명, 우선순위를 포함해서 JSON 형식으로 응답해줘:\\n\\n' + $json.messages.map(m => m.userName + ': ' + m.text).join('\\n'), systemPrompt: 'You are a helpful assistant that creates Jira tickets from conversation context. Respond in JSON format with title, description, priority fields.', maxTurns: 1 }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "create-ticket-prompt",
+      "name": "Create Ticket Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1150, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: '다음 대화 내용을 요약해줘:\\n\\n' + $json.messages.map(m => m.userName + ': ' + m.text).join('\\n'), systemPrompt: 'You are a helpful assistant. Summarize the conversation concisely in Korean.', maxTurns: 1 }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "summarize-prompt",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1150, 350]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ':jira: *Jira 티켓 제안*\\n' + $json.result, threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"
+      },
+      "id": "send-ticket-reply",
+      "name": "Send Ticket Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ':memo: *요약*\\n' + $json.result, threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"
+      },
+      "id": "send-summary-reply",
+      "name": "Send Summary Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 350]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'gear', remove: true }) }}"
+      },
+      "id": "remove-processing-jira",
+      "name": "Remove Processing (Jira)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'gear', remove: true }) }}"
+      },
+      "id": "remove-processing-summarize",
+      "name": "Remove Processing (Summarize)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 350]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '지원되지 않는 액션입니다: ' + $('Webhook').item.json.body.action.actionType, threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"
+      },
+      "id": "unsupported-action",
+      "name": "Unsupported Action",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 550]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Add Processing", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add Processing": {
+      "main": [
+        [
+          { "node": "Is Jira?", "type": "main", "index": 0 },
+          { "node": "Is Summarize?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Is Jira?": {
+      "main": [
+        [{ "node": "Get Context (Jira)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Is Summarize?": {
+      "main": [
+        [{ "node": "Get Context (Summarize)", "type": "main", "index": 0 }],
+        [{ "node": "Unsupported Action", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Context (Jira)": {
+      "main": [
+        [{ "node": "Create Ticket Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Context (Summarize)": {
+      "main": [
+        [{ "node": "Summarize", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Ticket Prompt": {
+      "main": [
+        [{ "node": "Send Ticket Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Summarize": {
+      "main": [
+        [{ "node": "Send Summary Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Ticket Reply": {
+      "main": [
+        [{ "node": "Remove Processing (Jira)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Summary Reply": {
+      "main": [
+        [{ "node": "Remove Processing (Summarize)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

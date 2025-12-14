@@ -6,8 +6,8 @@ plugins {
 dependencies {
     implementation(project(":claude-flow-core"))
 
-    // JSON Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+    // JSON Serialization - Jackson
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.3")
 
     // Process execution
     implementation("org.zeroturnaround:zt-exec:1.12")

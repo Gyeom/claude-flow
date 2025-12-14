@@ -28,7 +28,7 @@ data class ClaudeConfig(
     val model: String = "claude-sonnet-4-20250514",
     val maxTokens: Int = 4096,
     val timeoutSeconds: Int = 300,
-    val permissionMode: PermissionMode = PermissionMode.PLAN,
+    val permissionMode: PermissionMode = PermissionMode.ACCEPT_EDITS,
     val outputFormat: OutputFormat = OutputFormat.JSON,
     val allowedTools: List<String> = emptyList(),
     val deniedTools: List<String> = emptyList()

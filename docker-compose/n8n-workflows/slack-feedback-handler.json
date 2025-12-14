@@ -1,0 +1,155 @@
+{
+  "name": "Slack Feedback Handler",
+  "versionId": "feedback-handler-v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-feedback",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "slack-feedback"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 피드백 이벤트 파싱\nconst body = $input.item.json.body || $input.item.json;\n\n// reaction_added 또는 reaction_removed 이벤트 확인\nconst eventType = body.type || body.event?.type;\nconst reaction = body.reaction || body.event?.reaction;\nconst userId = body.user || body.event?.user;\nconst itemTs = body.item?.ts || body.event?.item?.ts;\nconst channel = body.item?.channel || body.event?.item?.channel;\n\n// thumbsup/thumbsdown만 처리\nconst validReactions = ['thumbsup', 'thumbsdown', '+1', '-1'];\nif (!validReactions.includes(reaction)) {\n  return { json: { skip: true, reason: 'Not a feedback reaction' } };\n}\n\nconst action = eventType === 'reaction_added' ? 'upsert' : 'delete';\n\nreturn {\n  json: {\n    skip: false,\n    action: action,\n    reaction: reaction === '+1' ? 'thumbsup' : reaction === '-1' ? 'thumbsdown' : reaction,\n    userId: userId,\n    messageTs: itemTs,\n    channel: channel\n  }\n};"
+      },
+      "id": "parse-event",
+      "name": "Parse Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "should-process",
+      "name": "Should Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://host.docker.internal:8080/api/v1/executions/by-reply-ts",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "replyTs",
+              "value": "={{ $json.messageTs }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "find-execution",
+      "name": "Find Execution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 250],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.executionId != null }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "found-execution",
+      "name": "Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 250]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/feedback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ executionId: $('Find Execution').item.json.executionId, userId: $('Parse Event').item.json.userId, reaction: $('Parse Event').item.json.reaction, action: $('Parse Event').item.json.action }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "save-feedback",
+      "name": "Save Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {},
+      "id": "no-op-skip",
+      "name": "Skip (Not Feedback)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {},
+      "id": "no-op-not-found",
+      "name": "Skip (No Execution)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1250, 350]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Parse Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Event": {
+      "main": [
+        [{ "node": "Should Process?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Should Process?": {
+      "main": [
+        [{ "node": "Find Execution", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Not Feedback)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Find Execution": {
+      "main": [
+        [{ "node": "Found?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Found?": {
+      "main": [
+        [{ "node": "Save Feedback", "type": "main", "index": 0 }],
+        [{ "node": "Skip (No Execution)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
