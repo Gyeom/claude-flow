@@ -16,6 +16,9 @@ dependencies {
     // SQLite
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
 
+    // Caffeine Cache (high-performance in-memory cache)
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
 
