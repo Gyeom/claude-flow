@@ -16,27 +16,22 @@ services:
       - N8N_WEBHOOK_URL=http://n8n:5678
       - CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-20250514}
       - CLAUDE_TIMEOUT=${CLAUDE_TIMEOUT:-300}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       # 컨테이너 내부 작업 디렉토리
       - WORKSPACE_PATH=/workspace
-      # Qdrant 벡터 DB
-      - QDRANT_URL=http://qdrant:6333
-      # Ollama 임베딩 서비스
-      - OLLAMA_URL=http://ollama:11434
-      # GitLab/Jira 설정
+      # GitLab/Jira 설정 (optional)
       - GITLAB_URL=${GITLAB_URL:-}
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
       - JIRA_URL=${JIRA_URL:-}
       - JIRA_EMAIL=${JIRA_EMAIL:-}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      # Qdrant/Ollama (optional - SemanticRouter용)
+      - QDRANT_URL=${QDRANT_URL:-}
+      - OLLAMA_URL=${OLLAMA_URL:-}
     volumes:
-      # ~/42dot 전체를 /workspace로 마운트
-      - ${HOST_WORKSPACE:-~/42dot}:/workspace:rw
+      - ${HOST_WORKSPACE:-~/projects}:/workspace:rw
       - claude_flow_data:/app/data
     depends_on:
       - n8n
-      - qdrant
-      - ollama
     networks:
       - claude-flow-network
     restart: unless-stopped
@@ -74,59 +69,37 @@ services:
       - claude-flow-network
     restart: unless-stopped
 
-  # Qdrant 벡터 데이터베이스
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: claude-flow-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__GRPC_PORT=6334
-    networks:
-      - claude-flow-network
-    restart: unless-stopped
+  # ============================================
+  # Optional Services (uncomment if needed)
+  # ============================================
 
-  # Ollama 임베딩 서비스
-  ollama:
-    image: ollama/ollama:latest
-    container_name: claude-flow-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - claude-flow-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # GPU가 없는 환경에서는 위 deploy 섹션 제거
+  # Qdrant 벡터 데이터베이스 (SemanticRouter용)
+  # qdrant:
+  #   image: qdrant/qdrant:latest
+  #   container_name: claude-flow-qdrant
+  #   ports:
+  #     - "6333:6333"
+  #   volumes:
+  #     - qdrant_data:/qdrant/storage
+  #   networks:
+  #     - claude-flow-network
 
-  # Redis (세션/캐시용, 선택적)
-  redis:
-    image: redis:7-alpine
-    container_name: claude-flow-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      - claude-flow-network
-    restart: unless-stopped
+  # Ollama 임베딩 서비스 (SemanticRouter용)
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: claude-flow-ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   networks:
+  #     - claude-flow-network
 
 volumes:
   n8n_data:
-  qdrant_data:
-  ollama_data:
-  redis_data:
   claude_flow_data:
+  # qdrant_data:
+  # ollama_data:
 
 networks:
   claude-flow-network:

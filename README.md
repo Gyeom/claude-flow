@@ -65,18 +65,14 @@ cp .env.example .env
 SLACK_APP_TOKEN=xapp-xxx
 SLACK_BOT_TOKEN=xoxb-xxx
 SLACK_SIGNING_SECRET=xxx
-ANTHROPIC_API_KEY=sk-ant-xxx
 
 # Optional: GitLab MR Review
 GITLAB_URL=https://gitlab.example.com
 GITLAB_GROUP=my-org/my-group
 GITLAB_TOKEN=glpat-xxx
-
-# Optional: Jira Integration
-JIRA_URL=https://your-org.atlassian.net
-JIRA_EMAIL=your-email@example.com
-JIRA_API_TOKEN=xxx
 ```
+
+> **Note**: `ANTHROPIC_API_KEY`는 필요 없습니다. Claude CLI가 자체 인증(`claude login`)을 사용합니다.
 
 ### 3. 실행
 
@@ -135,12 +131,10 @@ claude-flow/
 
 - **Kotlin 2.1** + **Spring Boot 3.4**
 - **Slack Bolt for Java** (Socket Mode)
-- **Anthropic Claude API** (AI 추론)
+- **Claude CLI** (AI 추론, 자체 인증)
 - **Kotlin Coroutines** (비동기 처리)
 - **n8n** (워크플로우 오케스트레이션)
 - **React** + **Vite** + **TailwindCSS** (대시보드)
-- **Qdrant** (벡터 DB, 선택사항)
-- **Ollama** (임베딩, 선택사항)
 
 ## API 엔드포인트
 
