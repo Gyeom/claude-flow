@@ -35,3 +35,6 @@ docker-compose/n8n_data/
 # Node modules
 node_modules/
 dashboard/node_modules/
+data/
+dashboard/dist/
+.playwright-mcp/
