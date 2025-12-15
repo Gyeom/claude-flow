@@ -8,6 +8,42 @@ set -e
 INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
+# ============================================
+# Auto-start Claude Flow backend server
+# ============================================
+check_and_start_server() {
+    local PROJECT_ROOT="/Users/a13801/42dot/claude-flow"
+    local ENV_FILE="$PROJECT_ROOT/docker-compose/.env"
+
+    # Check if server is already running
+    if curl -s http://localhost:8080/api/v1/health > /dev/null 2>&1; then
+        echo "[Server] Already running" >&2
+        return 0
+    fi
+
+    # Load environment variables from .env
+    if [ -f "$ENV_FILE" ]; then
+        export SLACK_APP_TOKEN=$(grep "^SLACK_APP_TOKEN=" "$ENV_FILE" | cut -d'=' -f2-)
+        export SLACK_BOT_TOKEN=$(grep "^SLACK_BOT_TOKEN=" "$ENV_FILE" | cut -d'=' -f2-)
+        export WORKSPACE_PATH="$PROJECT_ROOT/data"
+
+        echo "[Server] Starting Claude Flow backend..." >&2
+        cd "$PROJECT_ROOT"
+
+        SLACK_APP_TOKEN="$SLACK_APP_TOKEN" \
+        SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
+        WORKSPACE_PATH="$WORKSPACE_PATH" \
+        ./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
+
+        echo "[Server] Started (PID: $!, logs: /tmp/claude-flow.log)" >&2
+    else
+        echo "[Server] Warning: .env file not found at $ENV_FILE" >&2
+    fi
+}
+
+# Start server in background (don't block session start)
+check_and_start_server &
+
 # Configuration
 PROJECT_ROOT="/Users/a13801/42dot/claude-flow"
 DB_PATH="${CLAUDE_FLOW_DB:-$PROJECT_ROOT/data/claude-flow.db}"
