@@ -509,7 +509,8 @@ class ClaudeFlowController(
                 model = request.model ?: match.agent.model,
                 maxTurns = request.maxTurns ?: DEFAULT_MAX_TURNS,
                 allowedTools = request.allowedTools ?: match.agent.allowedTools.takeIf { it.isNotEmpty() },
-                deniedTools = request.deniedTools
+                deniedTools = request.deniedTools,
+                agentId = match.agent.id
             )
 
             val result = claudeExecutor.execute(executionRequest)

@@ -61,22 +61,23 @@ data class Agent(
         val CODE_REVIEWER = Agent(
             id = "code-reviewer",
             name = "Code Reviewer",
-            description = "코드 리뷰를 수행하는 에이전트",
+            description = "코드 리뷰 및 MR/PR 작업을 수행하는 에이전트",
             keywords = listOf("review", "리뷰", "MR", "PR", "코드리뷰"),
             systemPrompt = """
-                You are a senior code reviewer.
-                Review code changes focusing on:
-                1. Security vulnerabilities
-                2. Performance issues
-                3. Code style and best practices
-                4. Potential bugs
+                You are a senior code reviewer and development assistant.
 
-                Provide constructive feedback in Korean.
+                You can:
+                1. Review code changes (security, performance, style, bugs)
+                2. Create branches and commits
+                3. Write documentation
+                4. Create merge requests / pull requests
 
-                IMPORTANT: Never mention internal modes (Plan Mode, EnterPlanMode, etc.) or discuss your internal process. Just provide the review directly.
+                Provide feedback in Korean. Be concise and actionable.
+
+                IMPORTANT: Never mention internal modes (Plan Mode, EnterPlanMode, etc.) or discuss your internal process. Just do the work directly.
             """.trimIndent(),
-            allowedTools = listOf("Read", "Grep", "Glob"),
-            priority = 100,  // 중간 우선순위
+            allowedTools = listOf("Read", "Write", "Edit", "Grep", "Glob", "Bash"),
+            priority = 100,
             examples = listOf(
                 "이 코드 리뷰해줘",
                 "MR 좀 봐줘",
@@ -84,6 +85,37 @@ data class Agent(
                 "PR 리뷰 해줘",
                 "이 변경사항 확인해줘",
                 "코드 품질 체크해줘"
+            )
+        )
+
+        val REFACTOR = Agent(
+            id = "refactor",
+            name = "Refactoring Expert",
+            description = "코드 리팩토링 분석 및 수행 에이전트",
+            keywords = listOf("refactor", "리팩토링", "리펙토링", "개선", "정리", "클린업", "cleanup"),
+            systemPrompt = """
+                You are a refactoring expert.
+
+                When asked to refactor code:
+                1. Analyze the codebase to identify improvement areas
+                2. Create a feature branch from the specified base branch
+                3. Document the refactoring plan
+                4. Implement changes incrementally
+                5. Create a merge request with clear description
+
+                Focus on: code duplication, complexity reduction, SOLID principles, testability.
+                Respond in Korean.
+
+                IMPORTANT: Never mention internal modes. Just do the refactoring work directly.
+            """.trimIndent(),
+            allowedTools = listOf("Read", "Write", "Edit", "Grep", "Glob", "Bash"),
+            priority = 150,
+            examples = listOf(
+                "리팩토링 해줘",
+                "코드 정리해줘",
+                "리팩토링 필요한 부분 찾아줘",
+                "코드 개선해줘",
+                "중복 코드 정리해줘"
             )
         )
 

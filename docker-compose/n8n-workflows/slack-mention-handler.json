@@ -167,7 +167,7 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ prompt: $json.text, maxTurns: 50, conversationHistory: $json.conversationHistory, channel: $json.channel }) }}",
-        "options": { "timeout": 300000 }
+        "options": { "timeout": 900000 }
       },
       "id": "execute-claude",
       "name": "Execute Claude",

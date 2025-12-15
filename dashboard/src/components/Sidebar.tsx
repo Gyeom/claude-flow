@@ -14,6 +14,7 @@ import {
   Puzzle,
   Users,
   Workflow,
+  ScrollText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
@@ -21,6 +22,7 @@ import { ThemeToggle } from './ThemeToggle'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Executions', href: '/executions', icon: History },
+  { name: 'Live Logs', href: '/logs', icon: ScrollText },
   { name: 'History', href: '/history', icon: Clock },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Classify', href: '/classify', icon: Target },

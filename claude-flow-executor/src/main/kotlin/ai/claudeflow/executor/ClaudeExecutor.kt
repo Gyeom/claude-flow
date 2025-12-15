@@ -1,5 +1,6 @@
 package ai.claudeflow.executor
 
+import ai.claudeflow.core.log.ExecutionLogManager
 import ai.claudeflow.core.model.ClaudeConfig
 import ai.claudeflow.core.model.OutputFormat
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
@@ -31,6 +32,9 @@ class ClaudeExecutor(
     private val objectMapper = jacksonObjectMapper().apply {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
+
+    // 로그 매니저
+    private val logManager = ExecutionLogManager.instance
 
     // Session 캐시: key = userId:threadTs, value = sessionId
     private val sessionCache = ConcurrentHashMap<String, SessionInfo>()
@@ -68,11 +72,18 @@ class ClaudeExecutor(
         val requestId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
 
-        logger.info { "[$requestId] Starting Claude execution (async): ${request.prompt.take(50)}..." }
+        logManager.agentStart(requestId, request.agentId ?: "unknown", request.prompt)
+        logManager.info(requestId, "Starting Claude execution", mapOf(
+            "prompt" to request.prompt.take(100),
+            "workingDirectory" to request.workingDirectory,
+            "model" to request.model,
+            "maxTurns" to request.maxTurns
+        ))
 
         // 작업 디렉토리 검증
         val workingDir = request.workingDirectory?.let { File(it) }
         if (workingDir != null && !workingDir.exists()) {
+            logManager.error(requestId, "Working directory does not exist: ${request.workingDirectory}")
             return@withContext ExecutionResult(
                 requestId = requestId,
                 status = ExecutionStatus.ERROR,
@@ -87,37 +98,45 @@ class ClaudeExecutor(
 
         // CLI 인자 구성
         val args = buildArgs(request, existingSession?.sessionId)
-        logger.info { "[$requestId] CLI args: claude ${args.joinToString(" ")}" }
+        logManager.info(requestId, "CLI args prepared", mapOf("args" to args.take(10).joinToString(" ")))
         if (existingSession != null) {
-            logger.info { "[$requestId] Resuming session: ${existingSession.sessionId}" }
+            logManager.info(requestId, "Resuming session: ${existingSession.sessionId}")
         }
 
         val timeoutSeconds = (request.config?.timeoutSeconds ?: defaultConfig.timeoutSeconds).toLong()
+        logManager.info(requestId, "Timeout set to ${timeoutSeconds}s")
 
         try {
             val result = withTimeoutOrNull(timeoutSeconds * 1000L) {
                 runProcessAsync(args, workingDir, requestId, timeoutSeconds)
-            } ?: ExecutionResult(
-                requestId = requestId,
-                status = ExecutionStatus.TIMEOUT,
-                error = "Execution timed out after ${timeoutSeconds} seconds"
-            )
+            } ?: run {
+                logManager.error(requestId, "Execution timed out after ${timeoutSeconds}s")
+                ExecutionResult(
+                    requestId = requestId,
+                    status = ExecutionStatus.TIMEOUT,
+                    error = "Execution timed out after ${timeoutSeconds} seconds"
+                )
+            }
 
             // Session ID 저장 (성공 시)
             if (result.status == ExecutionStatus.SUCCESS && result.sessionId != null && sessionKey != null) {
                 sessionCache[sessionKey] = SessionInfo(result.sessionId)
-                logger.info { "[$requestId] Session cached: ${result.sessionId} for key: $sessionKey" }
+                logManager.info(requestId, "Session cached: ${result.sessionId}")
             }
 
-            result.copy(durationMs = System.currentTimeMillis() - startTime)
+            val finalResult = result.copy(durationMs = System.currentTimeMillis() - startTime)
+            logManager.agentEnd(requestId, request.agentId ?: "unknown", finalResult.status.name, finalResult.durationMs)
+            finalResult
         } catch (e: Exception) {
-            logger.error(e) { "[$requestId] Execution failed" }
-            ExecutionResult(
+            logManager.error(requestId, "Execution failed: ${e.message}")
+            val errorResult = ExecutionResult(
                 requestId = requestId,
                 status = ExecutionStatus.ERROR,
                 error = "Execution failed: ${e.message}",
                 durationMs = System.currentTimeMillis() - startTime
             )
+            logManager.agentEnd(requestId, request.agentId ?: "unknown", "ERROR", errorResult.durationMs)
+            errorResult
         }
     }
 
@@ -169,8 +188,18 @@ class ClaudeExecutor(
             args.add("-p")
         }
 
-        // 출력 형식
-        args.addAll(listOf("--output-format", config.outputFormat.name.lowercase()))
+        // 출력 형식 - stream-json으로 실시간 도구 로깅 지원
+        val outputFormat = when (config.outputFormat) {
+            OutputFormat.STREAM_JSON -> "stream-json"
+            OutputFormat.STREAM -> "stream-json"  // STREAM도 stream-json으로 매핑
+            else -> config.outputFormat.name.lowercase()
+        }
+        args.addAll(listOf("--output-format", outputFormat))
+
+        // stream-json 사용 시 --verbose 필수 (--print 모드에서)
+        if (outputFormat == "stream-json") {
+            args.add("--verbose")
+        }
 
         // 모델 (새 세션일 때만)
         if (resumeSessionId == null) {
@@ -233,6 +262,8 @@ class ClaudeExecutor(
 
     /**
      * 비동기 프로세스 실행 (suspend 함수)
+     *
+     * stream-json 형식일 경우 실시간으로 도구 호출을 로깅
      */
     private suspend fun runProcessAsync(
         args: List<String>,
@@ -241,7 +272,8 @@ class ClaudeExecutor(
         timeoutSeconds: Long
     ): ExecutionResult = withContext(Dispatchers.IO) {
         val claudePath = findClaudePath()
-        logger.info { "[$requestId] Running (async): $claudePath ${args.take(5).joinToString(" ")}..." }
+        val isStreamJson = args.contains("stream-json")
+        logger.info { "[$requestId] Running (async): $claudePath ${args.take(5).joinToString(" ")}... (streaming: $isStreamJson)" }
 
         val processBuilder = ProcessBuilder(listOf(claudePath) + args)
             .apply {
@@ -256,10 +288,13 @@ class ClaudeExecutor(
         // stdin 닫기 (non-interactive 모드)
         process.outputStream.close()
 
-        // stdout과 stderr를 비동기로 읽기
-        val stdoutDeferred = async {
-            process.inputStream.bufferedReader().use { it.readText() }
+        // 스트리밍 모드: 실시간으로 읽으면서 로깅
+        val stdoutDeferred = if (isStreamJson) {
+            async { readStreamingOutput(process.inputStream, requestId) }
+        } else {
+            async { process.inputStream.bufferedReader().use { it.readText() } to null }
         }
+
         val stderrDeferred = async {
             process.errorStream.bufferedReader().use { it.readText() }
         }
@@ -279,7 +314,7 @@ class ClaudeExecutor(
             )
         }
 
-        val stdout = stdoutDeferred.await()
+        val (stdout, streamResult) = stdoutDeferred.await()
         val stderr = stderrDeferred.await()
         val exitCode = process.exitValue()
 
@@ -287,7 +322,12 @@ class ClaudeExecutor(
         logger.debug { "[$requestId] stdout length: ${stdout.length}, stderr length: ${stderr.length}" }
 
         if (exitCode == 0) {
-            parseSuccessResponse(stdout, requestId)
+            // 스트리밍 모드면 파싱된 결과 사용
+            if (isStreamJson && streamResult != null) {
+                streamResult.copy(requestId = requestId)
+            } else {
+                parseSuccessResponse(stdout, requestId)
+            }
         } else {
             logger.error { "[$requestId] Claude CLI error: $stderr" }
             ExecutionResult(
@@ -297,6 +337,98 @@ class ClaudeExecutor(
                 rawOutput = stdout
             )
         }
+    }
+
+    /**
+     * 스트리밍 출력 실시간 파싱 및 로깅
+     *
+     * stream-json 형식의 각 줄을 파싱하여:
+     * - assistant 메시지: 최종 결과로 누적
+     * - tool_use: 도구 호출 로그
+     * - tool_result: 도구 결과 로그
+     * - result: 최종 결과
+     */
+    private fun readStreamingOutput(
+        inputStream: java.io.InputStream,
+        requestId: String
+    ): Pair<String, ExecutionResult?> {
+        val allOutput = StringBuilder()
+        var finalResult: String? = null
+        var sessionId: String? = null
+        var usage: TokenUsage? = null
+        var cost: Double? = null
+        val assistantMessages = StringBuilder()
+
+        inputStream.bufferedReader().useLines { lines ->
+            for (line in lines) {
+                allOutput.appendLine(line)
+
+                if (line.isBlank()) continue
+
+                try {
+                    val event = objectMapper.readValue<StreamEvent>(line)
+
+                    when (event.type) {
+                        "assistant" -> {
+                            // 어시스턴트 텍스트 메시지
+                            event.message?.content?.forEach { content ->
+                                if (content.type == "text") {
+                                    assistantMessages.append(content.text ?: "")
+                                    logManager.info(requestId, content.text ?: "", mapOf("type" to "assistant"))
+                                }
+                            }
+                        }
+                        "tool_use" -> {
+                            // 도구 호출 시작
+                            val toolName = event.name ?: "unknown"
+                            val toolInput = event.input?.toString()?.take(200) ?: ""
+                            logManager.toolStart(requestId, toolName, mapOf("input" to toolInput))
+                        }
+                        "tool_result" -> {
+                            // 도구 결과
+                            val toolName = event.name ?: "unknown"
+                            val success = event.isError != true
+                            logManager.toolEnd(requestId, toolName, success, 0L)
+                        }
+                        "result" -> {
+                            // 최종 결과
+                            finalResult = event.result
+                            sessionId = event.sessionId
+                            usage = event.usage
+                            cost = event.cost
+
+                            // subtype 체크 (error_max_turns 등)
+                            if (event.subtype?.startsWith("error_") == true) {
+                                logManager.error(requestId, "Execution ended with: ${event.subtype}")
+                            }
+                        }
+                        "system" -> {
+                            // 시스템 메시지 (init 등)
+                            logManager.info(requestId, "System: ${event.subtype ?: "unknown"}",
+                                mapOf("sessionId" to (event.sessionId ?: "")))
+                            sessionId = event.sessionId
+                        }
+                    }
+                } catch (e: Exception) {
+                    // 파싱 실패 시 원문 로깅
+                    logger.debug { "[$requestId] Failed to parse stream line: ${line.take(100)}" }
+                }
+            }
+        }
+
+        // 최종 결과 구성
+        val resultText = finalResult ?: assistantMessages.toString().ifEmpty { null }
+        val executionResult = ExecutionResult(
+            requestId = requestId,
+            status = ExecutionStatus.SUCCESS,
+            result = resultText,
+            rawOutput = allOutput.toString(),
+            usage = usage,
+            sessionId = sessionId,
+            cost = cost
+        )
+
+        return allOutput.toString() to executionResult
     }
 
     /**
@@ -374,7 +506,9 @@ data class ExecutionRequest(
     // Session 지속성을 위한 필드
     val userId: String? = null,          // 사용자 ID (session 키)
     val threadTs: String? = null,        // Slack 스레드 타임스탬프 (session 키)
-    val forceNewSession: Boolean = false // true면 기존 session 무시
+    val forceNewSession: Boolean = false, // true면 기존 session 무시
+    // 로깅용
+    val agentId: String? = null          // 실행 에이전트 ID
 )
 
 /**
@@ -417,4 +551,37 @@ data class TokenUsage(
     val outputTokens: Int = 0,
     val cacheReadTokens: Int = 0,
     val cacheWriteTokens: Int = 0
+)
+
+/**
+ * Claude CLI stream-json 출력 이벤트
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class StreamEvent(
+    val type: String? = null,
+    val subtype: String? = null,
+    // assistant 메시지
+    val message: StreamMessage? = null,
+    // tool_use
+    val name: String? = null,
+    val input: Any? = null,
+    // tool_result
+    val isError: Boolean? = null,
+    // result
+    val result: String? = null,
+    val sessionId: String? = null,
+    val usage: TokenUsage? = null,
+    val cost: Double? = null
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class StreamMessage(
+    val role: String? = null,
+    val content: List<StreamContent>? = null
+)
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class StreamContent(
+    val type: String? = null,
+    val text: String? = null
 )

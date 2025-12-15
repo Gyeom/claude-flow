@@ -21,12 +21,12 @@ claude-flow:
   claude:
     model: ${CLAUDE_MODEL:claude-sonnet-4-20250514}
     max-tokens: ${CLAUDE_MAX_TOKENS:4096}
-    timeout-seconds: ${CLAUDE_TIMEOUT:300}
+    timeout-seconds: ${CLAUDE_TIMEOUT:900}  # 15분 (리팩토링 등 장시간 작업용)
 
   # 작업 디렉토리 (여러 프로젝트의 상위 디렉토리)
   # Claude가 알아서 하위 프로젝트를 탐색함
   workspace:
-    path: ${WORKSPACE_PATH:/workspace}
+    path: ${WORKSPACE_PATH:.}
 
 management:
   endpoints:

@@ -63,16 +63,16 @@ data class ClaudeProperties(
 )
 
 data class WorkspaceProperties(
-    val path: String = "/workspace"  // 여러 프로젝트가 있는 상위 디렉토리
+    val path: String = System.getProperty("user.dir")  // 현재 작업 디렉토리
 )
 
 data class QdrantProperties(
-    val url: String = "http://localhost:6333",
+    val url: String = "",  // 비어있으면 SemanticRouter 비활성화
     val collection: String = "claude-flow-agents"
 )
 
 data class OllamaProperties(
-    val url: String = "http://localhost:11434",
+    val url: String = "",  // 비어있으면 SemanticRouter 비활성화
     val model: String = "nomic-embed-text"
 )
 
@@ -148,9 +148,31 @@ class ClaudeFlowConfiguration(
 
     @Bean
     fun storage(): Storage {
-        val dbPath = "${properties.workspace.path}/claude-flow.db"
+        // 환경변수 또는 현재 디렉토리 기준으로 data 디렉토리 찾기
+        val dbPath = System.getenv("CLAUDE_FLOW_DB")
+            ?: findDataDirectory()?.let { "$it/claude-flow.db" }
+            ?: "./data/claude-flow.db"
+
+        val dataDir = java.io.File(dbPath).parentFile
+        if (!dataDir.exists()) {
+            dataDir.mkdirs()
+            logger.info { "Created data directory: ${dataDir.absolutePath}" }
+        }
         logger.info { "Initializing SQLite storage: $dbPath" }
         return Storage(dbPath)
+    }
+
+    private fun findDataDirectory(): String? {
+        // 현재 디렉토리부터 상위로 올라가며 data 디렉토리 찾기
+        var dir = java.io.File(System.getProperty("user.dir"))
+        repeat(5) {
+            val dataDir = java.io.File(dir, "data")
+            if (dataDir.exists() && dataDir.isDirectory) {
+                return dataDir.absolutePath
+            }
+            dir = dir.parentFile ?: return null
+        }
+        return null
     }
 
     @Bean

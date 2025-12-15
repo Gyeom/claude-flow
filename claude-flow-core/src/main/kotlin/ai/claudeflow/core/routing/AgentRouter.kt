@@ -26,6 +26,7 @@ class AgentRouter(
 
     companion object {
         fun defaultAgents() = listOf(
+            Agent.REFACTOR,
             Agent.CODE_REVIEWER,
             Agent.BUG_FIXER,
             Agent.GENERAL

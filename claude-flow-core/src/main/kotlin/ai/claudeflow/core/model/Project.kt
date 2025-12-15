@@ -27,9 +27,9 @@ data class Project(
 data class ClaudeConfig(
     val model: String = "claude-sonnet-4-20250514",
     val maxTokens: Int = 4096,
-    val timeoutSeconds: Int = 300,
+    val timeoutSeconds: Int = 900,  // 15분 기본값
     val permissionMode: PermissionMode = PermissionMode.ACCEPT_EDITS,
-    val outputFormat: OutputFormat = OutputFormat.JSON,
+    val outputFormat: OutputFormat = OutputFormat.STREAM_JSON,  // 실시간 도구 로깅 활성화
     val allowedTools: List<String> = emptyList(),
     val deniedTools: List<String> = emptyList()
 )
@@ -45,5 +45,6 @@ enum class PermissionMode {
 enum class OutputFormat {
     TEXT,
     JSON,
-    STREAM
+    STREAM,
+    STREAM_JSON  // 실시간 도구 호출 로깅용
 }

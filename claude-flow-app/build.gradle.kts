@@ -28,3 +28,8 @@ dependencies {
 tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
     archiveFileName.set("claude-flow.jar")
 }
+
+tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
+    // 프로젝트 루트에서 실행되도록 설정
+    workingDir = rootProject.projectDir
+}
