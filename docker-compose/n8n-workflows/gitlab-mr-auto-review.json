@@ -1,0 +1,248 @@
+{
+  "name": "GitLab MR Auto Review (Scheduled)",
+  "versionId": "gitlab-mr-auto-review-v1",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/merge_requests",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "state", "value": "opened" },
+            { "name": "scope", "value": "all" },
+            { "name": "per_page", "value": "20" },
+            { "name": "labels", "value": "ai:review" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "PRIVATE-TOKEN", "value": "={{ $env.GITLAB_TOKEN }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-pending-mrs",
+      "name": "Fetch Pending MRs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const mrs = $input.all();\nconst results = [];\n\nfor (const item of mrs) {\n  if (Array.isArray(item.json)) {\n    for (const mr of item.json) {\n      // ai:review 라벨이 있고 ai:reviewed는 없는 MR만\n      const labels = mr.labels || [];\n      if (labels.includes('ai:review') && !labels.includes('ai:reviewed')) {\n        results.push({\n          json: {\n            id: mr.id,\n            iid: mr.iid,\n            title: mr.title,\n            web_url: mr.web_url,\n            source_branch: mr.source_branch,\n            target_branch: mr.target_branch,\n            project_id: mr.project_id,\n            author: mr.author?.username,\n            description: mr.description?.substring(0, 500) || ''\n          }\n        });\n      }\n    }\n  }\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+      },
+      "id": "filter-mrs",
+      "name": "Filter Unreviewd MRs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "value2": true,
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "check-has-mrs",
+      "name": "Has MRs to Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $json.project_id }}/merge_requests/{{ $json.iid }}/changes",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "PRIVATE-TOKEN", "value": "={{ $env.GITLAB_TOKEN }}" }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fetch-mr-changes",
+      "name": "Fetch MR Changes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1050, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const mr = $('Filter Unreviewd MRs').item.json;\nconst changes = $input.item.json;\n\nlet diffSummary = '';\nlet totalAdditions = 0;\nlet totalDeletions = 0;\n\nif (changes.changes) {\n  for (const change of changes.changes.slice(0, 10)) {\n    diffSummary += `\\n### ${change.new_path}\\n`;\n    if (change.diff) {\n      // 변경 내용 요약 (최대 100줄)\n      const lines = change.diff.split('\\n').slice(0, 100);\n      diffSummary += '```diff\\n' + lines.join('\\n') + '\\n```\\n';\n    }\n  }\n  \n  // 통계\n  for (const change of changes.changes) {\n    const diff = change.diff || '';\n    totalAdditions += (diff.match(/^\\+/gm) || []).length;\n    totalDeletions += (diff.match(/^-/gm) || []).length;\n  }\n}\n\nconst prompt = `GitLab MR 코드 리뷰를 수행해주세요.\n\n## MR 정보\n- 제목: ${mr.title}\n- 브랜치: ${mr.source_branch} → ${mr.target_branch}\n- 작성자: ${mr.author}\n- 변경: +${totalAdditions} -${totalDeletions}\n\n## 설명\n${mr.description || '없음'}\n\n## 변경된 파일\n${diffSummary || '변경 내용 없음'}\n\n## 리뷰 요청사항\n1. 코드 품질 및 가독성\n2. 잠재적 버그나 이슈\n3. 성능 개선 포인트\n4. 보안 취약점\n5. 테스트 커버리지\n\n리뷰 결과를 한국어로 작성해주세요.`;\n\nreturn {\n  json: {\n    ...mr,\n    prompt,\n    totalAdditions,\n    totalDeletions,\n    fileCount: changes.changes?.length || 0\n  }\n};"
+      },
+      "id": "prepare-review",
+      "name": "Prepare Review Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.prompt, agentId: 'code-reviewer', maxTurns: 5 }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "claude-review",
+      "name": "Claude Code Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $('Prepare Review Prompt').item.json.project_id }}/merge_requests/{{ $('Prepare Review Prompt').item.json.iid }}/notes",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: '## 🤖 AI Code Review\\n\\n' + ($json.result || $json.error || 'Review failed') + '\\n\\n---\\n_Automated review by Claude Flow_' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "PRIVATE-TOKEN", "value": "={{ $env.GITLAB_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "id": "post-review",
+      "name": "Post Review Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $('Prepare Review Prompt').item.json.project_id }}/merge_requests/{{ $('Prepare Review Prompt').item.json.iid }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ add_labels: 'ai:reviewed', remove_labels: 'ai:review' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "PRIVATE-TOKEN", "value": "={{ $env.GITLAB_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "id": "update-labels",
+      "name": "Update MR Labels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $env.SLACK_MR_CHANNEL || '#merge-requests', text: '🤖 AI 코드 리뷰 완료: <' + $('Prepare Review Prompt').item.json.web_url + '|' + $('Prepare Review Prompt').item.json.title + '>' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "id": "notify-slack",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2050, 200],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [{ "node": "Fetch Pending MRs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Pending MRs": {
+      "main": [
+        [{ "node": "Filter Unreviewd MRs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Unreviewd MRs": {
+      "main": [
+        [{ "node": "Has MRs to Review?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has MRs to Review?": {
+      "main": [
+        [{ "node": "Fetch MR Changes", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Fetch MR Changes": {
+      "main": [
+        [{ "node": "Prepare Review Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Review Prompt": {
+      "main": [
+        [{ "node": "Claude Code Review", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Code Review": {
+      "main": [
+        [{ "node": "Post Review Comment", "type": "main", "index": 0 }]
+      ]
+    },
+    "Post Review Comment": {
+      "main": [
+        [{ "node": "Update MR Labels", "type": "main", "index": 0 }]
+      ]
+    },
+    "Update MR Labels": {
+      "main": [
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

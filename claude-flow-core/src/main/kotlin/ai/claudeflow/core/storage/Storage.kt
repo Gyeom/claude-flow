@@ -1,6 +1,7 @@
 package ai.claudeflow.core.storage
 
 import ai.claudeflow.core.model.Agent
+import ai.claudeflow.core.storage.repository.*
 import mu.KotlinLogging
 import java.sql.Connection
 import java.sql.DriverManager
@@ -9,17 +10,41 @@ import java.time.Instant
 private val logger = KotlinLogging.logger {}
 
 /**
- * SQLite 기반 스토리지
+ * SQLite 기반 스토리지 (Facade Pattern)
+ *
+ * 하위 호환성을 유지하면서 Repository 패턴으로 위임합니다.
+ * 새 코드에서는 개별 Repository를 직접 사용하는 것을 권장합니다.
  */
-class Storage(dbPath: String = "claude-flow.db") {
+class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     private val connection: Connection
+
+    // Repositories
+    val executionRepository: ExecutionRepository
+    val feedbackRepository: FeedbackRepository
+    val userContextRepository: UserContextRepository
+    val userRuleRepository: UserRuleRepository
+    val agentRepository: AgentRepository
+    val settingsRepository: SettingsRepository
+    val analyticsRepository: AnalyticsRepository
 
     init {
         Class.forName("org.sqlite.JDBC")
         connection = DriverManager.getConnection("jdbc:sqlite:$dbPath")
         initTables()
+
+        // Initialize repositories
+        executionRepository = ExecutionRepository(this)
+        feedbackRepository = FeedbackRepository(this)
+        userContextRepository = UserContextRepository(this)
+        userRuleRepository = UserRuleRepository(this)
+        agentRepository = AgentRepository(this)
+        settingsRepository = SettingsRepository(this)
+        analyticsRepository = AnalyticsRepository(this, executionRepository, feedbackRepository)
+
         logger.info { "Storage initialized: $dbPath" }
     }
+
+    override fun getConnection(): Connection = connection
 
     private fun initTables() {
         connection.createStatement().use { stmt ->
@@ -79,7 +104,7 @@ class Storage(dbPath: String = "claude-flow.db") {
                 )
             """)
 
-            // 사용자 컨텍스트 테이블 (확장)
+            // 사용자 컨텍스트 테이블
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS user_contexts (
                     user_id TEXT PRIMARY KEY,
@@ -114,7 +139,7 @@ class Storage(dbPath: String = "claude-flow.db") {
                 )
             """)
 
-            // 에이전트 테이블 (프로젝트별 에이전트 지원)
+            // 에이전트 테이블
             stmt.executeUpdate("""
                 CREATE TABLE IF NOT EXISTS agents (
                     id TEXT NOT NULL,
@@ -136,6 +161,19 @@ class Storage(dbPath: String = "claude-flow.db") {
                 )
             """)
 
+            // 라우팅 메트릭 테이블 (새로 추가)
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS routing_metrics (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT,
+                    routing_method TEXT NOT NULL,
+                    agent_id TEXT,
+                    confidence REAL,
+                    latency_ms INTEGER,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
             // 인덱스 생성
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_channel ON executions(channel)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_created ON executions(created_at)")
@@ -143,656 +181,227 @@ class Storage(dbPath: String = "claude-flow.db") {
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_feedback_execution ON feedback(execution_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_id)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_routing_metrics_created ON routing_metrics(created_at)")
         }
     }
 
-    // ==================== Execution ====================
+    // ==================== Execution (Delegated) ====================
 
-    fun saveExecution(record: ExecutionRecord) {
-        val sql = """
-            INSERT INTO executions (id, prompt, result, status, agent_id, project_id, user_id,
-                channel, thread_ts, reply_ts, duration_ms, input_tokens, output_tokens, cost, error, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, record.id)
-            stmt.setString(2, record.prompt)
-            stmt.setString(3, record.result)
-            stmt.setString(4, record.status)
-            stmt.setString(5, record.agentId)
-            stmt.setString(6, record.projectId)
-            stmt.setString(7, record.userId)
-            stmt.setString(8, record.channel)
-            stmt.setString(9, record.threadTs)
-            stmt.setString(10, record.replyTs)
-            stmt.setLong(11, record.durationMs)
-            stmt.setInt(12, record.inputTokens)
-            stmt.setInt(13, record.outputTokens)
-            stmt.setObject(14, record.cost)
-            stmt.setString(15, record.error)
-            stmt.setString(16, record.createdAt.toString())
-            stmt.executeUpdate()
-        }
-    }
+    @Deprecated("Use executionRepository.save() directly", ReplaceWith("executionRepository.save(record)"))
+    fun saveExecution(record: ExecutionRecord) = executionRepository.save(record)
 
-    fun getExecution(id: String): ExecutionRecord? {
-        val sql = "SELECT * FROM executions WHERE id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, id)
-            stmt.executeQuery().use { rs ->
-                if (rs.next()) {
-                    return ExecutionRecord(
-                        id = rs.getString("id"),
-                        prompt = rs.getString("prompt"),
-                        result = rs.getString("result"),
-                        status = rs.getString("status"),
-                        agentId = rs.getString("agent_id"),
-                        projectId = rs.getString("project_id"),
-                        userId = rs.getString("user_id"),
-                        channel = rs.getString("channel"),
-                        threadTs = rs.getString("thread_ts"),
-                        replyTs = rs.getString("reply_ts"),
-                        durationMs = rs.getLong("duration_ms"),
-                        inputTokens = rs.getInt("input_tokens"),
-                        outputTokens = rs.getInt("output_tokens"),
-                        cost = rs.getObject("cost") as? Double,
-                        error = rs.getString("error"),
-                        createdAt = Instant.parse(rs.getString("created_at"))
-                    )
-                }
-            }
-        }
-        return null
-    }
+    @Deprecated("Use executionRepository.findById() directly", ReplaceWith("executionRepository.findById(id)"))
+    fun getExecution(id: String): ExecutionRecord? = executionRepository.findById(id)
 
-    fun findExecutionByReplyTs(replyTs: String): ExecutionRecord? {
-        val sql = "SELECT * FROM executions WHERE reply_ts = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, replyTs)
-            stmt.executeQuery().use { rs ->
-                if (rs.next()) {
-                    return ExecutionRecord(
-                        id = rs.getString("id"),
-                        prompt = rs.getString("prompt"),
-                        result = rs.getString("result"),
-                        status = rs.getString("status"),
-                        agentId = rs.getString("agent_id"),
-                        projectId = rs.getString("project_id"),
-                        userId = rs.getString("user_id"),
-                        channel = rs.getString("channel"),
-                        threadTs = rs.getString("thread_ts"),
-                        replyTs = rs.getString("reply_ts"),
-                        durationMs = rs.getLong("duration_ms"),
-                        inputTokens = rs.getInt("input_tokens"),
-                        outputTokens = rs.getInt("output_tokens"),
-                        cost = rs.getObject("cost") as? Double,
-                        error = rs.getString("error"),
-                        createdAt = Instant.parse(rs.getString("created_at"))
-                    )
-                }
-            }
-        }
-        return null
-    }
+    @Deprecated("Use executionRepository.findByReplyTs() directly", ReplaceWith("executionRepository.findByReplyTs(replyTs)"))
+    fun findExecutionByReplyTs(replyTs: String): ExecutionRecord? = executionRepository.findByReplyTs(replyTs)
 
-    fun getRecentExecutions(limit: Int = 50): List<ExecutionRecord> {
-        val sql = "SELECT * FROM executions ORDER BY created_at DESC LIMIT ?"
-        val results = mutableListOf<ExecutionRecord>()
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setInt(1, limit)
-            stmt.executeQuery().use { rs ->
-                while (rs.next()) {
-                    results.add(
-                        ExecutionRecord(
-                            id = rs.getString("id"),
-                            prompt = rs.getString("prompt"),
-                            result = rs.getString("result"),
-                            status = rs.getString("status"),
-                            agentId = rs.getString("agent_id"),
-                            projectId = rs.getString("project_id"),
-                            userId = rs.getString("user_id"),
-                            channel = rs.getString("channel"),
-                            threadTs = rs.getString("thread_ts"),
-                            replyTs = rs.getString("reply_ts"),
-                            durationMs = rs.getLong("duration_ms"),
-                            inputTokens = rs.getInt("input_tokens"),
-                            outputTokens = rs.getInt("output_tokens"),
-                            cost = rs.getObject("cost") as? Double,
-                            error = rs.getString("error"),
-                            createdAt = Instant.parse(rs.getString("created_at"))
-                        )
-                    )
-                }
-            }
-        }
-        return results
-    }
+    @Deprecated("Use executionRepository.findRecent() directly", ReplaceWith("executionRepository.findRecent(limit)"))
+    fun getRecentExecutions(limit: Int = 50): List<ExecutionRecord> = executionRepository.findRecent(limit)
 
-    fun updateExecutionReplyTs(id: String, replyTs: String) {
-        val sql = "UPDATE executions SET reply_ts = ? WHERE id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, replyTs)
-            stmt.setString(2, id)
-            stmt.executeUpdate()
-        }
-    }
+    @Deprecated("Use executionRepository.updateReplyTs() directly", ReplaceWith("executionRepository.updateReplyTs(id, replyTs)"))
+    fun updateExecutionReplyTs(id: String, replyTs: String) { executionRepository.updateReplyTs(id, replyTs) }
 
-    // ==================== Feedback ====================
+    // ==================== Feedback (Delegated) ====================
 
-    fun saveFeedback(record: FeedbackRecord) {
-        val sql = "INSERT INTO feedback (id, execution_id, user_id, reaction, created_at) VALUES (?, ?, ?, ?, ?)"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, record.id)
-            stmt.setString(2, record.executionId)
-            stmt.setString(3, record.userId)
-            stmt.setString(4, record.reaction)
-            stmt.setString(5, record.createdAt.toString())
-            stmt.executeUpdate()
-        }
-    }
+    @Deprecated("Use feedbackRepository.save() directly", ReplaceWith("feedbackRepository.save(record)"))
+    fun saveFeedback(record: FeedbackRecord) = feedbackRepository.save(record)
 
+    @Deprecated("Use feedbackRepository.deleteByExecutionUserReaction() directly")
     fun deleteFeedback(executionId: String, userId: String, reaction: String) {
-        val sql = "DELETE FROM feedback WHERE execution_id = ? AND user_id = ? AND reaction = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, executionId)
-            stmt.setString(2, userId)
-            stmt.setString(3, reaction)
-            stmt.executeUpdate()
-        }
+        feedbackRepository.deleteByExecutionUserReaction(executionId, userId, reaction)
     }
 
-    fun getFeedbackForExecution(executionId: String): List<FeedbackRecord> {
-        val sql = "SELECT * FROM feedback WHERE execution_id = ?"
-        val results = mutableListOf<FeedbackRecord>()
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, executionId)
-            stmt.executeQuery().use { rs ->
-                while (rs.next()) {
-                    results.add(
-                        FeedbackRecord(
-                            id = rs.getString("id"),
-                            executionId = rs.getString("execution_id"),
-                            userId = rs.getString("user_id"),
-                            reaction = rs.getString("reaction"),
-                            createdAt = Instant.parse(rs.getString("created_at"))
-                        )
-                    )
-                }
-            }
-        }
-        return results
-    }
+    @Deprecated("Use feedbackRepository.findByExecutionId() directly", ReplaceWith("feedbackRepository.findByExecutionId(executionId)"))
+    fun getFeedbackForExecution(executionId: String): List<FeedbackRecord> = feedbackRepository.findByExecutionId(executionId)
 
-    // ==================== User Context ====================
+    // ==================== User Context (Delegated) ====================
 
-    fun getUserContext(userId: String): UserContext? {
-        val sql = "SELECT * FROM user_contexts WHERE user_id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, userId)
-            stmt.executeQuery().use { rs ->
-                if (rs.next()) {
-                    return rowToUserContext(rs)
-                }
-            }
-        }
-        return null
-    }
+    @Deprecated("Use userContextRepository.findById() directly", ReplaceWith("userContextRepository.findById(userId)"))
+    fun getUserContext(userId: String): UserContext? = userContextRepository.findById(userId)
 
-    fun saveUserContext(context: UserContext) {
-        val sql = """
-            INSERT OR REPLACE INTO user_contexts
-            (user_id, display_name, preferred_language, domain, last_seen, total_interactions,
-             summary, summary_updated_at, summary_lock_id, summary_lock_at, total_chars)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, context.userId)
-            stmt.setString(2, context.displayName)
-            stmt.setString(3, context.preferredLanguage)
-            stmt.setString(4, context.domain)
-            stmt.setString(5, context.lastSeen.toString())
-            stmt.setInt(6, context.totalInteractions)
-            stmt.setString(7, context.summary)
-            stmt.setString(8, context.summaryUpdatedAt?.toString())
-            stmt.setString(9, context.summaryLockId)
-            stmt.setString(10, context.summaryLockAt?.toString())
-            stmt.setLong(11, context.totalChars)
-            stmt.executeUpdate()
-        }
-    }
+    @Deprecated("Use userContextRepository.save() directly", ReplaceWith("userContextRepository.save(context)"))
+    fun saveUserContext(context: UserContext) = userContextRepository.save(context)
 
-    fun getAllUserContexts(): List<UserContext> {
-        val sql = "SELECT * FROM user_contexts ORDER BY last_seen DESC"
-        val results = mutableListOf<UserContext>()
-        connection.createStatement().use { stmt ->
-            stmt.executeQuery(sql).use { rs ->
-                while (rs.next()) {
-                    results.add(rowToUserContext(rs))
-                }
-            }
-        }
-        return results
-    }
+    @Deprecated("Use userContextRepository.findAll() directly", ReplaceWith("userContextRepository.findAll()"))
+    fun getAllUserContexts(): List<UserContext> = userContextRepository.findAll()
 
-    /**
-     * 사용자 컨텍스트 응답 조회 (규칙, 요약, 최근 대화 포함)
-     */
     fun getUserContextResponse(
         userId: String,
         acquireLock: Boolean = false,
         lockId: String? = null
     ): UserContextResponse {
-        val context = getUserContext(userId)
-        val rules = getUserRules(userId)
-        val recentConversations = getRecentConversations(userId)
-        val conversationCount = getConversationCount(userId)
-
-        val needsSummary = context?.let {
-            UserContextResponse.needsSummary(
-                it.totalChars,
-                conversationCount,
-                it.summaryUpdatedAt,
-                it.summary
-            )
-        } ?: false
-
-        var newLockId: String? = null
-        var summaryLocked = context?.summaryLockId != null &&
-            context.summaryLockAt?.let {
-                Instant.now().epochSecond - it.epochSecond < UserContextResponse.SUMMARY_LOCK_TTL_SECS
-            } ?: false
-
-        if (acquireLock && needsSummary && !summaryLocked) {
-            newLockId = lockId ?: java.util.UUID.randomUUID().toString()
-            acquireSummaryLock(userId, newLockId)
-            summaryLocked = true
-        }
-
-        return UserContextResponse(
-            rules = rules,
-            summary = context?.summary,
-            recentConversations = recentConversations,
-            totalConversationCount = conversationCount,
-            needsSummary = needsSummary,
-            summaryLocked = summaryLocked,
-            lockId = newLockId
+        return userContextRepository.getUserContextResponse(
+            userId, acquireLock, lockId, userRuleRepository, executionRepository
         )
     }
 
-    /**
-     * 사용자 요약 저장
-     */
+    @Deprecated("Use userContextRepository.saveUserSummary() directly")
     fun saveUserSummary(userId: String, summary: String) {
-        val sql = """
-            UPDATE user_contexts
-            SET summary = ?, summary_updated_at = ?, summary_lock_id = NULL, summary_lock_at = NULL
-            WHERE user_id = ?
-        """
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, summary)
-            stmt.setString(2, Instant.now().toString())
-            stmt.setString(3, userId)
-            stmt.executeUpdate()
-        }
+        userContextRepository.saveUserSummary(userId, summary)
     }
 
-    /**
-     * 요약 잠금 획득
-     */
-    fun acquireSummaryLock(userId: String, lockId: String): Boolean {
-        val sql = """
-            UPDATE user_contexts
-            SET summary_lock_id = ?, summary_lock_at = ?
-            WHERE user_id = ? AND (summary_lock_id IS NULL OR summary_lock_at < ?)
-        """
-        val now = Instant.now()
-        val expiredBefore = now.minusSeconds(UserContextResponse.SUMMARY_LOCK_TTL_SECS)
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, lockId)
-            stmt.setString(2, now.toString())
-            stmt.setString(3, userId)
-            stmt.setString(4, expiredBefore.toString())
-            return stmt.executeUpdate() > 0
-        }
-    }
+    @Deprecated("Use userContextRepository.acquireSummaryLock() directly")
+    fun acquireSummaryLock(userId: String, lockId: String): Boolean =
+        userContextRepository.acquireSummaryLock(userId, lockId)
 
-    /**
-     * 요약 잠금 해제
-     */
-    fun releaseSummaryLock(userId: String, lockId: String): Boolean {
-        val sql = "UPDATE user_contexts SET summary_lock_id = NULL, summary_lock_at = NULL WHERE user_id = ? AND summary_lock_id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, userId)
-            stmt.setString(2, lockId)
-            return stmt.executeUpdate() > 0
-        }
-    }
+    @Deprecated("Use userContextRepository.releaseSummaryLock() directly")
+    fun releaseSummaryLock(userId: String, lockId: String): Boolean =
+        userContextRepository.releaseSummaryLock(userId, lockId)
 
-    /**
-     * 최근 대화 조회
-     */
-    fun getRecentConversations(userId: String, limit: Int = 10): List<RecentConversation> {
-        val sql = """
-            SELECT e.id, e.prompt, e.result, e.created_at,
-                   EXISTS(SELECT 1 FROM feedback f WHERE f.execution_id = e.id) as has_reactions
-            FROM executions e
-            WHERE e.user_id = ?
-            ORDER BY e.created_at DESC
-            LIMIT ?
-        """
-        val results = mutableListOf<RecentConversation>()
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, userId)
-            stmt.setInt(2, limit)
-            stmt.executeQuery().use { rs ->
-                while (rs.next()) {
-                    results.add(
-                        RecentConversation(
-                            id = rs.getString("id"),
-                            userMessage = rs.getString("prompt"),
-                            response = rs.getString("result"),
-                            createdAt = rs.getString("created_at"),
-                            hasReactions = rs.getBoolean("has_reactions")
-                        )
-                    )
-                }
-            }
-        }
-        return results
-    }
+    @Deprecated("Use userContextRepository.getRecentConversations() directly")
+    fun getRecentConversations(userId: String, limit: Int = 10): List<RecentConversation> =
+        userContextRepository.getRecentConversations(userId, executionRepository, limit)
 
-    /**
-     * 사용자 대화 수 조회
-     */
-    fun getConversationCount(userId: String): Int {
-        val sql = "SELECT COUNT(*) FROM executions WHERE user_id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, userId)
-            stmt.executeQuery().use { rs ->
-                if (rs.next()) {
-                    return rs.getInt(1)
-                }
-            }
-        }
-        return 0
-    }
+    @Deprecated("Use executionRepository.countByUserId() directly")
+    fun getConversationCount(userId: String): Int = executionRepository.countByUserId(userId).toInt()
 
-    // ==================== User Rules ====================
+    // ==================== User Rules (Delegated) ====================
 
-    /**
-     * 사용자 규칙 조회
-     */
-    fun getUserRules(userId: String): List<String> {
-        val sql = "SELECT rule FROM user_rules WHERE user_id = ? ORDER BY created_at"
-        val results = mutableListOf<String>()
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, userId)
-            stmt.executeQuery().use { rs ->
-                while (rs.next()) {
-                    results.add(rs.getString("rule"))
-                }
-            }
-        }
-        return results
-    }
+    @Deprecated("Use userRuleRepository.findRulesByUserId() directly")
+    fun getUserRules(userId: String): List<String> = userRuleRepository.findRulesByUserId(userId)
 
-    /**
-     * 사용자 규칙 추가
-     */
-    fun addUserRule(userId: String, rule: String): Boolean {
-        // 중복 체크
-        val existing = getUserRules(userId)
-        if (existing.contains(rule)) return false
+    @Deprecated("Use userRuleRepository.addRule() directly")
+    fun addUserRule(userId: String, rule: String): Boolean = userRuleRepository.addRule(userId, rule)
 
-        val sql = "INSERT INTO user_rules (id, user_id, rule, created_at) VALUES (?, ?, ?, ?)"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, java.util.UUID.randomUUID().toString())
-            stmt.setString(2, userId)
-            stmt.setString(3, rule)
-            stmt.setString(4, Instant.now().toString())
-            stmt.executeUpdate()
-        }
-        return true
-    }
+    @Deprecated("Use userRuleRepository.deleteRule() directly")
+    fun deleteUserRule(userId: String, rule: String): Boolean = userRuleRepository.deleteRule(userId, rule)
 
-    /**
-     * 사용자 규칙 삭제
-     */
-    fun deleteUserRule(userId: String, rule: String): Boolean {
-        val sql = "DELETE FROM user_rules WHERE user_id = ? AND rule = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, userId)
-            stmt.setString(2, rule)
-            return stmt.executeUpdate() > 0
-        }
-    }
+    // ==================== Settings (Delegated) ====================
 
-    private fun rowToUserContext(rs: java.sql.ResultSet): UserContext {
-        return UserContext(
-            userId = rs.getString("user_id"),
-            displayName = rs.getString("display_name"),
-            preferredLanguage = rs.getString("preferred_language") ?: "ko",
-            domain = rs.getString("domain"),
-            lastSeen = Instant.parse(rs.getString("last_seen")),
-            totalInteractions = rs.getInt("total_interactions"),
-            summary = rs.getString("summary"),
-            summaryUpdatedAt = rs.getString("summary_updated_at")?.let { Instant.parse(it) },
-            summaryLockId = rs.getString("summary_lock_id"),
-            summaryLockAt = rs.getString("summary_lock_at")?.let { Instant.parse(it) },
-            totalChars = rs.getLong("total_chars")
-        )
-    }
+    @Deprecated("Use settingsRepository.getValue() directly")
+    fun getSetting(key: String): String? = settingsRepository.getValue(key)
 
-    // ==================== Settings ====================
-
-    fun getSetting(key: String): String? {
-        val sql = "SELECT value FROM settings WHERE key = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, key)
-            stmt.executeQuery().use { rs ->
-                if (rs.next()) {
-                    return rs.getString("value")
-                }
-            }
-        }
-        return null
-    }
-
-    fun setSetting(key: String, value: String) {
-        val sql = "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, key)
-            stmt.setString(2, value)
-            stmt.executeUpdate()
-        }
-    }
+    @Deprecated("Use settingsRepository.setValue() directly")
+    fun setSetting(key: String, value: String) = settingsRepository.setValue(key, value)
 
     // ==================== Stats ====================
 
     fun getStats(): StorageStats {
-        val totalExecutions = connection.createStatement().use { stmt ->
-            stmt.executeQuery("SELECT COUNT(*) FROM executions").use { rs ->
-                if (rs.next()) rs.getInt(1) else 0
-            }
-        }
-
-        val successCount = connection.createStatement().use { stmt ->
-            stmt.executeQuery("SELECT COUNT(*) FROM executions WHERE status = 'SUCCESS'").use { rs ->
-                if (rs.next()) rs.getInt(1) else 0
-            }
-        }
-
-        val totalTokens = connection.createStatement().use { stmt ->
-            stmt.executeQuery("SELECT SUM(input_tokens + output_tokens) FROM executions").use { rs ->
-                if (rs.next()) rs.getLong(1) else 0L
-            }
-        }
-
-        val avgDuration = connection.createStatement().use { stmt ->
-            stmt.executeQuery("SELECT AVG(duration_ms) FROM executions WHERE status = 'SUCCESS'").use { rs ->
-                if (rs.next()) rs.getDouble(1) else 0.0
-            }
-        }
-
-        val thumbsUp = connection.createStatement().use { stmt ->
-            stmt.executeQuery("SELECT COUNT(*) FROM feedback WHERE reaction = 'thumbsup' OR reaction = '+1'").use { rs ->
-                if (rs.next()) rs.getInt(1) else 0
-            }
-        }
-
-        val thumbsDown = connection.createStatement().use { stmt ->
-            stmt.executeQuery("SELECT COUNT(*) FROM feedback WHERE reaction = 'thumbsdown' OR reaction = '-1'").use { rs ->
-                if (rs.next()) rs.getInt(1) else 0
-            }
-        }
+        val dateRange = DateRange.lastDays(30)
+        val stats = executionRepository.getAggregatedStats(dateRange)
+        val feedback = feedbackRepository.getFeedbackStats(dateRange)
 
         return StorageStats(
-            totalExecutions = totalExecutions,
-            successRate = if (totalExecutions > 0) successCount.toDouble() / totalExecutions else 0.0,
-            totalTokens = totalTokens,
-            avgDurationMs = avgDuration,
-            thumbsUp = thumbsUp,
-            thumbsDown = thumbsDown
+            totalExecutions = stats.totalRequests.toInt(),
+            successRate = if (stats.totalRequests > 0)
+                stats.successfulRequests.toDouble() / stats.totalRequests else 0.0,
+            totalTokens = stats.totalInputTokens + stats.totalOutputTokens,
+            avgDurationMs = stats.avgDurationMs,
+            thumbsUp = feedback.positive.toInt(),
+            thumbsDown = feedback.negative.toInt()
         )
+    }
+
+    // ==================== Analytics (Delegated) ====================
+
+    @Deprecated("Use analyticsRepository.getPercentiles() directly")
+    fun getPercentiles(days: Int = 7): PercentileStats {
+        val dateRange = DateRange.lastDays(days)
+        return analyticsRepository.getPercentiles(dateRange)
+    }
+
+    @Deprecated("Use analyticsRepository.getOverviewStats() directly")
+    fun getOverviewStats(days: Int = 7): OverviewStats {
+        val dateRange = DateRange.lastDays(days)
+        return analyticsRepository.getOverviewStats(dateRange)
+    }
+
+    @Deprecated("Use feedbackRepository.getFeedbackStats() directly")
+    fun getFeedbackStats(since: String? = null): FeedbackStats {
+        val dateRange = since?.let {
+            DateRange(Instant.parse(it), Instant.now())
+        }
+        return feedbackRepository.getFeedbackStats(dateRange)
+    }
+
+    @Deprecated("Use analyticsRepository.getTimeSeries() directly")
+    fun getTimeSeries(days: Int = 7, granularity: String = "day"): List<TimeSeriesPoint> {
+        val dateRange = DateRange.lastDays(days)
+        val timeGranularity = when (granularity) {
+            "hour" -> TimeGranularity.HOUR
+            "week" -> TimeGranularity.WEEK
+            else -> TimeGranularity.DAY
+        }
+        return analyticsRepository.getTimeSeries(dateRange, timeGranularity)
+    }
+
+    @Deprecated("Use agentRepository.getModelStats() directly")
+    fun getModelStats(days: Int = 7): List<ModelStats> {
+        val dateRange = DateRange.lastDays(days)
+        return agentRepository.getModelStats(dateRange)
+    }
+
+    @Deprecated("Use analyticsRepository.getErrorStats() directly")
+    fun getErrorStats(days: Int = 7): List<ErrorStats> {
+        val dateRange = DateRange.lastDays(days)
+        return analyticsRepository.getErrorStats(dateRange)
+    }
+
+    @Deprecated("Use analyticsRepository.getUserStats() directly")
+    fun getUserStats(days: Int = 7, limit: Int = 20): List<UserStats> {
+        val dateRange = DateRange.lastDays(days)
+        return analyticsRepository.getUserStats(dateRange, limit)
+    }
+
+    // ==================== Agent (Delegated) ====================
+
+    @Deprecated("Use agentRepository.save() directly")
+    fun saveAgent(agent: Agent) = agentRepository.save(agent)
+
+    @Deprecated("Use agentRepository.findByIdAndProject() directly")
+    fun getAgent(agentId: String, projectId: String? = null): Agent? =
+        agentRepository.findByIdAndProject(agentId, projectId)
+
+    @Deprecated("Use agentRepository.findByProject() directly")
+    fun getAgentsByProject(projectId: String? = null): List<Agent> =
+        agentRepository.findByProject(projectId)
+
+    @Deprecated("Use agentRepository.findAll() directly")
+    fun getAllAgents(): List<Agent> = agentRepository.findAll()
+
+    @Deprecated("Use agentRepository.deleteByIdAndProject() directly")
+    fun deleteAgent(agentId: String, projectId: String? = null): Boolean =
+        agentRepository.deleteByIdAndProject(agentId, projectId)
+
+    @Deprecated("Use agentRepository.setEnabled() directly")
+    fun setAgentEnabled(agentId: String, projectId: String?, enabled: Boolean): Boolean =
+        agentRepository.setEnabled(agentId, projectId, enabled)
+
+    // ==================== Routing Metrics ====================
+
+    /**
+     * 라우팅 메트릭 저장
+     */
+    fun saveRoutingMetric(
+        executionId: String?,
+        routingMethod: String,
+        agentId: String?,
+        confidence: Double?,
+        latencyMs: Long
+    ) {
+        val sql = """
+            INSERT INTO routing_metrics (id, execution_id, routing_method, agent_id, confidence, latency_ms, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, java.util.UUID.randomUUID().toString())
+            stmt.setString(2, executionId)
+            stmt.setString(3, routingMethod)
+            stmt.setString(4, agentId)
+            stmt.setObject(5, confidence)
+            stmt.setLong(6, latencyMs)
+            stmt.setString(7, Instant.now().toString())
+            stmt.executeUpdate()
+        }
     }
 
     fun close() {
         connection.close()
     }
-
-    // ==================== Agent ====================
-
-    /**
-     * 에이전트 저장 (프로젝트별 에이전트)
-     */
-    fun saveAgent(agent: Agent) {
-        val sql = """
-            INSERT OR REPLACE INTO agents
-            (id, project_id, name, description, keywords, system_prompt, model, max_tokens,
-             allowed_tools, working_directory, enabled, priority, examples, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        val now = Instant.now().toString()
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, agent.id)
-            stmt.setString(2, agent.projectId ?: "global")
-            stmt.setString(3, agent.name)
-            stmt.setString(4, agent.description)
-            stmt.setString(5, agent.keywords.joinToString(","))
-            stmt.setString(6, agent.systemPrompt)
-            stmt.setString(7, agent.model)
-            stmt.setInt(8, agent.maxTokens)
-            stmt.setString(9, agent.allowedTools.joinToString(","))
-            stmt.setString(10, agent.workingDirectory)
-            stmt.setInt(11, if (agent.enabled) 1 else 0)
-            stmt.setInt(12, agent.priority)
-            stmt.setString(13, agent.examples.joinToString("|||"))
-            stmt.setString(14, now)
-            stmt.setString(15, now)
-            stmt.executeUpdate()
-        }
-        logger.info { "Saved agent: ${agent.id} (project: ${agent.projectId ?: "global"})" }
-    }
-
-    /**
-     * 에이전트 조회
-     */
-    fun getAgent(agentId: String, projectId: String? = null): Agent? {
-        val sql = "SELECT * FROM agents WHERE id = ? AND project_id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, agentId)
-            stmt.setString(2, projectId ?: "global")
-            stmt.executeQuery().use { rs ->
-                if (rs.next()) {
-                    return rowToAgent(rs)
-                }
-            }
-        }
-        return null
-    }
-
-    /**
-     * 프로젝트별 에이전트 목록 조회
-     */
-    fun getAgentsByProject(projectId: String? = null): List<Agent> {
-        val sql = "SELECT * FROM agents WHERE project_id = ? ORDER BY priority DESC"
-        val results = mutableListOf<Agent>()
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, projectId ?: "global")
-            stmt.executeQuery().use { rs ->
-                while (rs.next()) {
-                    results.add(rowToAgent(rs))
-                }
-            }
-        }
-        return results
-    }
-
-    /**
-     * 모든 에이전트 목록 조회
-     */
-    fun getAllAgents(): List<Agent> {
-        val sql = "SELECT * FROM agents ORDER BY project_id, priority DESC"
-        val results = mutableListOf<Agent>()
-        connection.createStatement().use { stmt ->
-            stmt.executeQuery(sql).use { rs ->
-                while (rs.next()) {
-                    results.add(rowToAgent(rs))
-                }
-            }
-        }
-        return results
-    }
-
-    /**
-     * 에이전트 삭제
-     */
-    fun deleteAgent(agentId: String, projectId: String? = null): Boolean {
-        val sql = "DELETE FROM agents WHERE id = ? AND project_id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setString(1, agentId)
-            stmt.setString(2, projectId ?: "global")
-            val deleted = stmt.executeUpdate() > 0
-            if (deleted) {
-                logger.info { "Deleted agent: $agentId (project: ${projectId ?: "global"})" }
-            }
-            return deleted
-        }
-    }
-
-    /**
-     * 에이전트 활성화/비활성화
-     */
-    fun setAgentEnabled(agentId: String, projectId: String?, enabled: Boolean): Boolean {
-        val sql = "UPDATE agents SET enabled = ?, updated_at = ? WHERE id = ? AND project_id = ?"
-        connection.prepareStatement(sql).use { stmt ->
-            stmt.setInt(1, if (enabled) 1 else 0)
-            stmt.setString(2, Instant.now().toString())
-            stmt.setString(3, agentId)
-            stmt.setString(4, projectId ?: "global")
-            return stmt.executeUpdate() > 0
-        }
-    }
-
-    private fun rowToAgent(rs: java.sql.ResultSet): Agent {
-        val projectIdValue = rs.getString("project_id")
-        return Agent(
-            id = rs.getString("id"),
-            name = rs.getString("name"),
-            description = rs.getString("description") ?: "",
-            keywords = rs.getString("keywords")?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
-            systemPrompt = rs.getString("system_prompt"),
-            model = rs.getString("model") ?: "claude-sonnet-4-20250514",
-            maxTokens = rs.getInt("max_tokens"),
-            allowedTools = rs.getString("allowed_tools")?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
-            workingDirectory = rs.getString("working_directory"),
-            enabled = rs.getInt("enabled") == 1,
-            priority = rs.getInt("priority"),
-            examples = rs.getString("examples")?.split("|||")?.filter { it.isNotBlank() } ?: emptyList(),
-            projectId = if (projectIdValue == "global") null else projectIdValue
-        )
-    }
 }
+
+// ==================== Data Classes ====================
 
 data class StorageStats(
     val totalExecutions: Int,
@@ -802,3 +411,10 @@ data class StorageStats(
     val thumbsUp: Int,
     val thumbsDown: Int
 )
+
+// Re-export from repositories for backwards compatibility
+typealias PercentileStats = ai.claudeflow.core.storage.repository.PercentileStats
+typealias OverviewStats = ai.claudeflow.core.storage.repository.OverviewStats
+typealias ComparisonStats = ai.claudeflow.core.storage.repository.ComparisonStats
+typealias ModelStats = ai.claudeflow.core.storage.repository.ModelStats
+typealias TimeGranularity = ai.claudeflow.core.storage.repository.TimeGranularity

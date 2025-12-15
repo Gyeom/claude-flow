@@ -1,0 +1,285 @@
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  ThumbsUp,
+  ThumbsDown,
+  TrendingUp,
+  Smile,
+  Meh,
+  Frown,
+  Calendar,
+} from 'lucide-react'
+import { Card, CardHeader, StatCard } from '@/components/Card'
+import { ChartContainer } from '@/components/Chart'
+import { analyticsApi } from '@/lib/api'
+import { formatNumber, formatPercent, cn } from '@/lib/utils'
+import {
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+} from 'recharts'
+
+const PERIODS = [
+  { label: '7 Days', value: '7d' },
+  { label: '14 Days', value: '14d' },
+  { label: '30 Days', value: '30d' },
+  { label: '90 Days', value: '90d' },
+]
+
+const COLORS = {
+  positive: '#22c55e',
+  negative: '#ef4444',
+  neutral: '#94a3b8',
+}
+
+export function Feedback() {
+  const [period, setPeriod] = useState('7d')
+
+  const { data: feedback, isLoading: feedbackLoading } = useQuery({
+    queryKey: ['analytics', 'feedback', period],
+    queryFn: () => analyticsApi.getFeedback(period),
+  })
+
+  const isLoading = feedbackLoading
+
+  // Mock data for demo
+  const mockFeedback = feedback || {
+    totalFeedback: 156,
+    positiveCount: 128,
+    negativeCount: 28,
+    positiveRate: 0.821,
+    negativeRate: 0.179,
+    satisfactionScore: 72.5,
+  }
+
+  const pieData = [
+    { name: 'Positive', value: mockFeedback.positiveCount, color: COLORS.positive },
+    { name: 'Negative', value: mockFeedback.negativeCount, color: COLORS.negative },
+  ]
+
+  const trendData = Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(Date.now() - (6 - i) * 86400000)
+    return {
+      date: date.toLocaleDateString('en-US', { weekday: 'short' }),
+      positive: Math.floor(Math.random() * 20) + 10,
+      negative: Math.floor(Math.random() * 5) + 1,
+    }
+  })
+
+  const getSatisfactionIcon = (score: number) => {
+    if (score >= 70) return <Smile className="h-8 w-8 text-green-500" />
+    if (score >= 50) return <Meh className="h-8 w-8 text-yellow-500" />
+    return <Frown className="h-8 w-8 text-red-500" />
+  }
+
+  const getSatisfactionColor = (score: number) => {
+    if (score >= 70) return 'text-green-500'
+    if (score >= 50) return 'text-yellow-500'
+    return 'text-red-500'
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Feedback Analytics</h1>
+          <p className="text-muted-foreground mt-1">
+            User satisfaction and feedback insights
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-muted-foreground" />
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+            className="bg-card border border-border rounded-lg px-3 py-2 text-sm"
+          >
+            {PERIODS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Overview Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard
+          title="Total Feedback"
+          value={formatNumber(mockFeedback.totalFeedback)}
+          icon={<TrendingUp className="h-6 w-6" />}
+        />
+        <StatCard
+          title="Positive"
+          value={formatNumber(mockFeedback.positiveCount)}
+          icon={<ThumbsUp className="h-6 w-6 text-green-500" />}
+          trend="up"
+          className="border-green-500/30"
+        />
+        <StatCard
+          title="Negative"
+          value={formatNumber(mockFeedback.negativeCount)}
+          icon={<ThumbsDown className="h-6 w-6 text-red-500" />}
+          trend="down"
+          className="border-red-500/30"
+        />
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Satisfaction Score</p>
+              <p className={cn("text-3xl font-bold mt-1", getSatisfactionColor(mockFeedback.satisfactionScore))}>
+                {mockFeedback.satisfactionScore.toFixed(1)}
+              </p>
+            </div>
+            {getSatisfactionIcon(mockFeedback.satisfactionScore)}
+          </div>
+        </Card>
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Pie Chart */}
+        <ChartContainer
+          title="Feedback Distribution"
+          description="Positive vs Negative feedback ratio"
+        >
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={pieData}
+                cx="50%"
+                cy="50%"
+                innerRadius={60}
+                outerRadius={100}
+                paddingAngle={5}
+                dataKey="value"
+                label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+              >
+                {pieData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.color} />
+                ))}
+              </Pie>
+              <Tooltip />
+            </PieChart>
+          </ResponsiveContainer>
+        </ChartContainer>
+
+        {/* Trend Chart */}
+        <ChartContainer
+          title="Feedback Trend"
+          description="Daily feedback over time"
+        >
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={trendData}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+              <XAxis dataKey="date" className="text-muted-foreground text-xs" />
+              <YAxis className="text-muted-foreground text-xs" />
+              <Tooltip />
+              <Line
+                type="monotone"
+                dataKey="positive"
+                stroke={COLORS.positive}
+                strokeWidth={2}
+                name="Positive"
+              />
+              <Line
+                type="monotone"
+                dataKey="negative"
+                stroke={COLORS.negative}
+                strokeWidth={2}
+                name="Negative"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartContainer>
+      </div>
+
+      {/* Detailed Metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader
+            title="Rate Breakdown"
+            description="Feedback rate analysis"
+          />
+          <div className="space-y-6">
+            <div>
+              <div className="flex justify-between mb-2">
+                <span className="text-sm flex items-center gap-2">
+                  <ThumbsUp className="h-4 w-4 text-green-500" />
+                  Positive Rate
+                </span>
+                <span className="font-semibold text-green-500">
+                  {formatPercent(mockFeedback.positiveRate)}
+                </span>
+              </div>
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-green-500 rounded-full transition-all"
+                  style={{ width: `${mockFeedback.positiveRate * 100}%` }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between mb-2">
+                <span className="text-sm flex items-center gap-2">
+                  <ThumbsDown className="h-4 w-4 text-red-500" />
+                  Negative Rate
+                </span>
+                <span className="font-semibold text-red-500">
+                  {formatPercent(mockFeedback.negativeRate)}
+                </span>
+              </div>
+              <div className="h-3 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-red-500 rounded-full transition-all"
+                  style={{ width: `${mockFeedback.negativeRate * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card>
+          <CardHeader
+            title="Satisfaction Gauge"
+            description="Overall user satisfaction"
+          />
+          <div className="flex flex-col items-center py-8">
+            <div className="relative w-48 h-24 overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-t-full" />
+              <div className="absolute bottom-0 left-1/2 w-2 h-20 bg-foreground origin-bottom -translate-x-1/2"
+                style={{
+                  transform: `translateX(-50%) rotate(${(mockFeedback.satisfactionScore - 50) * 1.8}deg)`,
+                }}
+              />
+            </div>
+            <p className={cn("text-4xl font-bold mt-4", getSatisfactionColor(mockFeedback.satisfactionScore))}>
+              {mockFeedback.satisfactionScore.toFixed(1)}%
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {mockFeedback.satisfactionScore >= 70 ? 'Great!' : mockFeedback.satisfactionScore >= 50 ? 'Good' : 'Needs Improvement'}
+            </p>
+          </div>
+        </Card>
+      </div>
+    </div>
+  )
+}

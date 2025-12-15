@@ -6,6 +6,14 @@ import {
   BarChart3,
   Settings,
   Zap,
+  ThumbsUp,
+  Cpu,
+  AlertTriangle,
+  Target,
+  Clock,
+  Puzzle,
+  Users,
+  Workflow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
@@ -13,8 +21,16 @@ import { ThemeToggle } from './ThemeToggle'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Executions', href: '/executions', icon: History },
+  { name: 'History', href: '/history', icon: Clock },
   { name: 'Agents', href: '/agents', icon: Bot },
+  { name: 'Classify', href: '/classify', icon: Target },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
+  { name: 'Feedback', href: '/feedback', icon: ThumbsUp },
+  { name: 'Models', href: '/models', icon: Cpu },
+  { name: 'Errors', href: '/errors', icon: AlertTriangle },
+  { name: 'Plugins', href: '/plugins', icon: Puzzle },
+  { name: 'Users', href: '/users', icon: Users },
+  { name: 'Workflows', href: '/workflows', icon: Workflow },
 ]
 
 export function Sidebar() {

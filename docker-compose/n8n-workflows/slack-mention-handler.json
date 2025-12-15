@@ -18,7 +18,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 메시지 유형 분류: command, mr-review, general\nconst body = $input.item.json.body;\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  return { json: { ...body, messageType: 'command' } };\n}\n\n// 2. MR 리뷰 요청 체크\n// 패턴: !123, MR 123, MR#123, 리뷰 + MR번호\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\nconst reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인'];\nconst hasMrNumber = mrPatterns.some(p => p.test(text));\nconst hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k));\n\nif (hasMrNumber && hasReviewKeyword) {\n  return { json: { ...body, messageType: 'mr-review' } };\n}\n\n// 3. 일반 메시지\nreturn { json: { ...body, messageType: 'general' } };"
+        "jsCode": "// 메시지 유형 분류: command, mr-review, general\nconst body = $input.item.json.body || {};\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 기본 결과 객체 (항상 messageType 포함)\nconst result = { ...body, messageType: 'general', isMrReview: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크 (더 엄격한 조건)\n// MR 번호 패턴: !123, MR 123, MR#123, merge_requests/123\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\n// MR 번호가 있어야만 리뷰 요청으로 처리\nif (mrNumber) {\n  // 리뷰 관련 키워드 (명시적인 리뷰 요청)\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  // MR 번호 + 리뷰 키워드가 있어야 MR 리뷰\n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    return { json: result };\n  }\n}\n\n// 3. 일반 메시지 (기본값 유지)\nreturn { json: result };"
       },
       "id": "classify-message",
       "name": "Classify Message",
@@ -47,13 +47,23 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "value1": "={{ $json.messageType }}",
-              "operation": "equals",
-              "value2": "mr-review"
+              "id": "mr-review-check",
+              "leftValue": "={{ $json.isMrReview }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         }
       },
       "id": "is-mr-review",

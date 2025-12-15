@@ -237,3 +237,52 @@ data class ClassifyResult(
     val matchedKeyword: String? = null,
     val reasoning: String? = null
 )
+
+// ==================== Analytics DTOs ====================
+
+/**
+ * 피드백 통계
+ */
+data class FeedbackStats(
+    val positive: Long,
+    val negative: Long,
+    val satisfactionRate: Double,
+    val pendingFeedback: Long
+)
+
+/**
+ * 시계열 데이터 포인트
+ */
+data class TimeSeriesPoint(
+    val timestamp: String,
+    val requests: Long,
+    val successful: Long,
+    val failed: Long,
+    val cost: Double,
+    val tokens: Long,
+    val avgDurationMs: Long,
+    val p95DurationMs: Long
+)
+
+/**
+ * 에러 통계
+ */
+data class ErrorStats(
+    val errorType: String,
+    val count: Long,
+    val percentage: Double,
+    val trend: String  // "up", "down", "stable"
+)
+
+/**
+ * 사용자 통계
+ */
+data class UserStats(
+    val userId: String,
+    val displayName: String?,
+    val totalRequests: Long,
+    val successRate: Double,
+    val totalTokens: Long,
+    val totalCost: Double,
+    val lastSeen: String?
+)

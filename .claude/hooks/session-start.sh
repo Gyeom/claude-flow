@@ -9,11 +9,29 @@ INPUT=$(cat)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 
 # Configuration
-DB_PATH="${CLAUDE_FLOW_DB:-/Users/a13801/42dot/claude-flow/data/claude-flow.db}"
+PROJECT_ROOT="/Users/a13801/42dot/claude-flow"
+DB_PATH="${CLAUDE_FLOW_DB:-$PROJECT_ROOT/data/claude-flow.db}"
 USER_ID="${CLAUDE_FLOW_USER_ID:-unknown}"
 
 # Log session start
 echo "[$(date -Iseconds)] SESSION_START: session=$SESSION_ID user=$USER_ID" >> /tmp/claude-flow-audit.log
+
+# Remind to read project context
+echo "" >&2
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+echo "📚 Claude Flow 프로젝트 컨텍스트" >&2
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+echo "" >&2
+echo "프로젝트 문서: CLAUDE.md" >&2
+echo "" >&2
+echo "주요 명령어:" >&2
+echo "  /health      - 시스템 상태 확인" >&2
+echo "  /update-docs - 문서 업데이트" >&2
+echo "  /add-test    - 테스트 추가" >&2
+echo "  /new-feature - 새 기능 구현" >&2
+echo "  /refactor    - 코드 리팩토링" >&2
+echo "" >&2
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
 
 # Load user preferences if database exists
 if [ -f "$DB_PATH" ]; then

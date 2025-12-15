@@ -4,7 +4,6 @@ import type {
   Agent,
   FeedbackAnalysis,
   TokenUsage,
-  RoutingEfficiency,
   ProjectStat,
   UserContext,
   UserContextResponse,
@@ -33,7 +32,7 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, base = API_B
     throw new Error(`API Error: ${response.status} ${response.statusText}`)
   }
 
-  return response.json
+  return response.json()
 }
 
 // Dashboard
@@ -64,7 +63,7 @@ export const executionsApi = {
 
 // Agents (v2 API)
 export const agentsApi = {
-  getAll: =>
+  getAll: () =>
     fetchApi<Agent[]>('/agents', undefined, API_BASE_V2),
 
   getByProject: (projectId: string) =>
@@ -108,7 +107,7 @@ export const analyticsApi = {
   getRoutingEfficiency: (period = '7d') =>
     fetchApi<{ period: string; routing: RoutingStats[] }>(`/analytics/routing?period=${period}`),
 
-  getProjectStats: =>
+  getProjectStats: () =>
     fetchApi<ProjectStat[]>('/analytics/projects'),
 
   getModels: (period = '7d') =>
@@ -126,15 +125,15 @@ export const analyticsApi = {
 
 // Users
 export const usersApi = {
-  getAll: =>
+  getAll: () =>
     fetchApi<UserContext[]>('/users'),
 
   getById: (userId: string) =>
     fetchApi<UserContext>(`/users/${userId}`),
 
   getContext: (userId: string, acquireLock = false, lockId?: string) => {
-    const params = new URLSearchParams
-    params.set('acquire_lock', acquireLock.toString)
+    const params = new URLSearchParams()
+    params.set('acquire_lock', acquireLock.toString())
     if (lockId) params.set('lock_id', lockId)
     return fetchApi<UserContextResponse>(`/users/${userId}/context?${params}`)
   },
@@ -173,6 +172,6 @@ export const usersApi = {
 
 // Health
 export const healthApi = {
-  check: =>
+  check: () =>
     fetchApi<{ status: string; version: string }>('/health'),
 }

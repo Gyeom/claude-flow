@@ -1,18 +1,20 @@
 import { cn } from '@/lib/utils'
-import type { ReactNode } from 'react'
+import type { ReactNode, MouseEventHandler } from 'react'
 
 interface CardProps {
   children: ReactNode
   className?: string
+  onClick?: MouseEventHandler<HTMLDivElement>
 }
 
-export function Card({ children, className }: CardProps) {
+export function Card({ children, className, onClick }: CardProps) {
   return (
     <div
       className={cn(
         'rounded-xl border border-border bg-card p-6 shadow-sm',
         className
       )}
+      onClick={onClick}
     >
       {children}
     </div>
@@ -67,8 +69,8 @@ export function StatCard({ title, value, change, icon, trend, className }: StatC
                 trend === 'neutral' && 'text-muted-foreground'
               )}
             >
-              {trend === 'up' && '‘'}
-              {trend === 'down' && '“'}
+              {trend === 'up' && 'ï¿½'}
+              {trend === 'down' && 'ï¿½'}
               {change.value > 0 ? '+' : ''}{change.value}% {change.label}
             </p>
           )}

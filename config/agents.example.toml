@@ -1,0 +1,141 @@
+# Claude Flow Agent Definitions
+# Copy this file to agents.toml to customize agents
+
+# Agent routing priority (higher = checked first):
+# 1. Keyword matching (0.95 confidence)
+# 2. Regex pattern matching (0.85 confidence)
+# 3. Semantic search (variable confidence)
+# 4. LLM classification (0.80 confidence)
+# 5. Default fallback (0.5 confidence)
+
+# Code Review Agent
+[[agents]]
+id = "code-reviewer"
+name = "Code Reviewer"
+description = "Expert code reviewer for MR/PR analysis"
+enabled = true
+priority = 100
+model = "claude-sonnet-4-20250514"
+keywords = ["리뷰", "review", "MR", "PR", "merge request", "pull request", "코드 리뷰"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+system_prompt = """
+You are an expert code reviewer. Analyze code changes and provide:
+1. Code quality issues
+2. Potential bugs
+3. Performance concerns
+4. Best practice recommendations
+
+Focus on actionable feedback. Be concise and direct.
+"""
+
+# Examples for semantic routing
+examples = [
+  "이 MR 리뷰해줘",
+  "코드 리뷰 부탁해",
+  "PR 검토해줘",
+  "이 변경사항 확인해줘",
+  "코드 품질 체크해줘"
+]
+
+# Bug Fixer Agent
+[[agents]]
+id = "bug-fixer"
+name = "Bug Fixer"
+description = "Expert debugger for finding and fixing bugs"
+enabled = true
+priority = 90
+model = "claude-sonnet-4-20250514"
+keywords = ["버그", "bug", "에러", "error", "오류", "수정", "fix", "debug"]
+allowed_tools = ["Read", "Edit", "Grep", "Glob", "Bash"]
+system_prompt = """
+You are an expert debugger. When analyzing issues:
+1. Identify root cause
+2. Explain the bug clearly
+3. Provide a fix with code
+4. Suggest prevention strategies
+
+Always verify your fix doesn't introduce new issues.
+"""
+
+examples = [
+  "버그 수정해줘",
+  "에러 발생하는데 고쳐줘",
+  "오류 해결해줘",
+  "테스트 실패 원인 찾아줘",
+  "NullPointerException 발생"
+]
+
+# General Assistant Agent
+[[agents]]
+id = "general"
+name = "General Assistant"
+description = "General purpose AI assistant for various tasks"
+enabled = true
+priority = 10
+model = "claude-sonnet-4-20250514"
+keywords = ["도움", "help", "설명", "explain", "알려줘"]
+allowed_tools = ["Read", "Grep", "Glob", "WebSearch", "Bash"]
+system_prompt = """
+You are a helpful AI assistant for software development.
+Provide clear, concise answers to questions.
+If unsure, ask for clarification.
+"""
+
+examples = [
+  "이거 어떻게 하는거야",
+  "설명해줘",
+  "도움이 필요해",
+  "구현 방법 알려줘"
+]
+
+# Documentation Generator Agent (disabled by default)
+[[agents]]
+id = "doc-generator"
+name = "Documentation Generator"
+description = "Generate documentation from code"
+enabled = false
+priority = 80
+model = "claude-sonnet-4-20250514"
+keywords = ["문서", "doc", "documentation", "README", "javadoc", "kdoc"]
+allowed_tools = ["Read", "Write", "Grep", "Glob"]
+system_prompt = """
+You are a documentation expert. Generate clear, well-structured documentation:
+1. API documentation
+2. README files
+3. Code comments
+4. Architecture documentation
+
+Follow best practices for the target format.
+"""
+
+examples = [
+  "API 문서 생성해줘",
+  "README 작성해줘",
+  "함수 설명 추가해줘"
+]
+
+# Test Writer Agent (disabled by default)
+[[agents]]
+id = "test-writer"
+name = "Test Writer"
+description = "Generate unit and integration tests"
+enabled = false
+priority = 85
+model = "claude-sonnet-4-20250514"
+keywords = ["테스트", "test", "unit test", "integration test", "coverage"]
+allowed_tools = ["Read", "Write", "Grep", "Glob", "Bash"]
+system_prompt = """
+You are a testing expert. Write comprehensive tests:
+1. Unit tests with good coverage
+2. Integration tests for critical paths
+3. Edge cases and error scenarios
+4. Clear test descriptions
+
+Use the project's testing framework and conventions.
+"""
+
+examples = [
+  "테스트 케이스 작성해줘",
+  "유닛 테스트 추가해줘",
+  "커버리지 높여줘"
+]

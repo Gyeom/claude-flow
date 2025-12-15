@@ -7,41 +7,62 @@ private val logger = KotlinLogging.logger {}
 /**
  * 플러그인 관리자
  *
- * 플러그인 등록, 초기화, 실행 관리
+ * 플러그인 등록, 초기화, 실행 관리.
+ * PluginRegistry, PluginLoader, PluginConfigManager와 통합.
  */
-class PluginManager {
+class PluginManager(
+    configPath: String? = null
+) {
+    val configManager = PluginConfigManager(configPath)
+    val registry = PluginRegistry()
+    val loader = PluginLoader(registry, configManager)
+
+    // 레거시 호환을 위한 내부 저장소
+    @Deprecated("Use registry instead")
     private val plugins = mutableMapOf<String, Plugin>()
+    @Deprecated("Use configManager instead")
     private val pluginConfigs = mutableMapOf<String, Map<String, String>>()
 
     /**
-     * 플러그인 등록
+     * 설정 파일에서 모든 플러그인 로드
+     */
+    suspend fun loadPlugins(): PluginLoader.LoadResult {
+        return loader.loadAll()
+    }
+
+    /**
+     * 플러그인 등록 (레거시 호환)
      */
     fun register(plugin: Plugin, config: Map<String, String> = emptyMap()) {
+        val metadata = PluginMetadata(
+            id = plugin.id,
+            name = plugin.name,
+            description = plugin.description,
+            version = "1.0.0"
+        )
+        registry.register(plugin, metadata, config)
+
+        // 레거시 호환
         plugins[plugin.id] = plugin
         pluginConfigs[plugin.id] = config
-        logger.info { "Plugin registered: ${plugin.id} (${plugin.name})" }
     }
 
     /**
      * 플러그인 제거
      */
     suspend fun unregister(pluginId: String) {
-        plugins[pluginId]?.let { plugin ->
-            if (plugin.enabled) {
-                plugin.shutdown()
-            }
-            plugins.remove(pluginId)
-            pluginConfigs.remove(pluginId)
-            logger.info { "Plugin unregistered: $pluginId" }
-        }
+        loader.unload(pluginId)
+        plugins.remove(pluginId)
+        pluginConfigs.remove(pluginId)
     }
 
     /**
      * 플러그인 초기화
      */
     suspend fun initialize(pluginId: String) {
-        val plugin = plugins[pluginId] ?: throw IllegalArgumentException("Plugin not found: $pluginId")
-        val config = pluginConfigs[pluginId] ?: emptyMap()
+        val plugin = registry.get(pluginId)
+            ?: throw IllegalArgumentException("Plugin not found: $pluginId")
+        val config = registry.getConfig(pluginId) ?: emptyMap()
         plugin.initialize(config)
     }
 
@@ -49,12 +70,12 @@ class PluginManager {
      * 모든 플러그인 초기화
      */
     suspend fun initializeAll() {
-        for ((id, plugin) in plugins) {
+        for (plugin in registry.getAll()) {
             try {
-                val config = pluginConfigs[id] ?: emptyMap()
+                val config = registry.getConfig(plugin.id) ?: emptyMap()
                 plugin.initialize(config)
             } catch (e: Exception) {
-                logger.error(e) { "Failed to initialize plugin: $id" }
+                logger.error(e) { "Failed to initialize plugin: ${plugin.id}" }
             }
         }
     }
@@ -63,42 +84,34 @@ class PluginManager {
      * 모든 플러그인 종료
      */
     suspend fun shutdownAll() {
-        for (plugin in plugins.values) {
-            try {
-                plugin.shutdown()
-            } catch (e: Exception) {
-                logger.error(e) { "Failed to shutdown plugin: ${plugin.id}" }
-            }
-        }
+        loader.unloadAll()
     }
 
     /**
      * 플러그인 조회
      */
-    fun get(pluginId: String): Plugin? = plugins[pluginId]
+    fun get(pluginId: String): Plugin? = registry.get(pluginId)
 
     /**
      * 활성화된 플러그인 목록
      */
-    fun getEnabled(): List<Plugin> = plugins.values.filter { it.enabled }
+    fun getEnabled(): List<Plugin> = registry.getEnabled()
 
     /**
      * 모든 플러그인 목록
      */
-    fun getAll(): List<Plugin> = plugins.values.toList()
+    fun getAll(): List<Plugin> = registry.getAll()
 
     /**
      * 메시지를 처리할 플러그인 찾기
      */
-    fun findHandler(message: String): Plugin? {
-        return getEnabled().find { it.shouldHandle(message) }
-    }
+    fun findHandler(message: String): Plugin? = registry.findHandler(message)
 
     /**
      * 플러그인 명령어 실행
      */
     suspend fun execute(pluginId: String, command: String, args: Map<String, Any>): PluginResult {
-        val plugin = plugins[pluginId]
+        val plugin = registry.get(pluginId)
             ?: return PluginResult(false, error = "Plugin not found: $pluginId")
 
         if (!plugin.enabled) {
@@ -117,7 +130,7 @@ class PluginManager {
      * 플러그인 정보 조회
      */
     fun getPluginInfo(): List<PluginInfo> {
-        return plugins.values.map { plugin ->
+        return registry.getAll().map { plugin ->
             PluginInfo(
                 id = plugin.id,
                 name = plugin.name,
@@ -127,6 +140,25 @@ class PluginManager {
             )
         }
     }
+
+    /**
+     * 플러그인 활성화/비활성화
+     */
+    fun setPluginEnabled(pluginId: String, enabled: Boolean): Boolean {
+        return configManager.setEnabled(pluginId, enabled)
+    }
+
+    /**
+     * 플러그인 리로드
+     */
+    suspend fun reloadPlugin(pluginId: String): Boolean {
+        return loader.reload(pluginId)
+    }
+
+    /**
+     * 레지스트리 요약 정보
+     */
+    fun getSummary(): PluginRegistry.RegistrySummary = registry.getSummary()
 }
 
 data class PluginInfo(

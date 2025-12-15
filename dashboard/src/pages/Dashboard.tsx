@@ -9,7 +9,6 @@ import {
   ThumbsDown,
   TrendingUp,
   Users,
-  Bot,
   Timer,
   DollarSign,
   Zap,
@@ -18,9 +17,7 @@ import {
 import { StatCard, Card, CardHeader } from '@/components/Card'
 import {
   ChartContainer,
-  HourlyTrendChart,
   AgentPerformanceChart,
-  SuccessRatePieChart,
   FeedbackChart,
   TokenUsageChart,
 } from '@/components/Chart'
@@ -29,12 +26,12 @@ import { formatNumber, formatDuration, formatPercent, formatCost, getSatisfactio
 
 type Period = '1h' | '24h' | '7d' | '30d'
 
-export function Dashboard {
+export function Dashboard() {
   const [period, setPeriod] = useState<Period>('7d')
 
   const { data: stats, isLoading, error } = useQuery({
     queryKey: ['dashboard', period],
-    queryFn: => dashboardApi.getStats(period),
+    queryFn: () => dashboardApi.getStats(period),
     refetchInterval: 30000,
   })
 
@@ -57,68 +54,59 @@ export function Dashboard {
     )
   }
 
-  // Mock data for demo
-  const mockStats = stats || {
-    period: '7d',
+  // Default empty stats
+  const emptyStats = {
+    period: period,
     overview: {
-      totalRequests: 1234,
-      successful: 1180,
-      failed: 54,
-      successRate: 0.956,
-      avgDurationMs: 3200,
-      p50DurationMs: 2800,
-      p90DurationMs: 5200,
-      p95DurationMs: 6800,
-      p99DurationMs: 9500,
-      totalCostUsd: 12.45,
-      totalInputTokens: 1000000,
-      totalOutputTokens: 1500000,
+      totalRequests: 0,
+      successful: 0,
+      failed: 0,
+      successRate: 0,
+      avgDurationMs: 0,
+      p50DurationMs: 0,
+      p90DurationMs: 0,
+      p95DurationMs: 0,
+      p99DurationMs: 0,
+      totalCostUsd: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
     },
-    timeseries: Array.from({ length: 7 }, (_, i) => ({
-      timestamp: new Date(Date.now (6 i) * 86400000).toISOString,
-      requests: Math.floor(Math.random * 200) + 100,
-      successful: Math.floor(Math.random * 180) + 90,
-      failed: Math.floor(Math.random * 20) + 5,
-      avgDurationMs: Math.floor(Math.random * 2000) + 2000,
-      totalTokens: Math.floor(Math.random * 500000) + 200000,
-    })),
-    models: [
-      { model: 'claude-sonnet-4', requests: 850, avgDurationMs: 3200, totalTokens: 1800000, successRate: 0.96, costUsd: 8.50 },
-      { model: 'claude-haiku-3-5', requests: 384, avgDurationMs: 1200, totalTokens: 700000, successRate: 0.98, costUsd: 3.95 },
-    ],
-    sources: [
-      { source: 'slack', requests: 980, successRate: 0.95 },
-      { source: 'api', requests: 254, successRate: 0.98 },
-    ],
-    routing: [
-      { method: 'keyword', requests: 450, avgConfidence: 0.95, successRate: 0.98 },
-      { method: 'semantic', requests: 350, avgConfidence: 0.88, successRate: 0.95 },
-      { method: 'llm', requests: 80, avgConfidence: 0.82, successRate: 0.92 },
-      { method: 'default', requests: 354, avgConfidence: 1.0, successRate: 0.88 },
-    ],
-    topRequesters: [
-      { userId: 'U001', displayName: 'Alice', requests: 320, successRate: 0.97, totalTokens: 450000 },
-      { userId: 'U002', displayName: 'Bob', requests: 280, successRate: 0.95, totalTokens: 380000 },
-      { userId: 'U003', displayName: 'Charlie', requests: 220, successRate: 0.98, totalTokens: 310000 },
-    ],
+    timeseries: [],
+    models: [],
+    sources: [],
+    routing: [],
+    topRequesters: [],
     feedback: {
-      thumbsUp: 89,
-      thumbsDown: 12,
-      satisfactionScore: 76.2,
+      thumbsUp: 0,
+      thumbsDown: 0,
+      satisfactionScore: 0,
     },
   }
 
-  const totalTokens = mockStats.overview.totalInputTokens + mockStats.overview.totalOutputTokens
+  // Use actual data with deep merge for safety
+  const dashboardStats = {
+    ...emptyStats,
+    ...stats,
+    overview: { ...emptyStats.overview, ...stats?.overview },
+    feedback: { ...emptyStats.feedback, ...stats?.feedback },
+    timeseries: stats?.timeseries || [],
+    models: stats?.models || [],
+    sources: stats?.sources || [],
+    routing: stats?.routing || [],
+    topRequesters: stats?.topRequesters || [],
+  }
+
+  const totalTokens = dashboardStats.overview.totalInputTokens + dashboardStats.overview.totalOutputTokens
 
   // Transform timeseries for charts
-  const timeseriesChartData = mockStats.timeseries.map(t => ({
+  const timeseriesChartData = dashboardStats.timeseries.map(t => ({
     date: new Date(t.timestamp).toLocaleDateString('en-US', { weekday: 'short' }),
     input: Math.floor(t.totalTokens * 0.4),
     output: Math.floor(t.totalTokens * 0.6),
   }))
 
-  const routingChartData = mockStats.routing.map(r => ({
-    name: r.method.charAt(0).toUpperCase + r.method.slice(1),
+  const routingChartData = dashboardStats.routing.map(r => ({
+    name: r.method.charAt(0).toUpperCase() + r.method.slice(1),
     executions: r.requests,
     successRate: r.successRate,
   }))
@@ -137,7 +125,7 @@ export function Dashboard {
           {(['1h', '24h', '7d', '30d'] as Period[]).map((p) => (
             <button
               key={p}
-              onClick={ => setPeriod(p)}
+              onClick={() => setPeriod(p)}
               className={cn(
                 'px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
                 period === p
@@ -155,29 +143,27 @@ export function Dashboard {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Requests"
-          value={formatNumber(mockStats.overview.totalRequests)}
+          value={formatNumber(dashboardStats.overview.totalRequests)}
           icon={<Activity className="h-6 w-6" />}
           change={{ value: 12.5, label: 'vs last period' }}
           trend="up"
         />
         <StatCard
           title="Success Rate"
-          value={formatPercent(mockStats.overview.successRate)}
+          value={formatPercent(dashboardStats.overview.successRate)}
           icon={<CheckCircle className="h-6 w-6" />}
           change={{ value: 2.1, label: 'vs last period' }}
           trend="up"
         />
         <StatCard
           title="P50 Duration"
-          value={formatDuration(mockStats.overview.p50DurationMs)}
+          value={formatDuration(dashboardStats.overview.p50DurationMs)}
           icon={<Timer className="h-6 w-6" />}
-          description={`P90: ${formatDuration(mockStats.overview.p90DurationMs)}`}
         />
         <StatCard
           title="Total Cost"
-          value={formatCost(mockStats.overview.totalCostUsd)}
+          value={formatCost(dashboardStats.overview.totalCostUsd)}
           icon={<DollarSign className="h-6 w-6" />}
-          description={`${formatNumber(totalTokens)} tokens`}
         />
       </div>
 
@@ -191,19 +177,19 @@ export function Dashboard {
           <div className="flex gap-6 text-sm">
             <div className="text-center">
               <p className="text-muted-foreground">P50</p>
-              <p className="font-semibold">{formatDuration(mockStats.overview.p50DurationMs)}</p>
+              <p className="font-semibold">{formatDuration(dashboardStats.overview.p50DurationMs)}</p>
             </div>
             <div className="text-center">
               <p className="text-muted-foreground">P90</p>
-              <p className="font-semibold text-yellow-600">{formatDuration(mockStats.overview.p90DurationMs)}</p>
+              <p className="font-semibold text-yellow-600">{formatDuration(dashboardStats.overview.p90DurationMs)}</p>
             </div>
             <div className="text-center">
               <p className="text-muted-foreground">P95</p>
-              <p className="font-semibold text-orange-600">{formatDuration(mockStats.overview.p95DurationMs)}</p>
+              <p className="font-semibold text-orange-600">{formatDuration(dashboardStats.overview.p95DurationMs)}</p>
             </div>
             <div className="text-center">
               <p className="text-muted-foreground">P99</p>
-              <p className="font-semibold text-red-600">{formatDuration(mockStats.overview.p99DurationMs)}</p>
+              <p className="font-semibold text-red-600">{formatDuration(dashboardStats.overview.p99DurationMs)}</p>
             </div>
           </div>
         </div>
@@ -232,7 +218,7 @@ export function Dashboard {
         <Card>
           <CardHeader title="Model Usage" description="By model type" />
           <div className="space-y-3">
-            {mockStats.models.map((model) => (
+            {dashboardStats.models.map((model) => (
               <div key={model.model} className="p-3 rounded-lg bg-muted/50">
                 <div className="flex justify-between items-center mb-2">
                   <span className="font-medium text-sm">{model.model}</span>
@@ -245,7 +231,7 @@ export function Dashboard {
                 <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-2">
                   <div
                     className="h-full bg-primary rounded-full"
-                    style={{ width: `${(model.requests / mockStats.overview.totalRequests) * 100}%` }}
+                    style={{ width: `${(model.requests / dashboardStats.overview.totalRequests) * 100}%` }}
                   />
                 </div>
               </div>
@@ -258,21 +244,21 @@ export function Dashboard {
           <CardHeader title="User Feedback" description="Satisfaction metrics" />
           <div className="h-[160px]">
             <FeedbackChart
-              thumbsUp={mockStats.feedback.thumbsUp}
-              thumbsDown={mockStats.feedback.thumbsDown}
+              thumbsUp={dashboardStats.feedback.thumbsUp}
+              thumbsDown={dashboardStats.feedback.thumbsDown}
             />
           </div>
           <div className="mt-4 flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <ThumbsUp className="h-4 w-4 text-green-500" />
-              <span>{mockStats.feedback.thumbsUp}</span>
+              <span>{dashboardStats.feedback.thumbsUp}</span>
             </div>
-            <div className={`font-semibold ${getSatisfactionColor(mockStats.feedback.satisfactionScore)}`}>
-              NPS: {mockStats.feedback.satisfactionScore.toFixed(1)}
+            <div className={`font-semibold ${getSatisfactionColor(dashboardStats.feedback.satisfactionScore)}`}>
+              NPS: {dashboardStats.feedback.satisfactionScore.toFixed(1)}
             </div>
             <div className="flex items-center gap-2">
               <ThumbsDown className="h-4 w-4 text-red-500" />
-              <span>{mockStats.feedback.thumbsDown}</span>
+              <span>{dashboardStats.feedback.thumbsDown}</span>
             </div>
           </div>
         </Card>
@@ -281,7 +267,7 @@ export function Dashboard {
         <Card>
           <CardHeader title="Top Requesters" description="Most active users" />
           <div className="space-y-3">
-            {mockStats.topRequesters.slice(0, 5).map((user, idx) => (
+            {dashboardStats.topRequesters.slice(0, 5).map((user, idx) => (
               <div key={user.userId} className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
                 <div className="flex items-center gap-3">
                   <span className={cn(
@@ -313,7 +299,7 @@ export function Dashboard {
         <Card>
           <CardHeader title="Request Sources" description="Where requests come from" />
           <div className="grid grid-cols-2 gap-4">
-            {mockStats.sources.map((source) => (
+            {dashboardStats.sources.map((source) => (
               <div key={source.source} className="p-4 rounded-lg bg-muted/50">
                 <div className="flex items-center gap-2 mb-2">
                   {source.source === 'slack' ? (
@@ -348,14 +334,14 @@ export function Dashboard {
                 <Users className="h-5 w-5 text-muted-foreground" />
                 <span className="text-sm">Active Users</span>
               </div>
-              <span className="font-semibold">{mockStats.topRequesters.length}</span>
+              <span className="font-semibold">{dashboardStats.topRequesters.length}</span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="h-5 w-5 text-muted-foreground" />
                 <span className="text-sm">Failed Requests</span>
               </div>
-              <span className="font-semibold text-red-500">{mockStats.overview.failed}</span>
+              <span className="font-semibold text-red-500">{dashboardStats.overview.failed}</span>
             </div>
             <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5">
               <div className="flex items-center gap-3">
@@ -363,7 +349,9 @@ export function Dashboard {
                 <span className="text-sm">Avg Tokens/Request</span>
               </div>
               <span className="font-semibold">
-                {formatNumber(Math.round(totalTokens / mockStats.overview.totalRequests))}
+                {formatNumber(dashboardStats.overview.totalRequests > 0
+                  ? Math.round(totalTokens / dashboardStats.overview.totalRequests)
+                  : 0)}
               </span>
             </div>
           </div>
