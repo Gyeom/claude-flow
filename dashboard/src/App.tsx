@@ -1,34 +1,94 @@
+import { Suspense, lazy } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
-import { Dashboard } from '@/pages/Dashboard'
-import { Executions } from '@/pages/Executions'
-import { Agents } from '@/pages/Agents'
-import { Analytics } from '@/pages/Analytics'
-import { Feedback } from '@/pages/Feedback'
-import { Models } from '@/pages/Models'
-import { Errors } from '@/pages/Errors'
-import { Classify } from '@/pages/Classify'
-import { History } from '@/pages/History'
-import { Plugins } from '@/pages/Plugins'
-import { Users } from '@/pages/Users'
-import { Workflows } from '@/pages/Workflows'
+
+// Lazy load pages for code splitting
+const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
+const Executions = lazy(() => import('@/pages/Executions').then(m => ({ default: m.Executions })))
+const Agents = lazy(() => import('@/pages/Agents').then(m => ({ default: m.Agents })))
+const Analytics = lazy(() => import('@/pages/Analytics').then(m => ({ default: m.Analytics })))
+const Feedback = lazy(() => import('@/pages/Feedback').then(m => ({ default: m.Feedback })))
+const Models = lazy(() => import('@/pages/Models').then(m => ({ default: m.Models })))
+const Errors = lazy(() => import('@/pages/Errors').then(m => ({ default: m.Errors })))
+const Classify = lazy(() => import('@/pages/Classify').then(m => ({ default: m.Classify })))
+const History = lazy(() => import('@/pages/History').then(m => ({ default: m.History })))
+const Plugins = lazy(() => import('@/pages/Plugins').then(m => ({ default: m.Plugins })))
+const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })))
+const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
+
+// Loading fallback component
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  )
+}
 
 function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/executions" element={<Executions />} />
-        <Route path="/agents" element={<Agents />} />
-        <Route path="/analytics" element={<Analytics />} />
-        <Route path="/feedback" element={<Feedback />} />
-        <Route path="/models" element={<Models />} />
-        <Route path="/errors" element={<Errors />} />
-        <Route path="/classify" element={<Classify />} />
-        <Route path="/history" element={<History />} />
-        <Route path="/plugins" element={<Plugins />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/workflows" element={<Workflows />} />
+        <Route path="/" element={
+          <Suspense fallback={<PageLoader />}>
+            <Dashboard />
+          </Suspense>
+        } />
+        <Route path="/executions" element={
+          <Suspense fallback={<PageLoader />}>
+            <Executions />
+          </Suspense>
+        } />
+        <Route path="/agents" element={
+          <Suspense fallback={<PageLoader />}>
+            <Agents />
+          </Suspense>
+        } />
+        <Route path="/analytics" element={
+          <Suspense fallback={<PageLoader />}>
+            <Analytics />
+          </Suspense>
+        } />
+        <Route path="/feedback" element={
+          <Suspense fallback={<PageLoader />}>
+            <Feedback />
+          </Suspense>
+        } />
+        <Route path="/models" element={
+          <Suspense fallback={<PageLoader />}>
+            <Models />
+          </Suspense>
+        } />
+        <Route path="/errors" element={
+          <Suspense fallback={<PageLoader />}>
+            <Errors />
+          </Suspense>
+        } />
+        <Route path="/classify" element={
+          <Suspense fallback={<PageLoader />}>
+            <Classify />
+          </Suspense>
+        } />
+        <Route path="/history" element={
+          <Suspense fallback={<PageLoader />}>
+            <History />
+          </Suspense>
+        } />
+        <Route path="/plugins" element={
+          <Suspense fallback={<PageLoader />}>
+            <Plugins />
+          </Suspense>
+        } />
+        <Route path="/users" element={
+          <Suspense fallback={<PageLoader />}>
+            <Users />
+          </Suspense>
+        } />
+        <Route path="/workflows" element={
+          <Suspense fallback={<PageLoader />}>
+            <Workflows />
+          </Suspense>
+        } />
       </Route>
     </Routes>
   )

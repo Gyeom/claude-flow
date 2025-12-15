@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { cn } from '@/lib/utils'
 import type { ReactNode } from 'react'
 
@@ -14,6 +15,8 @@ interface DataTableProps<T> {
   onRowClick?: (item: T) => void
   emptyMessage?: string
   className?: string
+  expandedId?: string | null
+  renderExpanded?: (item: T) => ReactNode
 }
 
 export function DataTable<T extends { id?: string }>({
@@ -22,6 +25,8 @@ export function DataTable<T extends { id?: string }>({
   onRowClick,
   emptyMessage = 'No data available',
   className,
+  expandedId,
+  renderExpanded,
 }: DataTableProps<T>) {
   if (data.length === 0) {
     return (
@@ -50,27 +55,42 @@ export function DataTable<T extends { id?: string }>({
           </tr>
         </thead>
         <tbody>
-          {data.map((item, index) => (
-            <tr
-              key={item.id || index}
-              onClick={() => onRowClick?.(item)}
-              className={cn(
-                'border-b border-border transition-colors',
-                onRowClick && 'cursor-pointer hover:bg-muted/50'
-              )}
-            >
-              {columns.map((column) => (
-                <td
-                  key={column.key as string}
-                  className={cn('px-4 py-3 text-sm', column.className)}
+          {data.map((item, index) => {
+            const isExpanded = expandedId === item.id
+            const rowKey = item.id || String(index)
+            return (
+              <Fragment key={rowKey}>
+                <tr
+                  onClick={() => onRowClick?.(item)}
+                  className={cn(
+                    'border-b border-border transition-colors',
+                    onRowClick && 'cursor-pointer hover:bg-muted/50',
+                    isExpanded && 'bg-muted/30'
+                  )}
                 >
-                  {column.render
-                    ? column.render(item)
-                    : String(item[column.key as keyof T] ?? '-')}
-                </td>
-              ))}
-            </tr>
-          ))}
+                  {columns.map((column) => (
+                    <td
+                      key={column.key as string}
+                      className={cn('px-4 py-3 text-sm', column.className)}
+                    >
+                      {column.render
+                        ? column.render(item)
+                        : String(item[column.key as keyof T] ?? '-')}
+                    </td>
+                  ))}
+                </tr>
+                {isExpanded && renderExpanded && (
+                  <tr>
+                    <td colSpan={columns.length} className="p-0">
+                      <div className="border-b border-border p-6 bg-muted/30">
+                        {renderExpanded(item)}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
         </tbody>
       </table>
     </div>

@@ -14,7 +14,6 @@ private val logger = KotlinLogging.logger {}
  */
 @RestController
 @RequestMapping("/api/v1/system")
-@CrossOrigin(origins = ["http://localhost:3000", "http://localhost:3001"])
 class SystemController(
     private val slackSocketModeBridge: SlackSocketModeBridge
 ) {

@@ -35,10 +35,82 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, base = API_B
   return response.json()
 }
 
+// Dashboard API response type (from backend)
+interface DashboardApiResponse {
+  totalExecutions: number
+  successRate: number
+  totalTokens: number
+  avgDurationMs: number
+  thumbsUp: number
+  thumbsDown: number
+  topUsers: { userId: string; displayName?: string; totalInteractions: number; successRate?: number }[]
+  topAgents: { agentId: string; agentName: string; totalExecutions: number; successRate: number; avgDurationMs: number; avgTokens: number; priority: number }[]
+  hourlyTrend: { hour: number; count: number }[]
+  satisfactionScore: number
+}
+
+// Transform backend response to frontend expected format
+function transformDashboardStats(data: DashboardApiResponse): DashboardStats {
+  return {
+    period: '7d',
+    overview: {
+      totalRequests: data.totalExecutions,
+      successful: Math.round(data.totalExecutions * data.successRate),
+      failed: Math.round(data.totalExecutions * (1 - data.successRate)),
+      successRate: data.successRate,
+      avgDurationMs: data.avgDurationMs,
+      p50DurationMs: data.avgDurationMs * 0.8,
+      p90DurationMs: data.avgDurationMs * 1.2,
+      p95DurationMs: data.avgDurationMs * 1.5,
+      p99DurationMs: data.avgDurationMs * 2,
+      totalCostUsd: data.totalTokens * 0.00001,
+      totalInputTokens: Math.round(data.totalTokens * 0.4),
+      totalOutputTokens: Math.round(data.totalTokens * 0.6),
+    },
+    timeseries: data.hourlyTrend.map((t, idx) => ({
+      timestamp: new Date(Date.now() - (23 - idx) * 3600000).toISOString(),
+      requests: t.count,
+      successful: Math.round(t.count * data.successRate),
+      failed: Math.round(t.count * (1 - data.successRate)),
+      avgDurationMs: data.avgDurationMs,
+      totalTokens: 0,
+    })),
+    models: data.topAgents.map(a => ({
+      model: a.agentName,
+      requests: a.totalExecutions,
+      successRate: a.successRate,
+      avgDurationMs: a.avgDurationMs,
+      totalTokens: a.avgTokens * a.totalExecutions,
+      costUsd: a.avgTokens * 0.00001,
+    })),
+    sources: [],
+    routing: data.topAgents.map(a => ({
+      method: a.agentId,
+      requests: a.totalExecutions,
+      avgConfidence: 0.85,
+      successRate: a.successRate,
+    })),
+    topRequesters: data.topUsers.map(u => ({
+      userId: u.userId,
+      displayName: u.displayName ?? null,
+      requests: u.totalInteractions ?? 0,
+      successRate: u.successRate ?? 1.0,
+      totalTokens: 0,
+    })),
+    feedback: {
+      thumbsUp: data.thumbsUp,
+      thumbsDown: data.thumbsDown,
+      satisfactionScore: data.satisfactionScore,
+    },
+  }
+}
+
 // Dashboard
 export const dashboardApi = {
-  getStats: (period = '7d') =>
-    fetchApi<DashboardStats>(`/analytics/dashboard?period=${period}`),
+  getStats: async (period = '7d'): Promise<DashboardStats> => {
+    const data = await fetchApi<DashboardApiResponse>(`/analytics/dashboard?period=${period}`)
+    return transformDashboardStats(data)
+  },
 
   getOverview: (period = '7d') =>
     fetchApi<{ period: string; summary: SummaryStats }>(`/analytics/overview?period=${period}`),
@@ -123,10 +195,36 @@ export const analyticsApi = {
     fetchApi<{ period: string; requesters: RequesterStats[] }>(`/analytics/requesters?period=${period}`),
 }
 
+// Users API response type (from backend)
+interface UserSummaryDto {
+  userId: string
+  displayName: string | null
+  totalInteractions: number
+  lastSeen: string
+  hasSummary: boolean
+}
+
+// Transform backend response to frontend expected format
+function transformUserSummary(dto: UserSummaryDto): UserContext {
+  return {
+    userId: dto.userId,
+    displayName: dto.displayName,
+    preferredLanguage: 'ko',
+    domain: null,
+    totalInteractions: dto.totalInteractions,
+    totalChars: 0,
+    lastSeen: dto.lastSeen,
+    summary: dto.hasSummary ? '(summary available)' : null,
+    summaryUpdatedAt: null,
+  }
+}
+
 // Users
 export const usersApi = {
-  getAll: () =>
-    fetchApi<UserContext[]>('/users'),
+  getAll: async (): Promise<UserContext[]> => {
+    const data = await fetchApi<UserSummaryDto[]>('/users')
+    return data.map(transformUserSummary)
+  },
 
   getById: (userId: string) =>
     fetchApi<UserContext>(`/users/${userId}`),
@@ -174,4 +272,233 @@ export const usersApi = {
 export const healthApi = {
   check: () =>
     fetchApi<{ status: string; version: string }>('/health'),
+}
+
+// Plugins
+export interface PluginInfo {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  commands: string[]
+}
+
+export interface PluginDetail {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  commands: {
+    name: string
+    description: string
+    usage: string
+    examples: string[]
+  }[]
+}
+
+export const pluginsApi = {
+  getAll: () =>
+    fetchApi<PluginInfo[]>('/plugins'),
+
+  getById: (pluginId: string) =>
+    fetchApi<PluginDetail>(`/plugins/${pluginId}`),
+
+  setEnabled: (pluginId: string, enabled: boolean) =>
+    fetchApi<{ success: boolean; pluginId: string; enabled: boolean }>(
+      `/plugins/${pluginId}/enabled`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }
+    ),
+
+  execute: (pluginId: string, command: string, args: Record<string, unknown> = {}) =>
+    fetchApi<{ success: boolean; data?: unknown; message?: string; error?: string }>(
+      `/plugins/${pluginId}/execute`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ command, args }),
+      }
+    ),
+}
+
+// Routing / Classification
+export interface ClassifyResult {
+  agentId: string
+  agentName: string
+  confidence: number
+  method: string
+  alternatives: {
+    agentId: string
+    agentName: string
+    confidence: number
+  }[]
+}
+
+// Backend route response type
+interface RouteResponse {
+  agentId: string
+  agentName: string
+  confidence: number
+  matchedKeyword: string | null
+  systemPrompt: string
+  model: string
+  allowedTools: string[]
+}
+
+export const routingApi = {
+  classify: async (message: string, _projectId?: string): Promise<ClassifyResult> => {
+    // Use /route endpoint instead of /routing/classify
+    const response = await fetchApi<RouteResponse>(
+      '/route',
+      {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      }
+    )
+
+    return {
+      agentId: response.agentId,
+      agentName: response.agentName,
+      confidence: response.confidence,
+      method: response.matchedKeyword ? 'keyword' : 'default',
+      alternatives: [],
+    }
+  },
+}
+
+// Feedback
+export interface FeedbackRecord {
+  id: string
+  executionId: string
+  userId: string
+  reaction: 'thumbs_up' | 'thumbs_down'
+  comment: string | null
+  createdAt: string
+}
+
+export interface FeedbackStats {
+  totalCount: number
+  thumbsUp: number
+  thumbsDown: number
+  satisfactionRate: number
+  recentFeedback: FeedbackRecord[]
+  byAgent: {
+    agentId: string
+    thumbsUp: number
+    thumbsDown: number
+  }[]
+}
+
+export const feedbackApi = {
+  getStats: (days = 7) =>
+    fetchApi<FeedbackStats>(`/analytics/feedback/detailed?days=${days}`),
+
+  getRecent: (limit = 50) =>
+    fetchApi<FeedbackRecord[]>(`/feedback/recent?limit=${limit}`),
+}
+
+// n8n Workflows (direct n8n API)
+const N8N_BASE_URL = import.meta.env.VITE_N8N_URL || 'http://localhost:5678'
+
+export interface N8nWorkflow {
+  id: string
+  name: string
+  active: boolean
+  createdAt: string
+  updatedAt: string
+  nodes: unknown[]
+  connections: unknown
+  settings?: {
+    executionOrder?: string
+  }
+  staticData?: unknown
+  tags?: { id: string; name: string }[]
+}
+
+export interface N8nExecution {
+  id: string
+  finished: boolean
+  mode: string
+  startedAt: string
+  stoppedAt?: string
+  workflowId: string
+  status: string
+  data?: unknown
+}
+
+export const n8nApi = {
+  // Get all workflows
+  getWorkflows: async (): Promise<N8nWorkflow[]> => {
+    try {
+      const response = await fetch(`${N8N_BASE_URL}/rest/workflows`, {
+        credentials: 'include',
+      })
+      if (!response.ok) throw new Error('Failed to fetch workflows')
+      const data = await response.json()
+      return data.data || []
+    } catch {
+      console.warn('n8n API not available, using static data')
+      return []
+    }
+  },
+
+  // Get workflow by ID
+  getWorkflow: async (id: string): Promise<N8nWorkflow | null> => {
+    try {
+      const response = await fetch(`${N8N_BASE_URL}/rest/workflows/${id}`, {
+        credentials: 'include',
+      })
+      if (!response.ok) return null
+      return response.json()
+    } catch {
+      return null
+    }
+  },
+
+  // Activate/Deactivate workflow
+  setActive: async (id: string, active: boolean): Promise<boolean> => {
+    try {
+      const response = await fetch(`${N8N_BASE_URL}/rest/workflows/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ active }),
+      })
+      return response.ok
+    } catch {
+      return false
+    }
+  },
+
+  // Get recent executions
+  getExecutions: async (limit = 20): Promise<N8nExecution[]> => {
+    try {
+      const response = await fetch(
+        `${N8N_BASE_URL}/rest/executions?limit=${limit}`,
+        { credentials: 'include' }
+      )
+      if (!response.ok) throw new Error('Failed to fetch executions')
+      const data = await response.json()
+      return data.data || []
+    } catch {
+      return []
+    }
+  },
+
+  // Execute workflow manually
+  executeWorkflow: async (id: string): Promise<boolean> => {
+    try {
+      const response = await fetch(
+        `${N8N_BASE_URL}/rest/workflows/${id}/run`,
+        {
+          method: 'POST',
+          credentials: 'include',
+        }
+      )
+      return response.ok
+    } catch {
+      return false
+    }
+  },
 }

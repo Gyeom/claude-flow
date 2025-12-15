@@ -22,7 +22,6 @@ private val logger = KotlinLogging.logger {}
  */
 @RestController
 @RequestMapping("/api/v1/users")
-@CrossOrigin(origins = ["http://localhost:3000", "http://localhost:3001"])
 class UsersController(
     private val storage: Storage
 ) {

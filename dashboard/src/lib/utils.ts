@@ -5,23 +5,27 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatNumber(num: number): string {
+export function formatNumber(num: number | undefined | null): string {
+  if (num == null) return '0'
   if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`
   if (num >= 1000) return `${(num / 1000).toFixed(1)}K`
   return num.toString()
 }
 
-export function formatDuration(ms: number): string {
+export function formatDuration(ms: number | undefined | null): string {
+  if (ms == null) return '0ms'
   if (ms < 1000) return `${ms}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
   return `${(ms / 60000).toFixed(1)}m`
 }
 
-export function formatCost(cost: number): string {
+export function formatCost(cost: number | undefined | null): string {
+  if (cost == null) return '$0.0000'
   return `$${cost.toFixed(4)}`
 }
 
-export function formatPercent(value: number): string {
+export function formatPercent(value: number | undefined | null): string {
+  if (value == null) return '0.0%'
   return `${(value * 100).toFixed(1)}%`
 }
 

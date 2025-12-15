@@ -10,6 +10,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { Card, CardHeader } from '@/components/Card'
+import { routingApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface RoutingResult {
@@ -29,19 +30,29 @@ export function Classify() {
   const [prompt, setPrompt] = useState('')
   const [projectId, setProjectId] = useState('')
   const [results, setResults] = useState<RoutingResult[]>([])
+  const [latestResult, setLatestResult] = useState<RoutingResult | null>(null)
 
   const classifyMutation = useMutation({
     mutationFn: async (data: { prompt: string; projectId?: string }) => {
-      const response = await fetch('/api/v1/route', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      })
-      if (!response.ok) throw new Error('Classification failed')
-      return response.json()
+      const startTime = Date.now()
+      const result = await routingApi.classify(data.prompt, data.projectId)
+      const durationMs = Date.now() - startTime
+      return {
+        ...result,
+        durationMs,
+      }
     },
     onSuccess: (data) => {
-      setResults(prev => [data, ...prev].slice(0, 10))
+      const result: RoutingResult = {
+        agentId: data.agentId,
+        agentName: data.agentName,
+        confidence: data.confidence,
+        method: data.method as RoutingResult['method'],
+        durationMs: data.durationMs,
+        alternatives: data.alternatives,
+      }
+      setLatestResult(result)
+      setResults(prev => [result, ...prev].slice(0, 10))
     },
   })
 
@@ -66,18 +77,8 @@ export function Classify() {
     return 'text-red-500'
   }
 
-  // Mock result for demo
-  const mockResult: RoutingResult = {
-    agentId: 'code-reviewer',
-    agentName: 'Code Reviewer',
-    confidence: 0.92,
-    method: 'semantic',
-    durationMs: 45,
-    alternatives: [
-      { agentId: 'general', agentName: 'General Assistant', confidence: 0.65 },
-      { agentId: 'bug-fixer', agentName: 'Bug Fixer', confidence: 0.58 },
-    ],
-  }
+  // Display result - either from API or show placeholder
+  const displayResult = latestResult
 
   return (
     <div className="space-y-8">
@@ -133,89 +134,112 @@ export function Classify() {
             Classify
           </button>
         </form>
+
+        {classifyMutation.isError && (
+          <div className="mt-4 p-4 rounded-lg bg-destructive/10 text-destructive border border-destructive/20">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5" />
+              <p className="text-sm">Classification failed. Please try again.</p>
+            </div>
+          </div>
+        )}
       </Card>
 
-      {/* Demo Result */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Selected Agent */}
-        <Card>
-          <CardHeader
-            title="Selected Agent"
-            description="The agent that would handle this request"
-          />
-          <div className="space-y-4">
-            <div className="flex items-center gap-4 p-4 rounded-lg bg-primary/5 border border-primary/20">
-              <div className="p-3 rounded-lg bg-primary/10">
-                <Bot className="h-6 w-6 text-primary" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-semibold text-lg">{mockResult.agentName}</h3>
-                <p className="text-sm text-muted-foreground">{mockResult.agentId}</p>
-              </div>
-              <div className="text-right">
-                <p className={cn("text-2xl font-bold", getConfidenceColor(mockResult.confidence))}>
-                  {(mockResult.confidence * 100).toFixed(0)}%
-                </p>
-                <p className="text-xs text-muted-foreground">confidence</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="p-3 rounded-lg bg-muted/50">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-                  <Target className="h-4 w-4" />
-                  Method
+      {/* Result Display */}
+      {displayResult ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Selected Agent */}
+          <Card>
+            <CardHeader
+              title="Selected Agent"
+              description="The agent that would handle this request"
+            />
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 p-4 rounded-lg bg-primary/5 border border-primary/20">
+                <div className="p-3 rounded-lg bg-primary/10">
+                  <Bot className="h-6 w-6 text-primary" />
                 </div>
-                <span className={cn(
-                  "inline-flex px-2 py-1 rounded text-xs font-medium border",
-                  getMethodColor(mockResult.method)
-                )}>
-                  {mockResult.method.toUpperCase()}
-                </span>
-              </div>
-              <div className="p-3 rounded-lg bg-muted/50">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-                  <Clock className="h-4 w-4" />
-                  Duration
-                </div>
-                <p className="font-semibold">{mockResult.durationMs}ms</p>
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Alternatives */}
-        <Card>
-          <CardHeader
-            title="Alternative Matches"
-            description="Other agents that could handle this request"
-          />
-          <div className="space-y-3">
-            {mockResult.alternatives?.map((alt, index) => (
-              <div
-                key={alt.agentId}
-                className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors"
-              >
-                <span className="text-sm text-muted-foreground w-6">#{index + 2}</span>
                 <div className="flex-1">
-                  <p className="font-medium">{alt.agentName}</p>
-                  <p className="text-xs text-muted-foreground">{alt.agentId}</p>
+                  <h3 className="font-semibold text-lg">{displayResult.agentName}</h3>
+                  <p className="text-sm text-muted-foreground">{displayResult.agentId}</p>
                 </div>
                 <div className="text-right">
-                  <p className={cn("font-semibold", getConfidenceColor(alt.confidence))}>
-                    {(alt.confidence * 100).toFixed(0)}%
+                  <p className={cn("text-2xl font-bold", getConfidenceColor(displayResult.confidence))}>
+                    {(displayResult.confidence * 100).toFixed(0)}%
                   </p>
+                  <p className="text-xs text-muted-foreground">confidence</p>
                 </div>
               </div>
-            ))}
-            {(!mockResult.alternatives || mockResult.alternatives.length === 0) && (
-              <p className="text-center text-muted-foreground py-4">
-                No alternative matches found
-              </p>
-            )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                    <Target className="h-4 w-4" />
+                    Method
+                  </div>
+                  <span className={cn(
+                    "inline-flex px-2 py-1 rounded text-xs font-medium border",
+                    getMethodColor(displayResult.method)
+                  )}>
+                    {displayResult.method.toUpperCase()}
+                  </span>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/50">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
+                    <Clock className="h-4 w-4" />
+                    Duration
+                  </div>
+                  <p className="font-semibold">{displayResult.durationMs}ms</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Alternatives */}
+          <Card>
+            <CardHeader
+              title="Alternative Matches"
+              description="Other agents that could handle this request"
+            />
+            <div className="space-y-3">
+              {displayResult.alternatives?.map((alt, index) => (
+                <div
+                  key={alt.agentId}
+                  className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors"
+                >
+                  <span className="text-sm text-muted-foreground w-6">#{index + 2}</span>
+                  <div className="flex-1">
+                    <p className="font-medium">{alt.agentName}</p>
+                    <p className="text-xs text-muted-foreground">{alt.agentId}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("font-semibold", getConfidenceColor(alt.confidence))}>
+                      {(alt.confidence * 100).toFixed(0)}%
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {(!displayResult.alternatives || displayResult.alternatives.length === 0) && (
+                <p className="text-center text-muted-foreground py-4">
+                  No alternative matches found
+                </p>
+              )}
+            </div>
+          </Card>
+        </div>
+      ) : (
+        <Card className="border-dashed">
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="p-4 rounded-full bg-muted mb-4">
+              <Target className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <h3 className="font-semibold mb-1">No Classification Result</h3>
+            <p className="text-sm text-muted-foreground">
+              Enter a prompt above and click "Classify" to see routing results
+            </p>
           </div>
         </Card>
-      </div>
+      )}
 
       {/* Routing Method Guide */}
       <Card>

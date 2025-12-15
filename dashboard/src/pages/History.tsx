@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   History as HistoryIcon,
   Search,
@@ -14,83 +14,30 @@ import {
   ChevronUp,
   Copy,
   ExternalLink,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react'
 import { Card } from '@/components/Card'
 import { StatusBadge } from '@/components/DataTable'
 import { executionsApi } from '@/lib/api'
 import { formatDuration } from '@/lib/utils'
-import type { ExecutionRecord } from '@/types'
 
 export function History() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [limit, setLimit] = useState(50)
+  const queryClient = useQueryClient()
 
-  const { data: executions, isLoading } = useQuery({
+  const { data: executions, isLoading, error } = useQuery({
     queryKey: ['executions', 'recent', limit],
     queryFn: () => executionsApi.getRecent(limit),
   })
 
-  // Mock data for demo
-  const mockExecutions: ExecutionRecord[] = executions || [
-    {
-      id: 'exec-001',
-      prompt: '이 코드의 버그를 찾아줘',
-      result: '분석 결과, 해당 코드에서 null pointer exception 가능성이 있습니다...',
-      status: 'SUCCESS',
-      agentId: 'code-reviewer',
-      projectId: 'my-project',
-      userId: 'U12345',
-      channel: '#dev-support',
-      threadTs: '1234567890.123456',
-      replyTs: '1234567890.123457',
-      durationMs: 3200,
-      inputTokens: 1500,
-      outputTokens: 2800,
-      cost: 0.015,
-      error: null,
-      createdAt: new Date(Date.now() - 300000).toISOString(),
-    },
-    {
-      id: 'exec-002',
-      prompt: 'API 문서 생성해줘',
-      result: null,
-      status: 'ERROR',
-      agentId: 'doc-generator',
-      projectId: 'my-project',
-      userId: 'U67890',
-      channel: '#documentation',
-      threadTs: null,
-      replyTs: null,
-      durationMs: 15000,
-      inputTokens: 500,
-      outputTokens: 0,
-      cost: 0,
-      error: 'Timeout: Request took too long',
-      createdAt: new Date(Date.now() - 600000).toISOString(),
-    },
-    {
-      id: 'exec-003',
-      prompt: '테스트 케이스 작성해줘',
-      result: 'describe("Calculator", () => {\n  it("should add two numbers", () => {\n    expect(add(1, 2)).toBe(3);\n  });\n});',
-      status: 'SUCCESS',
-      agentId: 'test-writer',
-      projectId: null,
-      userId: 'U11111',
-      channel: '#testing',
-      threadTs: '1234567891.123456',
-      replyTs: '1234567891.123458',
-      durationMs: 4500,
-      inputTokens: 800,
-      outputTokens: 1200,
-      cost: 0.008,
-      error: null,
-      createdAt: new Date(Date.now() - 900000).toISOString(),
-    },
-  ]
+  // Use API data directly
+  const executionList = executions || []
 
-  const filteredExecutions = mockExecutions.filter(exec => {
+  const filteredExecutions = executionList.filter(exec => {
     if (statusFilter !== 'all' && exec.status.toLowerCase() !== statusFilter) return false
     if (searchQuery && !exec.prompt.toLowerCase().includes(searchQuery.toLowerCase())) return false
     return true
@@ -111,6 +58,22 @@ export function History() {
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <AlertCircle className="h-12 w-12 text-destructive" />
+        <p className="text-muted-foreground">Failed to load execution history</p>
+        <button
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['executions'] })}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -268,15 +231,15 @@ export function History() {
                 <div className="flex items-center gap-6 text-sm">
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">Input:</span>
-                    <span className="font-medium">{exec.inputTokens.toLocaleString()} tokens</span>
+                    <span className="font-medium">{(exec.inputTokens ?? 0).toLocaleString()} tokens</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">Output:</span>
-                    <span className="font-medium">{exec.outputTokens.toLocaleString()} tokens</span>
+                    <span className="font-medium">{(exec.outputTokens ?? 0).toLocaleString()} tokens</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">Total:</span>
-                    <span className="font-medium">{(exec.inputTokens + exec.outputTokens).toLocaleString()} tokens</span>
+                    <span className="font-medium">{((exec.inputTokens ?? 0) + (exec.outputTokens ?? 0)).toLocaleString()} tokens</span>
                   </div>
                 </div>
 

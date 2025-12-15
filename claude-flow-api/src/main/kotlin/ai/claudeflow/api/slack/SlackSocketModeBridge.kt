@@ -9,6 +9,8 @@ import ai.claudeflow.core.event.SlackEvent
 import ai.claudeflow.core.event.SlackEventType
 import ai.claudeflow.core.event.SlackFile
 import ai.claudeflow.core.event.WebhookPayload
+import ai.claudeflow.core.storage.Storage
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.slack.api.Slack
 import com.slack.api.bolt.App
 import com.slack.api.bolt.AppConfig
@@ -41,12 +43,14 @@ class SlackSocketModeBridge(
     private val slackConfig: SlackConfig,
     private val webhookConfig: WebhookConfig,
     private val webhookSender: WebhookSender,
+    private val storage: Storage? = null,
     private val actionTriggerConfig: ActionTriggerConfig = ActionTriggerConfig(),
     private val alertService: AlertService? = null,
     private val maxReconnectAttempts: Int = 10,
     private val initialReconnectDelayMs: Long = 1000,
     private val maxReconnectDelayMs: Long = 60000
 ) {
+    private val objectMapper = jacksonObjectMapper()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val isRunning = AtomicBoolean(false)
     private var socketModeApp: SocketModeApp? = null
@@ -288,7 +292,8 @@ class SlackSocketModeBridge(
         for (msg in toRetry) {
             if (msg.retryCount >= 5) {
                 logger.error { "Message permanently failed after ${msg.retryCount} retries: ${msg.event.id}" }
-                // TODO: Store in dead letter storage
+                // Store in dead letter storage
+                saveToDeadLetter(msg, "Max retry count exceeded")
                 continue
             }
 
@@ -336,10 +341,87 @@ class SlackSocketModeBridge(
         }
         socketModeApp = null
 
-        // Process remaining failed messages
+        // Persist remaining failed messages to storage for recovery on restart
         if (failedMessageQueue.isNotEmpty()) {
-            logger.warn { "Stopping with ${failedMessageQueue.size} messages in queue" }
-            // TODO: Persist to storage for recovery on restart
+            logger.warn { "Stopping with ${failedMessageQueue.size} messages in queue, persisting for recovery..." }
+            persistFailedMessagesForRecovery()
+        }
+    }
+
+    /**
+     * Save a failed message to dead letter storage
+     */
+    private fun saveToDeadLetter(msg: FailedMessage, errorMessage: String) {
+        try {
+            storage?.saveToDeadLetter(
+                eventId = msg.event.id,
+                eventType = msg.event.type.name,
+                channel = msg.event.channel,
+                userId = msg.event.user,
+                text = msg.event.text,
+                endpoint = msg.endpoint,
+                payload = objectMapper.writeValueAsString(msg),
+                errorMessage = errorMessage,
+                retryCount = msg.retryCount
+            )
+            logger.info { "Message saved to dead letter queue: ${msg.event.id}" }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to save message to dead letter queue: ${msg.event.id}" }
+        }
+    }
+
+    /**
+     * Persist failed messages to storage for recovery on restart
+     */
+    private fun persistFailedMessagesForRecovery() {
+        var persisted = 0
+        while (failedMessageQueue.isNotEmpty()) {
+            val msg = failedMessageQueue.poll() ?: break
+            try {
+                storage?.saveToDeadLetter(
+                    eventId = msg.event.id,
+                    eventType = msg.event.type.name,
+                    channel = msg.event.channel,
+                    userId = msg.event.user,
+                    text = msg.event.text,
+                    endpoint = msg.endpoint,
+                    payload = objectMapper.writeValueAsString(msg),
+                    errorMessage = "Service shutdown - pending recovery",
+                    retryCount = msg.retryCount
+                )
+                persisted++
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to persist message for recovery: ${msg.event.id}" }
+            }
+        }
+        logger.info { "Persisted $persisted messages for recovery on restart" }
+    }
+
+    /**
+     * Load failed messages from storage on startup (call after start())
+     */
+    fun loadPersistedMessages() {
+        try {
+            val messages = storage?.getDeadLetterMessages(100) ?: return
+            if (messages.isEmpty()) return
+
+            logger.info { "Loading ${messages.size} persisted messages for retry..." }
+
+            for (dlm in messages) {
+                try {
+                    val msg = objectMapper.readValue(dlm.payload, FailedMessage::class.java)
+                    if (failedMessageQueue.size < maxQueueSize) {
+                        failedMessageQueue.offer(msg)
+                        storage?.deleteFromDeadLetter(dlm.id)
+                    }
+                } catch (e: Exception) {
+                    logger.warn(e) { "Failed to deserialize persisted message: ${dlm.id}" }
+                }
+            }
+
+            logger.info { "Loaded ${failedMessageQueue.size} messages for retry" }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to load persisted messages" }
         }
     }
 

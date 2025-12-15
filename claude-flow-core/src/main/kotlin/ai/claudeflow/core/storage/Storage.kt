@@ -174,6 +174,24 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 )
             """)
 
+            // Dead Letter Queue 테이블 (실패한 메시지 저장)
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS dead_letter_queue (
+                    id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    channel TEXT,
+                    user_id TEXT,
+                    text TEXT,
+                    endpoint TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    error_message TEXT,
+                    retry_count INTEGER DEFAULT 0,
+                    failed_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+
             // 인덱스 생성
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_channel ON executions(channel)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_created ON executions(created_at)")
@@ -182,6 +200,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_routing_metrics_created ON routing_metrics(created_at)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_queue(created_at)")
         }
     }
 
@@ -396,6 +415,110 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         }
     }
 
+    // ==================== Dead Letter Queue ====================
+
+    /**
+     * 실패한 메시지를 Dead Letter Queue에 저장
+     */
+    fun saveToDeadLetter(
+        eventId: String,
+        eventType: String,
+        channel: String?,
+        userId: String?,
+        text: String?,
+        endpoint: String,
+        payload: String,
+        errorMessage: String?,
+        retryCount: Int
+    ) {
+        val sql = """
+            INSERT INTO dead_letter_queue
+            (id, event_id, event_type, channel, user_id, text, endpoint, payload, error_message, retry_count, failed_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, java.util.UUID.randomUUID().toString())
+            stmt.setString(2, eventId)
+            stmt.setString(3, eventType)
+            stmt.setString(4, channel)
+            stmt.setString(5, userId)
+            stmt.setString(6, text)
+            stmt.setString(7, endpoint)
+            stmt.setString(8, payload)
+            stmt.setString(9, errorMessage)
+            stmt.setInt(10, retryCount)
+            stmt.setString(11, Instant.now().toString())
+            stmt.setString(12, Instant.now().toString())
+            stmt.executeUpdate()
+        }
+        logger.debug { "Message saved to dead letter queue: $eventId" }
+    }
+
+    /**
+     * Dead Letter Queue에서 재시도할 메시지 조회
+     */
+    fun getDeadLetterMessages(limit: Int = 100): List<DeadLetterMessage> {
+        val sql = """
+            SELECT id, event_id, event_type, channel, user_id, text, endpoint, payload, error_message, retry_count, failed_at, created_at
+            FROM dead_letter_queue
+            ORDER BY created_at ASC
+            LIMIT ?
+        """
+        return connection.prepareStatement(sql).use { stmt ->
+            stmt.setInt(1, limit)
+            val rs = stmt.executeQuery()
+            val messages = mutableListOf<DeadLetterMessage>()
+            while (rs.next()) {
+                messages.add(DeadLetterMessage(
+                    id = rs.getString("id"),
+                    eventId = rs.getString("event_id"),
+                    eventType = rs.getString("event_type"),
+                    channel = rs.getString("channel"),
+                    userId = rs.getString("user_id"),
+                    text = rs.getString("text"),
+                    endpoint = rs.getString("endpoint"),
+                    payload = rs.getString("payload"),
+                    errorMessage = rs.getString("error_message"),
+                    retryCount = rs.getInt("retry_count"),
+                    failedAt = rs.getString("failed_at"),
+                    createdAt = rs.getString("created_at")
+                ))
+            }
+            messages
+        }
+    }
+
+    /**
+     * Dead Letter Queue에서 메시지 삭제
+     */
+    fun deleteFromDeadLetter(id: String): Boolean {
+        val sql = "DELETE FROM dead_letter_queue WHERE id = ?"
+        return connection.prepareStatement(sql).use { stmt ->
+            stmt.setString(1, id)
+            stmt.executeUpdate() > 0
+        }
+    }
+
+    /**
+     * Dead Letter Queue 통계
+     */
+    fun getDeadLetterStats(): DeadLetterStats {
+        val countSql = "SELECT COUNT(*) as total FROM dead_letter_queue"
+        val oldestSql = "SELECT MIN(created_at) as oldest FROM dead_letter_queue"
+
+        val total = connection.prepareStatement(countSql).use { stmt ->
+            val rs = stmt.executeQuery()
+            if (rs.next()) rs.getInt("total") else 0
+        }
+
+        val oldest = connection.prepareStatement(oldestSql).use { stmt ->
+            val rs = stmt.executeQuery()
+            if (rs.next()) rs.getString("oldest") else null
+        }
+
+        return DeadLetterStats(total = total, oldestMessageAt = oldest)
+    }
+
     fun close() {
         connection.close()
     }
@@ -410,6 +533,26 @@ data class StorageStats(
     val avgDurationMs: Double,
     val thumbsUp: Int,
     val thumbsDown: Int
+)
+
+data class DeadLetterMessage(
+    val id: String,
+    val eventId: String,
+    val eventType: String,
+    val channel: String?,
+    val userId: String?,
+    val text: String?,
+    val endpoint: String,
+    val payload: String,
+    val errorMessage: String?,
+    val retryCount: Int,
+    val failedAt: String,
+    val createdAt: String
+)
+
+data class DeadLetterStats(
+    val total: Int,
+    val oldestMessageAt: String?
 )
 
 // Re-export from repositories for backwards compatibility

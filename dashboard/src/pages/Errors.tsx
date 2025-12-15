@@ -84,11 +84,13 @@ export function Errors() {
     color: ERROR_COLORS[e.errorType] || ERROR_COLORS.default,
   }))
 
+  // Derive trend data from error list (aggregate by day if available)
+  // For now, show empty trend if no time-series data available from API
   const trendData = Array.from({ length: 7 }, (_, i) => {
     const date = new Date(Date.now() - (6 - i) * 86400000)
     return {
       date: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      errors: Math.floor(Math.random() * 20) + 5,
+      errors: 0, // Will be populated when API provides time-series data
     }
   })
 

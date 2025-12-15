@@ -49,27 +49,28 @@ export function Feedback() {
 
   const isLoading = feedbackLoading
 
-  // Mock data for demo
-  const mockFeedback = feedback || {
-    totalFeedback: 156,
-    positiveCount: 128,
-    negativeCount: 28,
-    positiveRate: 0.821,
-    negativeRate: 0.179,
-    satisfactionScore: 72.5,
+  // Use API data directly with default values
+  const feedbackData = feedback || {
+    totalFeedback: 0,
+    positiveCount: 0,
+    negativeCount: 0,
+    positiveRate: 0,
+    negativeRate: 0,
+    satisfactionScore: 0,
   }
 
   const pieData = [
-    { name: 'Positive', value: mockFeedback.positiveCount, color: COLORS.positive },
-    { name: 'Negative', value: mockFeedback.negativeCount, color: COLORS.negative },
+    { name: 'Positive', value: feedbackData.positiveCount, color: COLORS.positive },
+    { name: 'Negative', value: feedbackData.negativeCount, color: COLORS.negative },
   ]
 
+  // Trend data placeholder - will be populated when API provides time-series feedback data
   const trendData = Array.from({ length: 7 }, (_, i) => {
     const date = new Date(Date.now() - (6 - i) * 86400000)
     return {
       date: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      positive: Math.floor(Math.random() * 20) + 10,
-      negative: Math.floor(Math.random() * 5) + 1,
+      positive: 0,
+      negative: 0,
     }
   })
 
@@ -123,19 +124,19 @@ export function Feedback() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <StatCard
           title="Total Feedback"
-          value={formatNumber(mockFeedback.totalFeedback)}
+          value={formatNumber(feedbackData.totalFeedback)}
           icon={<TrendingUp className="h-6 w-6" />}
         />
         <StatCard
           title="Positive"
-          value={formatNumber(mockFeedback.positiveCount)}
+          value={formatNumber(feedbackData.positiveCount)}
           icon={<ThumbsUp className="h-6 w-6 text-green-500" />}
           trend="up"
           className="border-green-500/30"
         />
         <StatCard
           title="Negative"
-          value={formatNumber(mockFeedback.negativeCount)}
+          value={formatNumber(feedbackData.negativeCount)}
           icon={<ThumbsDown className="h-6 w-6 text-red-500" />}
           trend="down"
           className="border-red-500/30"
@@ -144,11 +145,11 @@ export function Feedback() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Satisfaction Score</p>
-              <p className={cn("text-3xl font-bold mt-1", getSatisfactionColor(mockFeedback.satisfactionScore))}>
-                {mockFeedback.satisfactionScore.toFixed(1)}
+              <p className={cn("text-3xl font-bold mt-1", getSatisfactionColor(feedbackData.satisfactionScore))}>
+                {feedbackData.satisfactionScore.toFixed(1)}
               </p>
             </div>
-            {getSatisfactionIcon(mockFeedback.satisfactionScore)}
+            {getSatisfactionIcon(feedbackData.satisfactionScore)}
           </div>
         </Card>
       </div>
@@ -226,13 +227,13 @@ export function Feedback() {
                   Positive Rate
                 </span>
                 <span className="font-semibold text-green-500">
-                  {formatPercent(mockFeedback.positiveRate)}
+                  {formatPercent(feedbackData.positiveRate)}
                 </span>
               </div>
               <div className="h-3 bg-muted rounded-full overflow-hidden">
                 <div
                   className="h-full bg-green-500 rounded-full transition-all"
-                  style={{ width: `${mockFeedback.positiveRate * 100}%` }}
+                  style={{ width: `${feedbackData.positiveRate * 100}%` }}
                 />
               </div>
             </div>
@@ -244,13 +245,13 @@ export function Feedback() {
                   Negative Rate
                 </span>
                 <span className="font-semibold text-red-500">
-                  {formatPercent(mockFeedback.negativeRate)}
+                  {formatPercent(feedbackData.negativeRate)}
                 </span>
               </div>
               <div className="h-3 bg-muted rounded-full overflow-hidden">
                 <div
                   className="h-full bg-red-500 rounded-full transition-all"
-                  style={{ width: `${mockFeedback.negativeRate * 100}%` }}
+                  style={{ width: `${feedbackData.negativeRate * 100}%` }}
                 />
               </div>
             </div>
@@ -267,15 +268,15 @@ export function Feedback() {
               <div className="absolute inset-0 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-t-full" />
               <div className="absolute bottom-0 left-1/2 w-2 h-20 bg-foreground origin-bottom -translate-x-1/2"
                 style={{
-                  transform: `translateX(-50%) rotate(${(mockFeedback.satisfactionScore - 50) * 1.8}deg)`,
+                  transform: `translateX(-50%) rotate(${(feedbackData.satisfactionScore - 50) * 1.8}deg)`,
                 }}
               />
             </div>
-            <p className={cn("text-4xl font-bold mt-4", getSatisfactionColor(mockFeedback.satisfactionScore))}>
-              {mockFeedback.satisfactionScore.toFixed(1)}%
+            <p className={cn("text-4xl font-bold mt-4", getSatisfactionColor(feedbackData.satisfactionScore))}>
+              {feedbackData.satisfactionScore.toFixed(1)}%
             </p>
             <p className="text-sm text-muted-foreground mt-1">
-              {mockFeedback.satisfactionScore >= 70 ? 'Great!' : mockFeedback.satisfactionScore >= 50 ? 'Good' : 'Needs Improvement'}
+              {feedbackData.satisfactionScore >= 70 ? 'Great!' : feedbackData.satisfactionScore >= 50 ? 'Good' : 'Needs Improvement'}
             </p>
           </div>
         </Card>

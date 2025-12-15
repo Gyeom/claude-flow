@@ -10,20 +10,20 @@ import {
   ChevronDown,
   ChevronUp,
   AlertCircle,
+  RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader } from '@/components/Card'
 import { PriorityBadge, KeywordBadge } from '@/components/DataTable'
 import { agentsApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { Agent } from '@/types'
 
 export function Agents() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const queryClient = useQueryClient()
 
-  const { data: agents, isLoading } = useQuery({
+  const { data: agents, isLoading, error } = useQuery({
     queryKey: ['agents'],
     queryFn: agentsApi.getAll,
   })
@@ -51,56 +51,26 @@ export function Agents() {
     },
   })
 
-  // Mock data for demo
-  const mockAgents: Agent[] = agents || [
-    {
-      id: 'general',
-      name: 'General Assistant',
-      description: '|x È8Ð õÀX” Ðt¸',
-      keywords: ['È8', 'help', 'ÄÀ'],
-      systemPrompt: 'You are a helpful AI assistant...',
-      model: 'claude-sonnet-4-20250514',
-      maxTokens: 4096,
-      allowedTools: [],
-      workingDirectory: null,
-      enabled: true,
-      priority: 0,
-      examples: ['tp ´»Œ X”p|', '$…t'],
-      projectId: null,
-    },
-    {
-      id: 'code-reviewer',
-      name: 'Code Reviewer',
-      description: 'TÜ ¬ð| ‰X” Ðt¸',
-      keywords: ['review', '¬ð', 'MR', 'PR'],
-      systemPrompt: 'You are a senior code reviewer...',
-      model: 'claude-sonnet-4-20250514',
-      maxTokens: 4096,
-      allowedTools: ['Read', 'Grep', 'Glob'],
-      workingDirectory: null,
-      enabled: true,
-      priority: 100,
-      examples: ['t TÜ ¬ðt', 'MR € '],
-      projectId: null,
-    },
-    {
-      id: 'bug-fixer',
-      name: 'Bug Fixer',
-      description: '„ø| „Xà X” Ðt¸',
-      keywords: ['fix', 'bug', '„ø', ''],
-      systemPrompt: 'You are a bug fixing expert...',
-      model: 'claude-sonnet-4-20250514',
-      maxTokens: 4096,
-      allowedTools: ['Read', 'Edit', 'Grep', 'Glob', 'Bash'],
-      workingDirectory: null,
-      enabled: true,
-      priority: 200,
-      examples: ['„ø t', 'Ðì ÝX”p àÐ'],
-      projectId: null,
-    },
-  ]
+  // Use API data directly
+  const agentList = agents || []
 
   const isBuiltIn = (id: string) => ['general', 'code-reviewer', 'bug-fixer'].includes(id)
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <AlertCircle className="h-12 w-12 text-destructive" />
+        <p className="text-muted-foreground">Failed to load agents</p>
+        <button
+          onClick={() => queryClient.invalidateQueries({ queryKey: ['agents'] })}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Retry
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -126,9 +96,27 @@ export function Agents() {
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
+      ) : agentList.length === 0 ? (
+        <Card className="border-dashed">
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="p-4 rounded-full bg-muted mb-4">
+              <Bot className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <h3 className="font-semibold mb-1">No Agents Found</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Create your first agent to get started
+            </p>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Create Agent
+            </button>
+          </div>
+        </Card>
       ) : (
         <div className="grid gap-4">
-          {mockAgents.map((agent) => (
+          {agentList.map((agent) => (
             <Card key={agent.id} className="p-0 overflow-hidden">
               {/* Agent Header */}
               <div
@@ -228,19 +216,21 @@ export function Agents() {
                   </div>
 
                   {/* Examples */}
-                  <div>
-                    <h4 className="text-sm font-medium mb-2">Semantic Routing Examples</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {agent.examples.map((ex, i) => (
-                        <span
-                          key={i}
-                          className="text-xs px-2 py-1 rounded-md bg-secondary text-secondary-foreground"
-                        >
-                          "{ex}"
-                        </span>
-                      ))}
+                  {agent.examples.length > 0 && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-2">Semantic Routing Examples</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {agent.examples.map((ex, i) => (
+                          <span
+                            key={i}
+                            className="text-xs px-2 py-1 rounded-md bg-secondary text-secondary-foreground"
+                          >
+                            "{ex}"
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Model & Tools */}
                   <div className="grid grid-cols-2 gap-4">
