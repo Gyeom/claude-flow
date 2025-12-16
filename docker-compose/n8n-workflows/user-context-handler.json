@@ -1,5 +1,6 @@
 {
-  "name": "user-context-handler",
+  "name": "User Context Handler",
+  "active": false,
   "nodes": [
     {
       "parameters": {
