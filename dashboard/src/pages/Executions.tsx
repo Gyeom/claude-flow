@@ -189,9 +189,11 @@ export function Executions() {
                   {exec.result && (
                     <>
                       <h4 className="font-semibold">Result</h4>
-                      <p className="text-sm bg-background p-3 rounded-lg border max-h-40 overflow-auto whitespace-pre-wrap">
-                        {exec.result}
-                      </p>
+                      <div className="text-sm bg-background p-3 rounded-lg border max-h-64 overflow-y-auto">
+                        <pre className="whitespace-pre-wrap break-words font-sans">
+                          {exec.result}
+                        </pre>
+                      </div>
                     </>
                   )}
 

@@ -154,12 +154,51 @@ export const dashboardApi = {
 }
 
 // Executions
-export const executionsApi = {
-  getRecent: (limit = 50) =>
-    fetchApi<ExecutionRecord[]>(`/executions/recent?limit=${limit}`),
+// Backend ExecutionDto response type
+interface ExecutionApiResponse {
+  executionId: string
+  prompt: string
+  result: string | null
+  status: string
+  agentId: string
+  durationMs: number
+  createdAt: string
+  inputTokens?: number
+  outputTokens?: number
+}
 
-  getById: (id: string) =>
-    fetchApi<ExecutionRecord>(`/executions/${id}`),
+// Transform backend response to frontend type
+function transformExecution(data: ExecutionApiResponse): ExecutionRecord {
+  return {
+    id: data.executionId,
+    prompt: data.prompt,
+    result: data.result,
+    status: data.status as ExecutionRecord['status'],
+    agentId: data.agentId,
+    projectId: null,
+    userId: null,
+    channel: null,
+    threadTs: null,
+    replyTs: null,
+    durationMs: data.durationMs,
+    inputTokens: data.inputTokens ?? 0,
+    outputTokens: data.outputTokens ?? 0,
+    cost: null,
+    error: null,
+    createdAt: data.createdAt,
+  }
+}
+
+export const executionsApi = {
+  getRecent: async (limit = 50): Promise<ExecutionRecord[]> => {
+    const data = await fetchApi<ExecutionApiResponse[]>(`/executions/recent?limit=${limit}`)
+    return data.map(transformExecution)
+  },
+
+  getById: async (id: string): Promise<ExecutionRecord> => {
+    const data = await fetchApi<ExecutionApiResponse>(`/executions/${id}`)
+    return transformExecution(data)
+  },
 
   retry: (id: string) =>
     fetchApi<{ success: boolean }>(`/executions/${id}/retry`, { method: 'POST' }),

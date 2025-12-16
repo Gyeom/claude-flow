@@ -710,12 +710,14 @@ class ClaudeFlowController(
         ResponseEntity.ok(records.map { record ->
             ExecutionDto(
                 executionId = record.id,
-                prompt = record.prompt.take(100),
-                result = record.result?.take(200),
+                prompt = record.prompt,
+                result = record.result,
                 status = record.status,
                 agentId = record.agentId,
                 durationMs = record.durationMs,
-                createdAt = record.createdAt.toString()
+                createdAt = record.createdAt.toString(),
+                inputTokens = record.inputTokens,
+                outputTokens = record.outputTokens
             )
         })
     }
@@ -981,7 +983,9 @@ data class ExecutionDto(
     val status: String,
     val agentId: String,
     val durationMs: Long,
-    val createdAt: String
+    val createdAt: String,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0
 )
 
 // Rate Limit DTOs

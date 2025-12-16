@@ -94,8 +94,12 @@ export function Errors() {
     }
   })
 
-  const formatTimeAgo = (isoString: string) => {
-    const diff = Date.now() - new Date(isoString).getTime()
+  const formatTimeAgo = (isoString: string | undefined | null) => {
+    if (!isoString) return 'N/A'
+    const date = new Date(isoString)
+    if (isNaN(date.getTime())) return 'N/A'
+
+    const diff = Date.now() - date.getTime()
     const minutes = Math.floor(diff / 60000)
     const hours = Math.floor(diff / 3600000)
     const days = Math.floor(diff / 86400000)

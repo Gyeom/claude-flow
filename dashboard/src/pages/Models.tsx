@@ -53,11 +53,11 @@ export function Models() {
   // Use actual data with empty defaults
   const modelList = modelsData?.models || []
 
-  const totalRequests = modelList.reduce((sum, m) => sum + m.requests, 0)
-  const totalCost = modelList.reduce((sum, m) => sum + m.costUsd, 0)
-  const totalTokens = modelList.reduce((sum, m) => sum + m.totalTokens, 0)
+  const totalRequests = modelList.reduce((sum, m) => sum + (m.requests || 0), 0)
+  const totalCost = modelList.reduce((sum, m) => sum + (m.costUsd || 0), 0)
+  const totalTokens = modelList.reduce((sum, m) => sum + (m.totalTokens || 0), 0)
   const avgSuccessRate = totalRequests > 0
-    ? modelList.reduce((sum, m) => sum + m.successRate * m.requests, 0) / totalRequests
+    ? modelList.reduce((sum, m) => sum + (m.successRate || 0) * (m.requests || 0), 0) / totalRequests
     : 0
 
   const pieData = modelList.map(m => ({
