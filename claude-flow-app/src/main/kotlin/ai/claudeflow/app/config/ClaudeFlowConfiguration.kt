@@ -301,12 +301,14 @@ class ClaudeFlowConfiguration(
         claudeExecutor: ClaudeExecutor,
         slackMessageSender: SlackMessageSender,
         projectRegistry: ProjectRegistry,
+        projectContextService: ai.claudeflow.api.service.ProjectContextService,
         storage: Storage,
         rateLimiter: RateLimiter
     ): ClaudeFlowController = ClaudeFlowController(
         claudeExecutor,
         slackMessageSender,
         projectRegistry,
+        projectContextService,
         storage,
         rateLimiter
     )

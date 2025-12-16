@@ -1,6 +1,7 @@
 package ai.claudeflow.api.rest
 
 import ai.claudeflow.api.command.CommandHandler
+import ai.claudeflow.api.service.ProjectContextService
 import ai.claudeflow.api.slack.SlackMessageSender
 import ai.claudeflow.core.model.Agent
 import ai.claudeflow.core.model.Project
@@ -40,6 +41,7 @@ class ClaudeFlowController(
     private val claudeExecutor: ClaudeExecutor,
     private val slackMessageSender: SlackMessageSender,
     private val projectRegistry: ProjectRegistry,
+    private val projectContextService: ProjectContextService,
     private val storage: Storage? = null,
     private val rateLimiter: RateLimiter? = null
 ) {
@@ -495,11 +497,19 @@ class ClaudeFlowController(
                 logger.info { "Using project: ${project.id} (${project.workingDirectory})" }
             }
 
-            // 3. 대화 히스토리 포함 프롬프트 생성
-            val contextualPrompt = buildContextualPrompt(request.prompt, request.conversationHistory)
+            // 3. 프로젝트 컨텍스트 주입
+            val enrichedResult = projectContextService.enrichPromptWithProjectContext(request.prompt)
+            if (enrichedResult.contextInjected) {
+                logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
+            }
 
-            // 4. 작업 디렉토리 결정 (우선순위: 요청 > 프로젝트 > 에이전트)
+            // 4. 대화 히스토리 포함 프롬프트 생성
+            val contextualPrompt = buildContextualPrompt(enrichedResult.enrichedPrompt, request.conversationHistory)
+
+            // 5. 작업 디렉토리 결정 (우선순위: 요청 > 탐지된 프로젝트 > 채널 프로젝트 > 에이전트)
+            val detectedProjectPath = enrichedResult.detectedProjects.firstOrNull()?.path
             val workingDir = request.workingDirectory
+                ?: detectedProjectPath
                 ?: project?.workingDirectory
                 ?: match.agent.workingDirectory
 
@@ -566,7 +576,7 @@ class ClaudeFlowController(
                 },
                 routedAgent = match.agent.id,
                 routingConfidence = match.confidence,
-                projectId = project?.id
+                projectId = enrichedResult.detectedProjects.firstOrNull()?.projectId ?: project?.id
             )
 
             if (result.status == ExecutionStatus.SUCCESS) {
