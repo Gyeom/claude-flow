@@ -32,4 +32,20 @@ tasks.named<org.springframework.boot.gradle.tasks.bundling.BootJar>("bootJar") {
 tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
     // 프로젝트 루트에서 실행되도록 설정
     workingDir = rootProject.projectDir
+
+    // docker-compose/.env 파일에서 환경 변수 자동 로드
+    doFirst {
+        val envFile = file("${rootProject.projectDir}/docker-compose/.env")
+        if (envFile.exists()) {
+            envFile.readLines()
+                .filter { it.isNotBlank() && !it.startsWith("#") && it.contains("=") }
+                .forEach { line ->
+                    val (key, value) = line.split("=", limit = 2)
+                    if (System.getenv(key) == null) {
+                        environment(key.trim(), value.trim())
+                    }
+                }
+            println("✓ Loaded environment variables from docker-compose/.env")
+        }
+    }
 }
