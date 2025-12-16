@@ -4,9 +4,9 @@
 
 set -e
 
-# Read hook input from stdin
+# Read hook input from stdin (jq 없이 grep/sed 사용)
 INPUT=$(cat)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
+SESSION_ID=$(echo "$INPUT" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
 
 # ============================================
 # Auto-start Claude Flow backend server

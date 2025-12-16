@@ -7,12 +7,8 @@ set -e
 # Read hook input from stdin
 INPUT=$(cat)
 
-# jq가 없으면 gracefully skip
-if command -v jq &> /dev/null; then
-    PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
-else
-    PROMPT=""
-fi
+# Parse prompt from JSON (jq 없이 grep/sed 사용)
+PROMPT=$(echo "$INPUT" | grep -o '"prompt"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"prompt"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo "")
 
 # Get user context from environment or database
 USER_ID="${CLAUDE_FLOW_USER_ID:-unknown}"

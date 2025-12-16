@@ -4,9 +4,9 @@
 
 set -e
 
-# Read hook input from stdin
+# Read hook input from stdin (jq 없이 grep/sed 사용)
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.file_path // empty')
+FILE_PATH=$(echo "$INPUT" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
 
 # 문서 업데이트가 필요한 파일 패턴
 IMPORTANT_PATTERNS=(
