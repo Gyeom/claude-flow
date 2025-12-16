@@ -1,5 +1,7 @@
 ---
 description: "Manage Claude Flow backend server (start/stop/restart/status/logs)"
+allowed-arguments: ["start", "stop", "restart", "status", "logs"]
+argument-hint: "<action: start|stop|restart|status|logs>"
 ---
 
 # Server Management Command

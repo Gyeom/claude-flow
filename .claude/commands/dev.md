@@ -1,5 +1,7 @@
 ---
 description: "Manage dev environment (backend + dashboard)"
+allowed-arguments: ["start", "stop", "restart", "status"]
+argument-hint: "<action: start|stop|restart|status>"
 ---
 
 # Development Environment Command

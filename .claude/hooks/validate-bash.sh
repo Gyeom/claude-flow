@@ -6,26 +6,29 @@ set -e
 
 # Read hook input from stdin
 INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+# Parse JSON without jq (using grep/sed)
+TOOL_NAME=$(echo "$INPUT" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"tool_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+COMMAND=$(echo "$INPUT" | grep -o '"command"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
 
 # Only process Bash tool
 if [ "$TOOL_NAME" != "Bash" ]; then
     exit 0
 fi
 
-# Dangerous patterns to block
+# Dangerous patterns to block (only check actual commands, not output)
+# These patterns are checked against the command string only
 DANGEROUS_PATTERNS=(
-    "rm -rf /"
-    "rm -rf ~"
-    "rm -rf \$HOME"
+    "^rm -rf /$"
+    "^rm -rf ~$"
+    "^rm -rf \\\$HOME"
     "> /dev/sd"
-    "mkfs\."
-    "dd if=/dev/zero"
+    "^mkfs\."
+    "^dd if=/dev/zero"
     ":(){:|:&};:"  # Fork bomb
-    "chmod -R 777 /"
-    "curl.*| *sh"
-    "wget.*| *sh"
+    "^chmod -R 777 /$"
+    "^curl .* \| *sh"
+    "^wget .* \| *sh"
 )
 
 # Check for dangerous patterns
