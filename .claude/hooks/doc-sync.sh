@@ -7,7 +7,8 @@
 
 set -e
 
-PROJECT_ROOT="/Users/a13801/42dot/claude-flow"
+# PROJECT_ROOT를 환경변수 또는 git root로 설정
+PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 CLAUDE_MD="$PROJECT_ROOT/CLAUDE.md"
 ARCHITECTURE_MD="$PROJECT_ROOT/docs/ARCHITECTURE.md"
 README_MD="$PROJECT_ROOT/README.md"

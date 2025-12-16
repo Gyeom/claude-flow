@@ -13,6 +13,7 @@ build/
 
 # Kotlin
 *.class
+.kotlin/
 
 # OS
 .DS_Store
@@ -32,6 +33,7 @@ logs/
 
 # Docker
 docker-compose/n8n_data/
+docker-compose/n8n-backup/
 
 # Node modules
 node_modules/

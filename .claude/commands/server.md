@@ -1,3 +1,7 @@
+---
+description: "Manage Claude Flow backend server (start/stop/restart/status/logs)"
+---
+
 # Server Management Command
 
 Claude Flow 백엔드 서버를 관리합니다.
@@ -11,7 +15,7 @@ Claude Flow 백엔드 서버를 관리합니다.
 docker-compose/.env 파일에서 환경 변수를 읽어서 사용하세요:
 - SLACK_APP_TOKEN
 - SLACK_BOT_TOKEN
-- WORKSPACE_PATH (기본값: /Users/a13801/42dot/claude-flow/data 로 오버라이드)
+- WORKSPACE_PATH (기본값: <project-root>/data)
 
 ### 2. 액션별 동작
 

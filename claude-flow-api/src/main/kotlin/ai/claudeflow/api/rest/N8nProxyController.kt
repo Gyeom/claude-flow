@@ -27,9 +27,9 @@ private val logger = KotlinLogging.logger {}
 class N8nProxyController(
     @Value("\${claude-flow.webhook.base-url:http://localhost:5678}")
     private val n8nBaseUrl: String,
-    @Value("\${claude-flow.n8n.email:admin@local.dev}")
+    @Value("\${claude-flow.n8n.email:\${N8N_DEFAULT_EMAIL:admin@local.dev}}")
     private val n8nEmail: String,
-    @Value("\${claude-flow.n8n.password:Localdev123}")
+    @Value("\${claude-flow.n8n.password:\${N8N_DEFAULT_PASSWORD:}}")
     private val n8nPassword: String
 ) {
     private var sessionCookie: String? = null
@@ -183,6 +183,55 @@ class N8nProxyController(
     }
 
     /**
+     * n8n 인증 정보 가져오기 (자동 로그인용)
+     */
+    @GetMapping("/auth")
+    fun getAuthCookie(): Mono<ResponseEntity<N8nAuthResponse>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            if (cookie != null) {
+                ResponseEntity.ok(N8nAuthResponse(
+                    authCookie = cookie,
+                    n8nUrl = n8nBaseUrl,
+                    success = true
+                ))
+            } else {
+                ResponseEntity.ok(N8nAuthResponse(
+                    authCookie = null,
+                    n8nUrl = n8nBaseUrl,
+                    success = false,
+                    error = "Failed to authenticate with n8n"
+                ))
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get n8n auth cookie" }
+            ResponseEntity.ok(N8nAuthResponse(
+                authCookie = null,
+                n8nUrl = n8nBaseUrl,
+                success = false,
+                error = e.message
+            ))
+        }
+    }
+
+    /**
+     * n8n으로 리다이렉트
+     * 사용자가 n8n에 이미 로그인되어 있으면 자동으로 접속됩니다.
+     */
+    @GetMapping("/login-redirect")
+    fun loginRedirect(
+        @RequestParam(defaultValue = "") path: String
+    ): Mono<ResponseEntity<Void>> {
+        val targetUrl = if (path.isNotEmpty()) "$n8nBaseUrl$path" else n8nBaseUrl
+
+        return Mono.just(
+            ResponseEntity.status(302)
+                .header("Location", targetUrl)
+                .build()
+        )
+    }
+
+    /**
      * Execute workflow manually
      */
     @PostMapping("/workflows/{id}/run")
@@ -283,3 +332,10 @@ data class N8nExecutionDto(
 )
 
 data class SetActiveRequest(val active: Boolean)
+
+data class N8nAuthResponse(
+    val authCookie: String?,
+    val n8nUrl: String,
+    val success: Boolean,
+    val error: String? = null
+)

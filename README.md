@@ -33,31 +33,44 @@ Slack에서 Claude를 호출하고, GitLab MR 리뷰를 자동화하는 AI 에�
 
 ## 빠른 시작 (5분)
 
-### 1. 설치
+### 원클릭 설치
 
 ```bash
 git clone https://github.com/your-org/claude-flow.git
-cd claude-flow/docker-compose
-cp .env.example .env
+cd claude-flow
+./start.sh
 ```
 
-### 2. 환경 변수 설정
+인터랙티브 설정 마법사가 Slack 토큰을 안내합니다.
 
-`.env` 파일 편집:
+### RAG 기능 포함 설치 (권장)
+
 ```bash
-SLACK_APP_TOKEN=xapp-xxx      # Slack App Token
+./start.sh --with-rag
+```
+
+유사 대화 검색, 피드백 학습, 코드베이스 검색 기능이 활성화됩니다.
+
+### 수동 설치
+
+```bash
+cd docker-compose
+cp .env.example .env
+# .env 파일 편집
+docker compose up -d
+```
+
+**필수 환경변수:**
+```bash
+SLACK_APP_TOKEN=xapp-xxx      # Slack App Token (Socket Mode)
 SLACK_BOT_TOKEN=xoxb-xxx      # Slack Bot Token
 SLACK_SIGNING_SECRET=xxx      # Slack Signing Secret
-
-# Optional: GitLab 연동
-GITLAB_URL=https://gitlab.example.com
-GITLAB_TOKEN=glpat-xxx
 ```
 
-### 3. 실행
-
+**선택 환경변수:**
 ```bash
-docker-compose up -d
+GITLAB_URL=https://gitlab.example.com
+GITLAB_TOKEN=glpat-xxx
 ```
 
 ### 4. 사용

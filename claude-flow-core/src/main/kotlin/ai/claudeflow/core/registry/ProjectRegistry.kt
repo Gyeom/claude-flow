@@ -145,27 +145,31 @@ class ProjectRegistry(
     companion object {
         /**
          * 샘플 프로젝트로 초기화된 레지스트리 생성
+         *
+         * 실제 사용 시 WORKSPACE_PATH 환경변수를 설정하세요.
          */
         fun withSampleProjects(): ProjectRegistry {
-            val homeDir = System.getenv("HOME") ?: "/Users"
+            val workspacePath = System.getenv("WORKSPACE_PATH")
+                ?: System.getenv("HOME")?.let { "$it/projects" }
+                ?: "/workspace"
 
             return ProjectRegistry(listOf(
                 Project(
                     id = "claude-flow",
                     name = "Claude Flow",
                     description = "Slack AI Assistant Platform",
-                    workingDirectory = "$homeDir/42dot/claude-flow",
-                    gitRemote = "https://github.com/42dot/claude-flow",
+                    workingDirectory = "$workspacePath/claude-flow",
+                    gitRemote = "https://github.com/your-org/claude-flow",
                     defaultBranch = "main",
                     agents = listOf(Agent.GENERAL, Agent.CODE_REVIEWER, Agent.BUG_FIXER)
                 ),
                 Project(
-                    id = "authorization-server",
-                    name = "Authorization Server",
-                    description = "OpenFGA 기반 권한 관리 서버",
-                    workingDirectory = "$homeDir/42dot/authorization-server",
-                    gitRemote = "https://github.com/42dot/authorization-server",
-                    defaultBranch = "develop",
+                    id = "sample-project",
+                    name = "Sample Project",
+                    description = "Example project configuration",
+                    workingDirectory = "$workspacePath/sample-project",
+                    gitRemote = "https://github.com/your-org/sample-project",
+                    defaultBranch = "main",
                     agents = listOf(Agent.GENERAL, Agent.CODE_REVIEWER)
                 )
             ))

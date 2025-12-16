@@ -80,9 +80,9 @@ GITLAB_URL=
 GITLAB_GROUP=
 GITLAB_TOKEN=
 
-# n8n Configuration
-N8N_USER=admin@local.dev
-N8N_PASSWORD=Localdev123
+# n8n Configuration (change these for production!)
+N8N_DEFAULT_EMAIL=admin@local.dev
+N8N_DEFAULT_PASSWORD=Localdev123
 
 # Claude Configuration
 CLAUDE_MODEL=claude-sonnet-4-20250514
@@ -193,10 +193,15 @@ show_summary() {
     echo -e "${GREEN}║                    Claude Flow 설치 완료!                     ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
+    # .env에서 n8n 계정 정보 읽기
+    source "docker-compose/.env" 2>/dev/null || true
+    local N8N_EMAIL="${N8N_DEFAULT_EMAIL:-admin@local.dev}"
+    local N8N_PASS="${N8N_DEFAULT_PASSWORD:-Localdev123}"
+
     echo -e "${CYAN}서비스 URL:${NC}"
     echo "  • API:        http://localhost:8080"
     echo "  • Dashboard:  http://localhost:5173  (별도 실행 필요)"
-    echo "  • n8n:        http://localhost:5678  (admin@local.dev / Localdev123)"
+    echo "  • n8n:        http://localhost:5678  ($N8N_EMAIL / $N8N_PASS)"
     echo ""
     echo -e "${CYAN}Slack에서 테스트:${NC}"
     echo "  @claude-flow 안녕하세요!"

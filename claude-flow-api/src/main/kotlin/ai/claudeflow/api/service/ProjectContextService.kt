@@ -257,7 +257,7 @@ class ProjectContextService(
         // 환경변수 치환
         var resolved = configRoot
         if (resolved.contains("\${WORKSPACE_PATH")) {
-            resolved = System.getenv("WORKSPACE_PATH") ?: System.getProperty("user.home") + "/42dot"
+            resolved = System.getenv("WORKSPACE_PATH") ?: System.getProperty("user.home") + "/projects"
         }
         if (resolved.contains("\$HOME")) {
             resolved = resolved.replace("\$HOME", System.getProperty("user.home"))

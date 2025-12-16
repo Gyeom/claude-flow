@@ -3,8 +3,10 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 
-const BASE_URL = 'http://127.0.0.1:5678';
-const WORKFLOWS_DIR = '/home/node/workflows';
+const BASE_URL = process.env.N8N_URL || 'http://127.0.0.1:5678';
+const WORKFLOWS_DIR = process.env.WORKFLOWS_DIR || '/home/node/workflows';
+const N8N_EMAIL = process.env.N8N_DEFAULT_EMAIL || 'admin@local.dev';
+const N8N_PASSWORD = process.env.N8N_DEFAULT_PASSWORD || 'Localdev123';
 let sessionCookie = '';
 
 // Credential ID 저장
@@ -110,10 +112,10 @@ async function setup() {
     // 1. Owner 생성
     console.log('Creating owner account...');
     const ownerResult = await request('POST', '/rest/owner/setup', {
-        email: 'admin@local.dev',
+        email: N8N_EMAIL,
         firstName: 'Admin',
         lastName: 'User',
-        password: 'Localdev123'
+        password: N8N_PASSWORD
     });
     if (ownerResult.status === 200) {
         console.log('Owner setup: Success');
@@ -124,8 +126,8 @@ async function setup() {
     // 2. 로그인
     console.log('Logging in...');
     const loginResult = await request('POST', '/rest/login', {
-        emailOrLdapLoginId: 'admin@local.dev',
-        password: 'Localdev123'
+        emailOrLdapLoginId: N8N_EMAIL,
+        password: N8N_PASSWORD
     });
 
     if (loginResult.status !== 200) {
@@ -201,7 +203,7 @@ async function setup() {
     }
 
     console.log('\n=== Setup Complete! ===');
-    console.log('Login: admin@local.dev / Localdev123');
+    console.log(`Login: ${N8N_EMAIL} / ${N8N_PASSWORD}`);
 }
 
 setup().catch(err => {

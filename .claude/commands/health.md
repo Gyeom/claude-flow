@@ -50,7 +50,8 @@ docker ps --filter "name=claude-flow" --format "table {{.Names}}\t{{.Status}}\t{
 # Database
 echo ""
 echo "=== Database Stats ==="
-DB_PATH="${CLAUDE_FLOW_DB:-/Users/a13801/42dot/claude-flow/data/claude-flow.db}"
+PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+DB_PATH="${CLAUDE_FLOW_DB:-$PROJECT_ROOT/data/claude-flow.db}"
 if [ -f "$DB_PATH" ]; then
   echo "Executions: $(sqlite3 "$DB_PATH" 'SELECT COUNT(*) FROM executions' 2>/dev/null || echo 'N/A')"
   echo "Users: $(sqlite3 "$DB_PATH" 'SELECT COUNT(*) FROM user_contexts' 2>/dev/null || echo 'N/A')"

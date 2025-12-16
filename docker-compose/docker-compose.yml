@@ -59,6 +59,9 @@ services:
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
       # Slack 설정
       - SLACK_REVIEW_CHANNEL=${SLACK_REVIEW_CHANNEL:-general}
+      # n8n 관리자 계정 (워크플로우 자동 동기화용)
+      - N8N_DEFAULT_EMAIL=${N8N_DEFAULT_EMAIL:-admin@local.dev}
+      - N8N_DEFAULT_PASSWORD=${N8N_DEFAULT_PASSWORD:-Localdev123}
     entrypoint: ["/bin/sh", "/home/node/scripts/n8n-entrypoint.sh"]
     command: ["start"]
     volumes:

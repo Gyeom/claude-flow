@@ -4,8 +4,10 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 
-const BASE_URL = 'http://127.0.0.1:5678';
-const WORKFLOWS_DIR = '/home/node/workflows';
+const BASE_URL = process.env.N8N_URL || 'http://127.0.0.1:5678';
+const WORKFLOWS_DIR = process.env.WORKFLOWS_DIR || '/home/node/workflows';
+const N8N_EMAIL = process.env.N8N_DEFAULT_EMAIL || 'admin@local.dev';
+const N8N_PASSWORD = process.env.N8N_DEFAULT_PASSWORD || 'Localdev123';
 let sessionCookie = '';
 
 // Credential ID 캐시
@@ -84,8 +86,8 @@ async function syncWorkflows() {
     // 1. 로그인
     console.log('Logging in...');
     const loginResult = await request('POST', '/rest/login', {
-        emailOrLdapLoginId: 'admin@local.dev',
-        password: 'Localdev123'
+        emailOrLdapLoginId: N8N_EMAIL,
+        password: N8N_PASSWORD
     });
 
     if (loginResult.status !== 200) {
@@ -126,8 +128,8 @@ async function syncWorkflows() {
         const existing = workflowMap.get(workflow.name);
 
         if (existing) {
-            // 기존 워크플로우 업데이트
-            const updateResult = await request('PUT', `/rest/workflows/${existing.id}`, {
+            // 기존 워크플로우 업데이트 (n8n API는 PATCH만 지원)
+            const updateResult = await request('PATCH', `/rest/workflows/${existing.id}`, {
                 ...workflowData,
                 id: existing.id
             });
@@ -135,14 +137,6 @@ async function syncWorkflows() {
             if (updateResult.status === 200) {
                 console.log(`  Updated: ${workflow.name}`);
                 updated++;
-
-                // 활성화 상태 동기화
-                if (workflow.active !== existing.active) {
-                    await request('PATCH', `/rest/workflows/${existing.id}`, {
-                        active: workflow.active
-                    });
-                    console.log(`    Active: ${workflow.active}`);
-                }
             } else {
                 console.log(`  Update failed: ${workflow.name}`, updateResult.status);
             }

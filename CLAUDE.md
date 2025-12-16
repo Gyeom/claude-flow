@@ -4,7 +4,7 @@
 
 ## 프로젝트 개요
 
-**Claude Flow**는 Slack에서 Claude를 호출하고 GitLab MR 리뷰를 자동화하는 팀 내부 AI 에이전트 플랫폼입니다.
+**Claude Flow**는 Slack에서 Claude를 호출하고 GitLab MR 리뷰를 자동화하는 오픈소스 AI 에이전트 플랫폼입니다.
 
 ### 핵심 가치
 - 5분 설치 (Docker one-liner)
@@ -60,7 +60,9 @@ claude-flow/
 │   │   ├── RateLimitPolicy.kt      # 정책 정의
 │   │   └── AdvancedRateLimiter.kt  # 다차원 제한
 │   ├── session/            # 세션 관리
-│   │   └── SessionContextBuilder.kt # 컨텍스트 빌더
+│   │   └── SessionManager.kt       # 세션 매니저
+│   ├── cache/              # 캐싱
+│   │   └── ClassificationCache.kt  # 분류 캐시
 │   └── analytics/          # 분석
 │       └── Analytics.kt            # 통계 수집
 │
@@ -68,9 +70,7 @@ claude-flow/
 ├── claude-flow-api/        # REST API (Spring WebFlux)
 ├── claude-flow-app/        # Spring Boot 앱 (Slack 연동)
 ├── dashboard/              # React 대시보드
-├── docker-compose/         # Docker 설정, n8n 워크플로우
-└── config/                 # 설정 파일
-    └── plugins.toml        # 플러그인 설정
+└── docker-compose/         # Docker 설정, n8n 워크플로우
 ```
 
 ## 기술 스택

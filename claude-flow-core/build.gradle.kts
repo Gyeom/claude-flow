@@ -7,10 +7,6 @@ dependencies {
     // JSON Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
-    // TOML Parser
-    implementation("com.akuleshov7:ktoml-core:0.5.0")
-    implementation("com.akuleshov7:ktoml-file:0.5.0")
-
     // Jackson for JSON
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.0")
 

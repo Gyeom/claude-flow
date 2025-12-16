@@ -12,7 +12,7 @@
 ```
 
 **문제점**: Claude가 `authorization-server`를 **일반 용어**로 인식하여 OAuth 개념을 설명함.
-실제로는 `/Users/a13801/42dot/authorization-server` 프로젝트를 의미하는 것임.
+실제로는 `~/projects/authorization-server` 프로젝트를 의미하는 것임.
 
 ### After (개선 후)
 동일한 요청에 대해:
@@ -42,9 +42,9 @@ LLM은 기본적으로 **프롬프트에 주어진 정보만** 사용합니다.
 | 유형 | 예시 | LLM 대응 |
 |------|------|----------|
 | **도메인 지식** | OAuth, REST API, Kubernetes | 학습 데이터로 알고 있음 |
-| **로컬 지식** | 회사 내부 프로젝트, 레포지토리 | 알 수 없음 - 컨텍스트 필요 |
+| **로컬 지식** | 로컬 프로젝트, 레포지토리 | 알 수 없음 - 컨텍스트 필요 |
 
-`authorization-server`는 일반적인 OAuth 용어이기도 하면서 동시에 회사 내부 프로젝트명이기도 합니다.
+`authorization-server`는 일반적인 OAuth 용어이기도 하면서 동시에 로컬 프로젝트명이기도 합니다.
 LLM은 로컬 컨텍스트 없이는 후자를 알 수 없습니다.
 
 ---
@@ -76,7 +76,7 @@ LLM은 로컬 컨텍스트 없이는 후자를 알 수 없습니다.
 │  "authorization-server 설명해줘"                                │
 │  +                                                              │
 │  [Detected Project: authorization-server]                       │
-│  Path: /Users/a13801/42dot/authorization-server                │
+│  Path: ~/projects/authorization-server                         │
 │  --- Project Instructions ---                                   │
 │  OpenFGA 기반의 중앙 권한 관리 서버...                          │
 │  Hexagonal Architecture, Kotlin 2.1.20...                       │

@@ -1,3 +1,7 @@
+---
+description: "Manage React dashboard (start/stop/status)"
+---
+
 # Dashboard Management Command
 
 Claude Flow 대시보드(React)를 관리합니다.
@@ -19,7 +23,8 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ 2>/dev/null || ech
 
 **start**
 ```bash
-cd /Users/a13801/42dot/claude-flow/dashboard
+PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+cd "$PROJECT_ROOT/dashboard"
 npm run dev &
 ```
 - 백그라운드로 실행
@@ -35,7 +40,8 @@ lsof -ti:3000 | xargs kill -9
 
 **build**
 ```bash
-cd /Users/a13801/42dot/claude-flow/dashboard
+PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+cd "$PROJECT_ROOT/dashboard"
 npm run build
 ```
 - 프로덕션 빌드 생성

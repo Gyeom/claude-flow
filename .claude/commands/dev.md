@@ -1,3 +1,7 @@
+---
+description: "Manage dev environment (backend + dashboard)"
+---
+
 # Development Environment Command
 
 Claude Flow 개발 환경(백엔드 + 대시보드)을 한번에 관리합니다.

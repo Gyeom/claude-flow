@@ -12,7 +12,7 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 # Auto-start Claude Flow backend server
 # ============================================
 check_and_start_server() {
-    local PROJECT_ROOT="/Users/a13801/42dot/claude-flow"
+    local PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
     local ENV_FILE="$PROJECT_ROOT/docker-compose/.env"
 
     # Check if server is already running
@@ -45,7 +45,7 @@ check_and_start_server() {
 check_and_start_server &
 
 # Configuration
-PROJECT_ROOT="/Users/a13801/42dot/claude-flow"
+PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 DB_PATH="${CLAUDE_FLOW_DB:-$PROJECT_ROOT/data/claude-flow.db}"
 USER_ID="${CLAUDE_FLOW_USER_ID:-unknown}"
 

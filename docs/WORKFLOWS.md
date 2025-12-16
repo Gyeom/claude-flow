@@ -110,9 +110,9 @@ GITLAB_TOKEN=glpat-xxx
 
 ### 1. Access n8n Editor
 
-Navigate to `http://localhost:5678` and log in with:
-- Email: `admin@local.dev`
-- Password: `Localdev123`
+Navigate to `http://localhost:5678` and log in with credentials from your `.env` file:
+- Email: `N8N_DEFAULT_EMAIL` (default: `admin@local.dev`)
+- Password: `N8N_DEFAULT_PASSWORD` (default: `Localdev123`)
 
 ### 2. Create New Workflow
 
@@ -160,14 +160,14 @@ Content-Type: application/json
 Set in `docker-compose/.env`:
 
 ```bash
-# n8n
-N8N_BASIC_AUTH_USER=admin@local.dev
-N8N_BASIC_AUTH_PASSWORD=Localdev123
+# n8n admin credentials (change for production!)
+N8N_DEFAULT_EMAIL=admin@local.dev
+N8N_DEFAULT_PASSWORD=Localdev123
 
 # Webhook base URL
 N8N_WEBHOOK_URL=http://localhost:5678
 
-# External integrations
+# External integrations (configure as needed)
 GITLAB_URL=https://gitlab.example.com
 GITLAB_TOKEN=glpat-xxx
 JIRA_URL=https://your-org.atlassian.net

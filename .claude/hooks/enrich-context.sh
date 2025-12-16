@@ -6,12 +6,20 @@ set -e
 
 # Read hook input from stdin
 INPUT=$(cat)
-PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
+
+# jq가 없으면 gracefully skip
+if command -v jq &> /dev/null; then
+    PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
+else
+    PROMPT=""
+fi
 
 # Get user context from environment or database
 USER_ID="${CLAUDE_FLOW_USER_ID:-unknown}"
 PROJECT_ID="${CLAUDE_FLOW_PROJECT_ID:-default}"
-DB_PATH="${CLAUDE_FLOW_DB:-/Users/a13801/42dot/claude-flow/data/claude-flow.db}"
+# PROJECT_ROOT를 환경변수 또는 git root로 설정
+PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+DB_PATH="${CLAUDE_FLOW_DB:-$PROJECT_ROOT/data/claude-flow.db}"
 
 # Function to get user rules from database
 get_user_rules() {

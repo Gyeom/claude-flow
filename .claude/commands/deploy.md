@@ -1,3 +1,7 @@
+---
+description: "Build and deploy Claude Flow"
+---
+
 # Deploy Command
 
 Claude Flow를 빌드하고 배포합니다.

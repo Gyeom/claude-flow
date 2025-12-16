@@ -179,7 +179,12 @@ export function Workflows() {
     )
   }
 
-  const n8nUrl = import.meta.env.VITE_N8N_URL || 'http://localhost:5678'
+  const n8nDirectUrl = import.meta.env.VITE_N8N_URL || 'http://localhost:5678'
+
+  // Open n8n directly
+  const openN8nWithAuth = (path = '') => {
+    window.open(`${n8nDirectUrl}${path}`, '_blank')
+  }
 
   return (
     <div className="space-y-8">
@@ -198,17 +203,39 @@ export function Workflows() {
           >
             <RefreshCw className="h-4 w-4" />
           </button>
-          <a
-            href={n8nUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            onClick={() => openN8nWithAuth()}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
           >
             <ExternalLink className="h-4 w-4" />
             Open n8n
-          </a>
+          </button>
         </div>
       </div>
+
+      {/* n8n Login Info */}
+      <Card className="border-blue-500/30 bg-blue-500/5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-500/10">
+              <Zap className="h-5 w-5 text-blue-500" />
+            </div>
+            <div>
+              <p className="font-medium">n8n Login</p>
+              <p className="text-sm text-muted-foreground">
+                See .env for credentials (N8N_DEFAULT_EMAIL / N8N_DEFAULT_PASSWORD)
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => openN8nWithAuth()}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Open n8n
+          </button>
+        </div>
+      </Card>
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -357,16 +384,16 @@ export function Workflows() {
                         )}
                         Run Now
                       </button>
-                      <a
-                        href={`${n8nUrl}/workflow/${workflow.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openN8nWithAuth(`/workflow/${workflow.id}`)
+                        }}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-muted hover:bg-muted/80 transition-colors"
                       >
                         <ExternalLink className="h-4 w-4" />
                         Edit in n8n
-                      </a>
+                      </button>
                     </div>
                   </div>
                 )}

@@ -1,3 +1,7 @@
+---
+description: "Create git commit and push changes"
+---
+
 # Commit Command
 
 변경 사항을 확인하고 Git 커밋을 생성한 후 push합니다.

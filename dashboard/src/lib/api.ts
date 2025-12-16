@@ -562,6 +562,15 @@ export const n8nApi = {
       return false
     }
   },
+
+  // Get auth cookie for n8n iframe embed
+  getAuth: async (): Promise<{ authCookie: string | null; n8nUrl: string; success: boolean }> => {
+    try {
+      return await fetchApi<{ authCookie: string | null; n8nUrl: string; success: boolean }>('/n8n/auth')
+    } catch {
+      return { authCookie: null, n8nUrl: 'http://localhost:5678', success: false }
+    }
+  },
 }
 
 // Settings API
