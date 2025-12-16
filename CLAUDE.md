@@ -198,14 +198,62 @@ JIRA_API_TOKEN=xxx
 
 ## 문서 자동 업데이트
 
-이 프로젝트의 문서는 Claude Code에 의해 자동으로 업데이트됩니다:
+이 프로젝트의 문서는 Claude Code Hooks와 Rules를 통해 자동으로 관리됩니다.
 
-1. **코드 변경 시**: 새 컴포넌트 추가/변경 시 이 문서 업데이트
-2. **아키텍처 변경 시**: 모듈 구조 다이어그램 업데이트
-3. **API 변경 시**: README.md의 API 섹션 업데이트
+### 자동화 시스템 구성
 
-### 자동화 규칙
-- 새 Repository 추가 → 모듈 구조 섹션 업데이트
-- 새 Plugin 추가 → 플러그인 시스템 섹션 업데이트
-- 새 API 엔드포인트 → README.md API 테이블 업데이트
-- 테스트 추가 → 테스트 실행 예제 업데이트
+```
+코드 변경 (Edit/Write)
+    ↓
+[PostToolUse Hook] → doc-sync.sh
+    ↓
+파일 타입 감지 (Repository/Plugin/Controller 등)
+    ↓
+문서 동기화 필요 여부 판단
+    ↓
+알림 또는 자동 업데이트
+```
+
+### 관련 파일
+| 파일 | 역할 |
+|------|------|
+| `.claude/hooks/doc-sync.sh` | 코드 변경 감지 및 문서 업데이트 알림 |
+| `.claude/commands/sync-docs.md` | `/sync-docs` 명령으로 문서 동기화 |
+| `.claude/rules/documentation.md` | 파일 패턴별 문서화 규칙 정의 |
+| `docs/ARCHITECTURE.md` | Mermaid 아키텍처 다이어그램 |
+
+### 자동 감지 패턴
+
+| 파일 패턴 | 업데이트 대상 |
+|-----------|---------------|
+| `*/storage/repository/*.kt` | CLAUDE.md 모듈 구조, ARCHITECTURE.md ER 다이어그램 |
+| `*/plugin/*.kt` | CLAUDE.md 모듈 구조, ARCHITECTURE.md 클래스 다이어그램 |
+| `*/routing/*.kt` | CLAUDE.md 모듈 구조, ARCHITECTURE.md 라우팅 다이어그램 |
+| `*/rest/*Controller.kt` | CLAUDE.md 자주 수정하는 파일, README.md API 테이블 |
+| `build.gradle.kts` | CLAUDE.md 기술 스택 |
+| `docker-compose/*.yml` | ARCHITECTURE.md 배포 다이어그램 |
+
+### 문서 동기화 명령
+
+```bash
+# 문서 동기화 상태 확인 및 업데이트
+/sync-docs
+
+# 전체 문서 검토 (수동 체크리스트)
+/update-docs
+```
+
+### Hook 동작 방식
+
+1. **PostToolUse Hook**: 파일 편집 후 `doc-sync.sh` 실행
+2. **파일 타입 감지**: 경로 패턴으로 Repository/Plugin/Controller 등 분류
+3. **문서 확인**: 해당 클래스가 CLAUDE.md/ARCHITECTURE.md에 있는지 확인
+4. **알림**: 누락된 경우 터미널에 업데이트 필요 알림 표시
+5. **상태 저장**: `/tmp/claude-flow-doc-sync-state.json`에 대기 항목 기록
+
+### Best Practices
+
+1. **새 컴포넌트 추가 시**: Hook 알림 확인 후 `/sync-docs` 실행
+2. **아키텍처 변경 시**: `docs/ARCHITECTURE.md` Mermaid 다이어그램 직접 수정
+3. **API 변경 시**: README.md API 테이블과 ARCHITECTURE.md 동시 업데이트
+4. **대규모 리팩토링 후**: `/sync-docs`로 전체 동기화 상태 확인
