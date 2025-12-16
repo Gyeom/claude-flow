@@ -37,14 +37,23 @@ class LogStreamController {
     fun streamAllLogs(): Flux<ServerSentEvent<LogEventDto>> {
         logger.info { "Client connected to log stream" }
 
-        // 하트비트와 로그 스트림 병합
-        val heartbeat = Flux.interval(Duration.ofSeconds(15))
+        // 즉시 연결 확인 이벤트 + 주기적 하트비트
+        val initialHeartbeat = Flux.just(
+            ServerSentEvent.builder<LogEventDto>()
+                .event("heartbeat")
+                .comment("connected")
+                .build()
+        )
+
+        val periodicHeartbeat = Flux.interval(Duration.ofSeconds(15))
             .map {
                 ServerSentEvent.builder<LogEventDto>()
                     .event("heartbeat")
                     .comment("keepalive")
                     .build()
             }
+
+        val heartbeat = Flux.concat(initialHeartbeat, periodicHeartbeat)
 
         val logs = Flux.from(logManager.logFlow.asPublisher())
             .map { event ->
@@ -69,14 +78,23 @@ class LogStreamController {
     fun streamExecutionLogs(@PathVariable executionId: String): Flux<ServerSentEvent<LogEventDto>> {
         logger.info { "Client connected to log stream for execution: $executionId" }
 
-        // 하트비트
-        val heartbeat = Flux.interval(Duration.ofSeconds(15))
+        // 즉시 연결 확인 이벤트 + 주기적 하트비트
+        val initialHeartbeat = Flux.just(
+            ServerSentEvent.builder<LogEventDto>()
+                .event("heartbeat")
+                .comment("connected")
+                .build()
+        )
+
+        val periodicHeartbeat = Flux.interval(Duration.ofSeconds(15))
             .map {
                 ServerSentEvent.builder<LogEventDto>()
                     .event("heartbeat")
                     .comment("keepalive")
                     .build()
             }
+
+        val heartbeat = Flux.concat(initialHeartbeat, periodicHeartbeat)
 
         // 먼저 기존 로그 전송
         val existingLogs = Flux.fromIterable(logManager.getExecutionLogs(executionId))

@@ -12,6 +12,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
+      // SSE 스트림 전용 프록시 (버퍼링 비활성화)
+      '/api/v1/logs/stream': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      // 일반 API
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
