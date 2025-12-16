@@ -216,4 +216,42 @@ class UserContextRepository(
             charCount, userId
         ) > 0
     }
+
+    /**
+     * Update user interaction (create if not exists)
+     * Called after each execution to track user activity
+     */
+    fun updateUserInteraction(userId: String, promptLength: Int, responseLength: Int) {
+        val now = Instant.now()
+        val totalChars = (promptLength + responseLength).toLong()
+
+        // Try update first
+        val updated = executeUpdate(
+            """
+            UPDATE user_contexts
+            SET total_interactions = total_interactions + 1,
+                total_chars = total_chars + ?,
+                last_seen = ?
+            WHERE user_id = ?
+            """.trimIndent(),
+            totalChars, now.toString(), userId
+        ) > 0
+
+        // If no rows updated, insert new user
+        if (!updated) {
+            save(UserContext(
+                userId = userId,
+                displayName = null,
+                preferredLanguage = "ko",
+                domain = null,
+                lastSeen = now,
+                totalInteractions = 1,
+                summary = null,
+                summaryUpdatedAt = null,
+                summaryLockId = null,
+                summaryLockAt = null,
+                totalChars = totalChars
+            ))
+        }
+    }
 }

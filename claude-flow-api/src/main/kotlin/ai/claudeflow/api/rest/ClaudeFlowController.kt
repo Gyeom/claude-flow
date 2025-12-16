@@ -557,6 +557,16 @@ class ClaudeFlowController(
                         latencyMs = routingLatencyMs
                     )
                     logger.debug { "Saved routing metric: method=${match.method.name}, latency=${routingLatencyMs}ms" }
+
+                    // 8. 사용자 컨텍스트 업데이트 (User Management용)
+                    request.userId?.let { userId ->
+                        store.updateUserInteraction(
+                            userId = userId,
+                            promptLength = request.prompt.length,
+                            responseLength = result.result?.length ?: 0
+                        )
+                        logger.debug { "Updated user context for: $userId" }
+                    }
                 } catch (e: Exception) {
                     logger.error(e) { "Failed to save execution record" }
                 }

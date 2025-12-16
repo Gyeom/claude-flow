@@ -275,6 +275,13 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     @Deprecated("Use executionRepository.countByUserId() directly")
     fun getConversationCount(userId: String): Int = executionRepository.countByUserId(userId).toInt()
 
+    /**
+     * Update user interaction stats (called after each execution)
+     */
+    fun updateUserInteraction(userId: String, promptLength: Int, responseLength: Int) {
+        userContextRepository.updateUserInteraction(userId, promptLength, responseLength)
+    }
+
     // ==================== User Rules (Delegated) ====================
 
     @Deprecated("Use userRuleRepository.findRulesByUserId() directly")

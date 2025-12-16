@@ -7,7 +7,6 @@ import type {
   ProjectStat,
   UserContext,
   UserContextResponse,
-  SummaryStats,
   TimeSeriesData,
   ModelStats,
   SourceStats,
@@ -443,9 +442,7 @@ export const feedbackApi = {
     fetchApi<FeedbackRecord[]>(`/feedback/recent?limit=${limit}`),
 }
 
-// n8n Workflows (direct n8n API)
-const N8N_BASE_URL = import.meta.env.VITE_N8N_URL || 'http://localhost:5678'
-
+// n8n Workflows (via backend proxy to avoid CORS issues)
 export interface N8nWorkflow {
   id: string
   name: string
@@ -469,79 +466,59 @@ export interface N8nExecution {
   stoppedAt?: string
   workflowId: string
   status: string
+  workflowName?: string
   data?: unknown
 }
 
 export const n8nApi = {
-  // Get all workflows
+  // Get all workflows (via backend proxy)
   getWorkflows: async (): Promise<N8nWorkflow[]> => {
     try {
-      const response = await fetch(`${N8N_BASE_URL}/rest/workflows`, {
-        credentials: 'include',
-      })
-      if (!response.ok) throw new Error('Failed to fetch workflows')
-      const data = await response.json()
-      return data.data || []
+      return await fetchApi<N8nWorkflow[]>('/n8n/workflows')
     } catch {
-      console.warn('n8n API not available, using static data')
+      console.warn('n8n API not available')
       return []
     }
   },
 
-  // Get workflow by ID
+  // Get workflow by ID (via backend proxy)
   getWorkflow: async (id: string): Promise<N8nWorkflow | null> => {
     try {
-      const response = await fetch(`${N8N_BASE_URL}/rest/workflows/${id}`, {
-        credentials: 'include',
-      })
-      if (!response.ok) return null
-      return response.json()
+      return await fetchApi<N8nWorkflow>(`/n8n/workflows/${id}`)
     } catch {
       return null
     }
   },
 
-  // Activate/Deactivate workflow
+  // Activate/Deactivate workflow (via backend proxy)
   setActive: async (id: string, active: boolean): Promise<boolean> => {
     try {
-      const response = await fetch(`${N8N_BASE_URL}/rest/workflows/${id}`, {
+      const result = await fetchApi<{ success: boolean }>(`/n8n/workflows/${id}/active`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
         body: JSON.stringify({ active }),
       })
-      return response.ok
+      return result.success
     } catch {
       return false
     }
   },
 
-  // Get recent executions
-  getExecutions: async (limit = 20): Promise<N8nExecution[]> => {
+  // Get recent executions (via backend proxy)
+  getExecutions: async (limit = 100): Promise<N8nExecution[]> => {
     try {
-      const response = await fetch(
-        `${N8N_BASE_URL}/rest/executions?limit=${limit}`,
-        { credentials: 'include' }
-      )
-      if (!response.ok) throw new Error('Failed to fetch executions')
-      const data = await response.json()
-      return data.data || []
+      return await fetchApi<N8nExecution[]>(`/n8n/executions?limit=${limit}`)
     } catch {
       return []
     }
   },
 
-  // Execute workflow manually
+  // Execute workflow manually (via backend proxy)
   executeWorkflow: async (id: string): Promise<boolean> => {
     try {
-      const response = await fetch(
-        `${N8N_BASE_URL}/rest/workflows/${id}/run`,
-        {
-          method: 'POST',
-          credentials: 'include',
-        }
-      )
-      return response.ok
+      const result = await fetchApi<{ success: boolean }>(`/n8n/workflows/${id}/run`, {
+        method: 'POST',
+      })
+      return result.success
     } catch {
       return false
     }

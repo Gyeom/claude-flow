@@ -1,0 +1,285 @@
+package ai.claudeflow.api.rest
+
+import kotlinx.coroutines.reactor.mono
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import mu.KotlinLogging
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.*
+import org.springframework.web.reactive.function.client.WebClient
+import org.springframework.web.reactive.function.client.awaitBodyOrNull
+import org.springframework.web.reactive.function.client.awaitExchange
+import reactor.core.publisher.Mono
+import java.time.Instant
+
+private val logger = KotlinLogging.logger {}
+
+/**
+ * n8n API Proxy Controller
+ *
+ * 대시보드에서 n8n API를 직접 호출하면 CORS 문제가 발생할 수 있으므로
+ * 백엔드를 통해 프록시합니다.
+ * n8n 인증을 위해 세션 쿠키를 관리합니다.
+ */
+@RestController
+@RequestMapping("/api/v1/n8n")
+class N8nProxyController(
+    @Value("\${claude-flow.webhook.base-url:http://localhost:5678}")
+    private val n8nBaseUrl: String,
+    @Value("\${claude-flow.n8n.email:admin@local.dev}")
+    private val n8nEmail: String,
+    @Value("\${claude-flow.n8n.password:Localdev123}")
+    private val n8nPassword: String
+) {
+    private var sessionCookie: String? = null
+    private var sessionExpiry: Instant = Instant.MIN
+    private val loginMutex = Mutex()
+
+    private val webClient = WebClient.builder()
+        .baseUrl(n8nBaseUrl)
+        .build()
+
+    /**
+     * Login to n8n and get session cookie
+     */
+    private suspend fun ensureAuthenticated(): String? {
+        // Return cached cookie if still valid (with 5 min buffer)
+        if (sessionCookie != null && Instant.now().plusSeconds(300).isBefore(sessionExpiry)) {
+            return sessionCookie
+        }
+
+        return loginMutex.withLock {
+            // Double-check after acquiring lock
+            if (sessionCookie != null && Instant.now().plusSeconds(300).isBefore(sessionExpiry)) {
+                return@withLock sessionCookie
+            }
+
+            try {
+                logger.info { "Logging into n8n at $n8nBaseUrl" }
+                webClient.post()
+                    .uri("/rest/login")
+                    .bodyValue(mapOf(
+                        "emailOrLdapLoginId" to n8nEmail,
+                        "password" to n8nPassword
+                    ))
+                    .awaitExchange { clientResponse ->
+                        val cookies = clientResponse.cookies()
+                        val authCookie = cookies["n8n-auth"]?.firstOrNull()
+                        if (authCookie != null) {
+                            sessionCookie = "n8n-auth=${authCookie.value}"
+                            // Cookie expires in 7 days, we'll refresh after 6 days
+                            sessionExpiry = Instant.now().plusSeconds(6 * 24 * 60 * 60)
+                            logger.info { "Successfully logged into n8n" }
+                        }
+                        Unit
+                    }
+                sessionCookie
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to login to n8n" }
+                null
+            }
+        }
+    }
+
+    private fun WebClient.RequestHeadersSpec<*>.withAuth(cookie: String?): WebClient.RequestHeadersSpec<*> {
+        return cookie?.let { header("Cookie", it) } ?: this
+    }
+
+    /**
+     * Get all workflows
+     */
+    @GetMapping("/workflows")
+    fun getWorkflows(): Mono<ResponseEntity<List<N8nWorkflowDto>>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            val response = webClient.get()
+                .uri("/rest/workflows")
+                .withAuth(cookie)
+                .retrieve()
+                .awaitBodyOrNull<N8nWorkflowsResponse>()
+
+            val workflows = response?.data?.map { it.toDto() } ?: emptyList()
+            logger.debug { "Fetched ${workflows.size} workflows from n8n" }
+            ResponseEntity.ok(workflows)
+        } catch (e: Exception) {
+            logger.warn { "Failed to fetch workflows from n8n: ${e.message}" }
+            ResponseEntity.ok(emptyList())
+        }
+    }
+
+    /**
+     * Get workflow by ID
+     */
+    @GetMapping("/workflows/{id}")
+    fun getWorkflow(@PathVariable id: String): Mono<ResponseEntity<N8nWorkflowDto?>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            val response = webClient.get()
+                .uri("/rest/workflows/$id")
+                .withAuth(cookie)
+                .retrieve()
+                .awaitBodyOrNull<N8nWorkflowResponse>()
+
+            val workflow = response?.data?.toDto()
+            if (workflow != null) {
+                ResponseEntity.ok(workflow)
+            } else {
+                ResponseEntity.notFound().build()
+            }
+        } catch (e: Exception) {
+            logger.warn { "Failed to fetch workflow $id: ${e.message}" }
+            ResponseEntity.notFound().build()
+        }
+    }
+
+    /**
+     * Get recent executions
+     */
+    @GetMapping("/executions")
+    fun getExecutions(
+        @RequestParam(defaultValue = "100") limit: Int
+    ): Mono<ResponseEntity<List<N8nExecutionDto>>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            val response = webClient.get()
+                .uri("/rest/executions?limit=$limit")
+                .withAuth(cookie)
+                .retrieve()
+                .awaitBodyOrNull<N8nExecutionsResponse>()
+
+            val executions = response?.data?.results?.map { it.toDto() } ?: emptyList()
+            logger.debug { "Fetched ${executions.size} executions from n8n" }
+            ResponseEntity.ok(executions)
+        } catch (e: Exception) {
+            logger.warn { "Failed to fetch executions from n8n: ${e.message}" }
+            ResponseEntity.ok(emptyList())
+        }
+    }
+
+    /**
+     * Toggle workflow active state
+     */
+    @PatchMapping("/workflows/{id}/active")
+    fun setWorkflowActive(
+        @PathVariable id: String,
+        @RequestBody request: SetActiveRequest
+    ): Mono<ResponseEntity<Map<String, Any>>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            webClient.patch()
+                .uri("/rest/workflows/$id")
+                .header("Cookie", cookie ?: "")
+                .bodyValue(mapOf("active" to request.active))
+                .retrieve()
+                .awaitBodyOrNull<Any>()
+
+            logger.info { "Set workflow $id active=${request.active}" }
+            ResponseEntity.ok(mapOf("success" to true, "id" to id, "active" to request.active))
+        } catch (e: Exception) {
+            logger.warn { "Failed to update workflow $id: ${e.message}" }
+            ResponseEntity.ok(mapOf("success" to false, "error" to (e.message ?: "Unknown error")))
+        }
+    }
+
+    /**
+     * Execute workflow manually
+     */
+    @PostMapping("/workflows/{id}/run")
+    fun executeWorkflow(@PathVariable id: String): Mono<ResponseEntity<Map<String, Any>>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            webClient.post()
+                .uri("/rest/workflows/$id/run")
+                .header("Cookie", cookie ?: "")
+                .retrieve()
+                .awaitBodyOrNull<Any>()
+
+            logger.info { "Executed workflow $id" }
+            ResponseEntity.ok(mapOf("success" to true, "id" to id))
+        } catch (e: Exception) {
+            logger.warn { "Failed to execute workflow $id: ${e.message}" }
+            ResponseEntity.ok(mapOf("success" to false, "error" to (e.message ?: "Unknown error")))
+        }
+    }
+}
+
+// n8n API Response Types
+data class N8nWorkflowsResponse(val data: List<N8nWorkflow> = emptyList())
+data class N8nWorkflowResponse(val data: N8nWorkflow? = null)
+data class N8nExecutionsResponse(val data: N8nExecutionsData? = null)
+data class N8nExecutionsData(val results: List<N8nExecution> = emptyList(), val count: Int = 0)
+
+data class N8nWorkflow(
+    val id: String,
+    val name: String,
+    val active: Boolean,
+    val createdAt: String,
+    val updatedAt: String,
+    val nodes: List<Map<String, Any>>? = null,
+    val connections: Any? = null,
+    val settings: Map<String, Any>? = null,
+    val tags: List<Map<String, Any>>? = null
+) {
+    fun toDto() = N8nWorkflowDto(
+        id = id,
+        name = name,
+        active = active,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        nodes = nodes,
+        connections = connections,
+        settings = settings,
+        tags = tags?.map { N8nTagDto(it["id"]?.toString() ?: "", it["name"]?.toString() ?: "") }
+    )
+}
+
+data class N8nExecution(
+    val id: String,
+    val finished: Boolean? = null,
+    val mode: String? = null,
+    val startedAt: String,
+    val stoppedAt: String? = null,
+    val workflowId: String,
+    val status: String,
+    val workflowName: String? = null
+) {
+    fun toDto() = N8nExecutionDto(
+        id = id,
+        finished = finished ?: (status == "success"),
+        mode = mode ?: "unknown",
+        startedAt = startedAt,
+        stoppedAt = stoppedAt,
+        workflowId = workflowId,
+        status = status,
+        workflowName = workflowName
+    )
+}
+
+// DTOs for frontend
+data class N8nWorkflowDto(
+    val id: String,
+    val name: String,
+    val active: Boolean,
+    val createdAt: String,
+    val updatedAt: String,
+    val nodes: List<Map<String, Any>>?,
+    val connections: Any?,
+    val settings: Map<String, Any>?,
+    val tags: List<N8nTagDto>?
+)
+
+data class N8nTagDto(val id: String, val name: String)
+
+data class N8nExecutionDto(
+    val id: String,
+    val finished: Boolean,
+    val mode: String,
+    val startedAt: String,
+    val stoppedAt: String?,
+    val workflowId: String,
+    val status: String,
+    val workflowName: String?
+)
+
+data class SetActiveRequest(val active: Boolean)
