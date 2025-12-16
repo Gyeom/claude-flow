@@ -2,6 +2,7 @@ package ai.claudeflow.core.routing
 
 import ai.claudeflow.core.model.Agent
 import ai.claudeflow.core.model.AgentMatch
+import ai.claudeflow.core.model.RoutingMethod
 import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
@@ -89,7 +90,8 @@ class AgentRouter(
                     return AgentMatch(
                         agent = agent,
                         confidence = 0.95,
-                        matchedKeyword = keyword
+                        matchedKeyword = keyword,
+                        method = RoutingMethod.KEYWORD
                     )
                 }
             }
@@ -116,7 +118,8 @@ class AgentRouter(
                     return AgentMatch(
                         agent = agent,
                         confidence = 0.85,
-                        matchedKeyword = pattern.pattern
+                        matchedKeyword = pattern.pattern,
+                        method = RoutingMethod.PATTERN
                     )
                 }
             }

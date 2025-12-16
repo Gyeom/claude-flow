@@ -483,9 +483,11 @@ class ClaudeFlowController(
                 }
             }
 
-            // 1. 라우팅
+            // 1. 라우팅 (시간 측정)
+            val routingStartTime = System.currentTimeMillis()
             val match = agentRouter.route(request.prompt)
-            logger.info { "Routed to agent: ${match.agent.id} (confidence: ${match.confidence})" }
+            val routingLatencyMs = System.currentTimeMillis() - routingStartTime
+            logger.info { "Routed to agent: ${match.agent.id} (confidence: ${match.confidence}, method: ${match.method}, latency: ${routingLatencyMs}ms)" }
 
             // 2. 채널에 설정된 프로젝트 조회 (채널 정보가 있으면)
             val project = request.channel?.let { projectRegistry.getChannelProject(it) }
@@ -535,6 +537,16 @@ class ClaudeFlowController(
                         error = result.error
                     ))
                     logger.debug { "Saved execution record: ${result.requestId}" }
+
+                    // 7. 라우팅 메트릭 저장
+                    store.saveRoutingMetric(
+                        executionId = result.requestId,
+                        routingMethod = match.method.name.lowercase(),
+                        agentId = match.agent.id,
+                        confidence = match.confidence,
+                        latencyMs = routingLatencyMs
+                    )
+                    logger.debug { "Saved routing metric: method=${match.method.name}, latency=${routingLatencyMs}ms" }
                 } catch (e: Exception) {
                     logger.error(e) { "Failed to save execution record" }
                 }
@@ -625,6 +637,28 @@ class ClaudeFlowController(
     }
 
     // ==================== 실행 이력 API ====================
+
+    /**
+     * 실행에 reply_ts 연결 (피드백 추적용)
+     */
+    @PatchMapping("/executions/{id}/reply-ts")
+    fun updateExecutionReplyTs(
+        @PathVariable id: String,
+        @RequestBody request: UpdateReplyTsRequest
+    ): Mono<ResponseEntity<Map<String, Any>>> = mono {
+        if (storage == null) {
+            return@mono ResponseEntity.ok(mapOf("success" to false, "error" to "Storage not configured"))
+        }
+
+        try {
+            storage.updateExecutionReplyTs(id, request.replyTs)
+            logger.info { "Updated reply_ts for execution $id: ${request.replyTs}" }
+            ResponseEntity.ok(mapOf("success" to true, "executionId" to id, "replyTs" to request.replyTs))
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to update reply_ts for execution $id" }
+            ResponseEntity.ok(mapOf("success" to false, "error" to (e.message ?: "Unknown error")))
+        }
+    }
 
     /**
      * 실행 이력 조회 (reply_ts로 조회)
@@ -903,6 +937,10 @@ data class FeedbackRequest(
 data class FeedbackResponse(
     val success: Boolean,
     val error: String? = null
+)
+
+data class UpdateReplyTsRequest(
+    val replyTs: String
 )
 
 // Stats DTOs

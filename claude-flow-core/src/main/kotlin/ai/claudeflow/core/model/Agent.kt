@@ -203,5 +203,19 @@ data class Agent(
 data class AgentMatch(
     val agent: Agent,
     val confidence: Double,
-    val matchedKeyword: String? = null
+    val matchedKeyword: String? = null,
+    val method: RoutingMethod = RoutingMethod.DEFAULT
 )
+
+/**
+ * 라우팅 방법
+ */
+@Serializable
+enum class RoutingMethod {
+    KEYWORD,    // 키워드 매칭
+    PATTERN,    // 정규식 패턴 매칭
+    SEMANTIC,   // 시맨틱 검색
+    LLM,        // LLM 분류
+    CACHE,      // 캐시 히트
+    DEFAULT     // 기본 폴백
+}

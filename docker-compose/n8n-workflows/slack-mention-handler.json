@@ -166,7 +166,7 @@
         "url": "http://host.docker.internal:8080/api/v1/execute-with-routing",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, maxTurns: 50, conversationHistory: $json.conversationHistory, channel: $json.channel }) }}",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, maxTurns: 50, conversationHistory: $json.conversationHistory, channel: $json.channel, threadTs: $json.threadTs, userId: $json.user }) }}",
         "options": { "timeout": 900000 }
       },
       "id": "execute-claude",
@@ -240,6 +240,22 @@
     },
     {
       "parameters": {
+        "method": "PATCH",
+        "url": "={{ 'http://host.docker.internal:8080/api/v1/executions/' + $('Execute Claude').item.json.executionId + '/reply-ts' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ replyTs: $('Send Reply').item.json.timestamp }) }}",
+        "options": { "timeout": 5000 }
+      },
+      "id": "save-reply-ts",
+      "name": "Save Reply TS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 450],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
         "sendBody": true,
@@ -250,7 +266,7 @@
       "name": "Add ✅",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2500, 350],
+      "position": [2700, 350],
       "continueOnFail": true
     },
     {
@@ -280,7 +296,7 @@
       "name": "Add 👍",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2700, 300],
+      "position": [2900, 300],
       "continueOnFail": true
     },
     {
@@ -295,7 +311,7 @@
       "name": "Add 👎",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2700, 400],
+      "position": [2900, 400],
       "continueOnFail": true
     }
   ],
@@ -343,6 +359,9 @@
       ]
     },
     "Send Reply": {
+      "main": [[{ "node": "Save Reply TS", "type": "main", "index": 0 }]]
+    },
+    "Save Reply TS": {
       "main": [[{ "node": "Add ✅", "type": "main", "index": 0 }]]
     },
     "Send Error": {

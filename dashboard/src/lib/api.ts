@@ -49,23 +49,49 @@ interface DashboardApiResponse {
   satisfactionScore: number
 }
 
+// Overview API response type (실제 백분위수 포함)
+interface OverviewApiResponse {
+  totalRequests: number
+  successfulRequests: number
+  failedRequests: number
+  successRate: number
+  totalCostUsd: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  cacheHitRate: number
+  percentiles: { p50: number; p90: number; p95: number; p99: number }
+  feedback: { positive: number; negative: number; satisfactionRate: number; pendingFeedback: number }
+  comparison: { requestsChange: number; successRateChange: number } | null
+}
+
 // Transform backend response to frontend expected format
-function transformDashboardStats(data: DashboardApiResponse): DashboardStats {
+function transformDashboardStats(
+  data: DashboardApiResponse,
+  overview: OverviewApiResponse | null
+): DashboardStats {
+  // 실제 백분위수 사용 (없으면 avgDurationMs 기반 추정)
+  const percentiles = overview?.percentiles || {
+    p50: data.avgDurationMs * 0.8,
+    p90: data.avgDurationMs * 1.2,
+    p95: data.avgDurationMs * 1.5,
+    p99: data.avgDurationMs * 2,
+  }
+
   return {
     period: '7d',
     overview: {
       totalRequests: data.totalExecutions,
-      successful: Math.round(data.totalExecutions * data.successRate),
-      failed: Math.round(data.totalExecutions * (1 - data.successRate)),
+      successful: overview?.successfulRequests ?? Math.round(data.totalExecutions * data.successRate),
+      failed: overview?.failedRequests ?? Math.round(data.totalExecutions * (1 - data.successRate)),
       successRate: data.successRate,
       avgDurationMs: data.avgDurationMs,
-      p50DurationMs: data.avgDurationMs * 0.8,
-      p90DurationMs: data.avgDurationMs * 1.2,
-      p95DurationMs: data.avgDurationMs * 1.5,
-      p99DurationMs: data.avgDurationMs * 2,
-      totalCostUsd: data.totalTokens * 0.00001,
-      totalInputTokens: Math.round(data.totalTokens * 0.4),
-      totalOutputTokens: Math.round(data.totalTokens * 0.6),
+      p50DurationMs: percentiles.p50,
+      p90DurationMs: percentiles.p90,
+      p95DurationMs: percentiles.p95,
+      p99DurationMs: percentiles.p99,
+      totalCostUsd: overview?.totalCostUsd ?? data.totalTokens * 0.00001,
+      totalInputTokens: overview?.totalInputTokens ?? Math.round(data.totalTokens * 0.4),
+      totalOutputTokens: overview?.totalOutputTokens ?? Math.round(data.totalTokens * 0.6),
     },
     timeseries: data.hourlyTrend.map((t, idx) => ({
       timestamp: new Date(Date.now() - (23 - idx) * 3600000).toISOString(),
@@ -98,9 +124,9 @@ function transformDashboardStats(data: DashboardApiResponse): DashboardStats {
       totalTokens: 0,
     })),
     feedback: {
-      thumbsUp: data.thumbsUp,
-      thumbsDown: data.thumbsDown,
-      satisfactionScore: data.satisfactionScore,
+      thumbsUp: overview?.feedback.positive ?? data.thumbsUp,
+      thumbsDown: overview?.feedback.negative ?? data.thumbsDown,
+      satisfactionScore: overview?.feedback.satisfactionRate ?? data.satisfactionScore,
     },
   }
 }
@@ -108,12 +134,19 @@ function transformDashboardStats(data: DashboardApiResponse): DashboardStats {
 // Dashboard
 export const dashboardApi = {
   getStats: async (period = '7d'): Promise<DashboardStats> => {
-    const data = await fetchApi<DashboardApiResponse>(`/analytics/dashboard?period=${period}`)
-    return transformDashboardStats(data)
+    const days = period.replace('d', '').replace('h', '')
+    // Dashboard API와 Overview API 병렬 호출
+    const [dashboardData, overviewData] = await Promise.all([
+      fetchApi<DashboardApiResponse>(`/analytics/dashboard?days=${days}`),
+      fetchApi<OverviewApiResponse>(`/analytics/overview?days=${days}`).catch(() => null),
+    ])
+    return transformDashboardStats(dashboardData, overviewData)
   },
 
-  getOverview: (period = '7d') =>
-    fetchApi<{ period: string; summary: SummaryStats }>(`/analytics/overview?period=${period}`),
+  getOverview: (period = '7d') => {
+    const days = period.replace('d', '').replace('h', '')
+    return fetchApi<OverviewApiResponse>(`/analytics/overview?days=${days}`)
+  },
 
   getTimeseries: (granularity = 'daily', days = 7) =>
     fetchApi<{ granularity: string; days: number; data: TimeSeriesData[] }>(
@@ -182,17 +215,29 @@ export const analyticsApi = {
   getProjectStats: () =>
     fetchApi<ProjectStat[]>('/analytics/projects'),
 
-  getModels: (period = '7d') =>
-    fetchApi<{ period: string; models: ModelStats[] }>(`/analytics/models?period=${period}`),
+  getModels: async (period = '7d') => {
+    const days = period.replace('d', '')
+    const models = await fetchApi<ModelStats[]>(`/analytics/models?days=${days}`)
+    return { period, models }
+  },
 
-  getErrors: (period = '7d') =>
-    fetchApi<{ period: string; errors: ErrorStats[] }>(`/analytics/errors?period=${period}`),
+  getErrors: async (period = '7d') => {
+    const days = period.replace('d', '')
+    const errors = await fetchApi<ErrorStats[]>(`/analytics/errors?days=${days}`)
+    return { period, errors }
+  },
 
-  getSources: (period = '7d') =>
-    fetchApi<{ period: string; sources: SourceStats[] }>(`/analytics/sources?period=${period}`),
+  getSources: async (period = '7d') => {
+    const days = period.replace('d', '')
+    const sources = await fetchApi<SourceStats[]>(`/analytics/sources?days=${days}`)
+    return { period, sources }
+  },
 
-  getRequesters: (period = '7d') =>
-    fetchApi<{ period: string; requesters: RequesterStats[] }>(`/analytics/requesters?period=${period}`),
+  getRequesters: async (period = '7d') => {
+    const days = period.replace('d', '')
+    const requesters = await fetchApi<RequesterStats[]>(`/analytics/requesters?days=${days}`)
+    return { period, requesters }
+  },
 }
 
 // Users API response type (from backend)
