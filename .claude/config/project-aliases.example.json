@@ -1,0 +1,19 @@
+{
+  "$schema": "./project-aliases.schema.json",
+  "_comment": "Example project alias configuration. Copy this file to project-aliases.json and customize for your organization.",
+
+  "workspaceRoot": "${WORKSPACE_PATH:-$HOME/workspace}",
+
+  "aliases": {
+    "my-backend": {
+      "patterns": ["백엔드", "backend", "서버"],
+      "description": "Main backend service"
+    },
+    "my-frontend": {
+      "patterns": ["프론트", "frontend", "웹"],
+      "description": "Web frontend application"
+    }
+  },
+
+  "suffixes": ["서버", "프로젝트", "레포", "repository", "repo", "server", "project"]
+}

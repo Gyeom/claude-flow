@@ -74,10 +74,20 @@ export function Sidebar() {
         {/* Footer */}
         <div className="border-t border-border p-4 space-y-4">
           <ThemeToggle />
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted cursor-pointer transition-colors">
-            <Settings className="h-5 w-5 text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">Settings</span>
-          </div>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-3 px-3 py-2 rounded-lg transition-colors',
+                isActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )
+            }
+          >
+            <Settings className="h-5 w-5" />
+            <span className="text-sm font-medium">Settings</span>
+          </NavLink>
           <div className="px-3 py-2">
             <p className="text-xs text-muted-foreground">
               Version 1.0.0

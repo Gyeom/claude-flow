@@ -502,3 +502,53 @@ export const n8nApi = {
     }
   },
 }
+
+// Settings API
+export interface ProjectAlias {
+  patterns: string[]
+  description: string
+}
+
+export interface ProjectAliasesConfig {
+  workspaceRoot: string
+  aliases: Record<string, ProjectAlias>
+  suffixes: string[]
+}
+
+export interface TestAliasResult {
+  text: string
+  detected: {
+    projectId: string
+    matchedPattern: string
+    description: string | null
+  }[]
+}
+
+export const settingsApi = {
+  // Project Aliases
+  getProjectAliases: () =>
+    fetchApi<ProjectAliasesConfig>('/settings/project-aliases'),
+
+  saveProjectAliases: (config: ProjectAliasesConfig) =>
+    fetchApi<{ success: boolean; message: string }>('/settings/project-aliases', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    }),
+
+  upsertProjectAlias: (projectId: string, alias: ProjectAlias) =>
+    fetchApi<{ success: boolean; message: string }>(`/settings/project-aliases/${projectId}`, {
+      method: 'PUT',
+      body: JSON.stringify(alias),
+    }),
+
+  deleteProjectAlias: (projectId: string) =>
+    fetchApi<{ success: boolean; message: string }>(`/settings/project-aliases/${projectId}`, {
+      method: 'DELETE',
+    }),
+
+  testProjectAliases: (text: string) =>
+    fetchApi<TestAliasResult>('/settings/project-aliases/test', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+}

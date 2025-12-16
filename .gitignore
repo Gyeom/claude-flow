@@ -24,6 +24,7 @@ Thumbs.db
 
 # Claude Code local settings (may contain sensitive data)
 .claude/settings.local.json
+.claude/config/project-aliases.json
 
 # Logs
 *.log

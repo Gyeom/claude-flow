@@ -547,9 +547,20 @@ data class ClaudeCliOutput(
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class TokenUsage(
+    @com.fasterxml.jackson.annotation.JsonProperty("input_tokens")
+    @com.fasterxml.jackson.annotation.JsonAlias("inputTokens")
     val inputTokens: Int = 0,
+
+    @com.fasterxml.jackson.annotation.JsonProperty("output_tokens")
+    @com.fasterxml.jackson.annotation.JsonAlias("outputTokens")
     val outputTokens: Int = 0,
+
+    @com.fasterxml.jackson.annotation.JsonProperty("cache_read_input_tokens")
+    @com.fasterxml.jackson.annotation.JsonAlias("cacheReadInputTokens")
     val cacheReadTokens: Int = 0,
+
+    @com.fasterxml.jackson.annotation.JsonProperty("cache_creation_input_tokens")
+    @com.fasterxml.jackson.annotation.JsonAlias("cacheCreationInputTokens")
     val cacheWriteTokens: Int = 0
 )
 
@@ -566,11 +577,17 @@ data class StreamEvent(
     val name: String? = null,
     val input: Any? = null,
     // tool_result
+    @com.fasterxml.jackson.annotation.JsonProperty("is_error")
+    @com.fasterxml.jackson.annotation.JsonAlias("isError")
     val isError: Boolean? = null,
     // result
     val result: String? = null,
+    @com.fasterxml.jackson.annotation.JsonProperty("session_id")
+    @com.fasterxml.jackson.annotation.JsonAlias("sessionId")
     val sessionId: String? = null,
     val usage: TokenUsage? = null,
+    @com.fasterxml.jackson.annotation.JsonProperty("total_cost_usd")
+    @com.fasterxml.jackson.annotation.JsonAlias("cost")
     val cost: Double? = null
 )
 

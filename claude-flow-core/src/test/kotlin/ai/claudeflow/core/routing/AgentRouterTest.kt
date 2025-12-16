@@ -11,13 +11,13 @@ class AgentRouterTest : BehaviorSpec({
     Given("AgentRouter가 기본 에이전트로 초기화되었을 때") {
         val router = AgentRouter()
 
-        Then("3개의 기본 에이전트가 있어야 한다") {
-            router.listAgents().size shouldBe 3
+        Then("4개의 기본 에이전트가 있어야 한다") {
+            router.listAgents().size shouldBe 4
         }
 
-        Then("general, code-reviewer, bug-fixer 에이전트가 있어야 한다") {
+        Then("refactor, code-reviewer, bug-fixer, general 에이전트가 있어야 한다") {
             val agentIds = router.listAgents().map { it.id }
-            agentIds shouldBe listOf("code-reviewer", "bug-fixer", "general")
+            agentIds shouldBe listOf("refactor", "code-reviewer", "bug-fixer", "general")
         }
     }
 

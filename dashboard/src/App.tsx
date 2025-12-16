@@ -16,6 +16,7 @@ const Plugins = lazy(() => import('@/pages/Plugins').then(m => ({ default: m.Plu
 const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })))
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
 const Logs = lazy(() => import('@/pages/Logs'))
+const Settings = lazy(() => import('@/pages/Settings'))
 
 // Loading fallback component
 function PageLoader() {
@@ -93,6 +94,11 @@ function App() {
         <Route path="/logs" element={
           <Suspense fallback={<PageLoader />}>
             <Logs />
+          </Suspense>
+        } />
+        <Route path="/settings" element={
+          <Suspense fallback={<PageLoader />}>
+            <Settings />
           </Suspense>
         } />
       </Route>
