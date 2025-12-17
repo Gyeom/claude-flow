@@ -361,6 +361,73 @@ export const healthApi = {
     fetchApi<{ status: string; version: string }>('/health'),
 }
 
+// System / Environment Configuration API
+export interface EnvVariable {
+  key: string
+  value: string
+}
+
+export interface EnvVarSchema {
+  key: string
+  label: string
+  description: string
+  group: string
+  required: boolean
+  sensitive: boolean
+  placeholder: string
+}
+
+export interface EnvGroup {
+  id: string
+  name: string
+  description: string
+  required: boolean
+}
+
+export interface EnvConfigResponse {
+  success: boolean
+  path: string | null
+  exists: boolean
+  variables: EnvVariable[]
+  message: string | null
+}
+
+export interface EnvSchemaResponse {
+  schema: EnvVarSchema[]
+  groups: EnvGroup[]
+}
+
+export const systemApi = {
+  // Get environment config
+  getEnvConfig: () =>
+    fetchApi<EnvConfigResponse>('/system/env'),
+
+  // Save environment config
+  saveEnvConfig: (variables: EnvVariable[]) =>
+    fetchApi<{ success: boolean; message: string; path: string | null }>('/system/env', {
+      method: 'PUT',
+      body: JSON.stringify({ variables }),
+    }),
+
+  // Get environment schema (for UI rendering)
+  getEnvSchema: () =>
+    fetchApi<EnvSchemaResponse>('/system/env/schema'),
+
+  // Get system health
+  getHealth: () =>
+    fetchApi<{ status: string; components: Record<string, { status: string; details: Record<string, unknown> }> }>('/system/health'),
+
+  // Slack status
+  getSlackStatus: () =>
+    fetchApi<Record<string, unknown>>('/system/slack/status'),
+
+  // Force Slack reconnect
+  reconnectSlack: () =>
+    fetchApi<{ success: boolean; message?: string; error?: string }>('/system/slack/reconnect', {
+      method: 'POST',
+    }),
+}
+
 // Plugins
 export interface PluginInfo {
   id: string

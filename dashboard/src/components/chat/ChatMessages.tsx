@@ -1,8 +1,8 @@
 import { useRef, useEffect } from 'react'
-import { User, Bot, Loader2 } from 'lucide-react'
+import { User, Bot, Sparkles, Clock, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ToolCallsList } from './ToolCallDisplay'
-import ReactMarkdown from 'react-markdown'
+import { MarkdownRenderer } from './MarkdownRenderer'
 
 interface ToolCall {
   toolId: string
@@ -24,6 +24,7 @@ interface Message {
     confidence?: number
     routingMethod?: string
   }
+  timestamp?: string
 }
 
 interface ChatMessagesProps {
@@ -33,6 +34,227 @@ interface ChatMessagesProps {
   streamingContent?: string
 }
 
+// 타이핑 인디케이터
+function TypingIndicator() {
+  return (
+    <div className="flex items-center gap-1.5 px-4 py-3">
+      <div className="flex gap-1">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="w-2 h-2 rounded-full bg-primary/60 animate-bounce"
+            style={{ animationDelay: `${i * 0.15}s` }}
+          />
+        ))}
+      </div>
+      <span className="text-sm text-muted-foreground ml-2">응답 생성 중...</span>
+    </div>
+  )
+}
+
+// 에이전트 배지
+function AgentBadge({
+  agentName,
+  confidence,
+  routingMethod
+}: {
+  agentName: string
+  confidence?: number
+  routingMethod?: string
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20">
+        <Zap className="h-3 w-3 text-primary" />
+        <span className="text-xs font-medium text-primary">{agentName}</span>
+      </div>
+      {confidence !== undefined && (
+        <span className="text-xs text-muted-foreground">
+          {Math.round(confidence * 100)}% 신뢰도
+        </span>
+      )}
+      {routingMethod && (
+        <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground">
+          {routingMethod}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// 빈 상태 화면
+function EmptyState() {
+  const suggestions = [
+    { icon: '💻', text: '이 코드를 리뷰해줘' },
+    { icon: '🐛', text: '버그를 찾아서 수정해줘' },
+    { icon: '📝', text: '이 함수를 리팩토링해줘' },
+    { icon: '📖', text: '이 프로젝트 구조를 설명해줘' },
+  ]
+
+  return (
+    <div className="flex-1 flex items-center justify-center p-8">
+      <div className="text-center max-w-lg">
+        <div className="relative inline-block mb-6">
+          <div className="absolute inset-0 bg-primary/20 blur-2xl rounded-full" />
+          <Bot className="h-20 w-20 mx-auto text-primary relative" />
+        </div>
+
+        <h2 className="text-2xl font-bold mb-3">Claude Flow에 오신 것을 환영합니다</h2>
+        <p className="text-muted-foreground mb-8">
+          메시지를 입력하면 가장 적합한 에이전트가 자동으로 선택됩니다.
+          <br />
+          코드 리뷰, 버그 수정, 리팩토링 등 다양한 작업을 요청해보세요.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={index}
+              className="flex items-center gap-3 p-4 rounded-xl bg-muted/50 hover:bg-muted border border-border/50 hover:border-primary/30 transition-all text-left group"
+            >
+              <span className="text-2xl">{suggestion.icon}</span>
+              <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                {suggestion.text}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 메시지 버블
+function MessageBubble({ message }: { message: Message }) {
+  const isUser = message.role === 'user'
+
+  return (
+    <div
+      className={cn(
+        'flex gap-4 px-4 py-6 transition-colors',
+        isUser ? 'bg-transparent' : 'bg-muted/30'
+      )}
+    >
+      {/* 아바타 */}
+      <div
+        className={cn(
+          'flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center shadow-sm',
+          isUser
+            ? 'bg-gradient-to-br from-blue-500 to-blue-600'
+            : 'bg-gradient-to-br from-violet-500 to-purple-600'
+        )}
+      >
+        {isUser ? (
+          <User className="h-5 w-5 text-white" />
+        ) : (
+          <Sparkles className="h-5 w-5 text-white" />
+        )}
+      </div>
+
+      {/* 메시지 내용 */}
+      <div className="flex-1 min-w-0 space-y-2">
+        {/* 헤더 */}
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-sm">
+            {isUser ? 'You' : 'Claude Flow'}
+          </span>
+          {message.timestamp && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock className="h-3 w-3" />
+              {new Date(message.timestamp).toLocaleTimeString('ko-KR', {
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </span>
+          )}
+        </div>
+
+        {/* 에이전트 정보 */}
+        {!isUser && message.metadata?.agentName && (
+          <AgentBadge
+            agentName={message.metadata.agentName}
+            confidence={message.metadata.confidence}
+            routingMethod={message.metadata.routingMethod}
+          />
+        )}
+
+        {/* 도구 호출 */}
+        {message.toolCalls && message.toolCalls.length > 0 && (
+          <div className="mb-3">
+            <ToolCallsList tools={message.toolCalls} />
+          </div>
+        )}
+
+        {/* 메시지 텍스트 */}
+        <div className={cn(
+          'max-w-none',
+          isUser ? 'text-foreground' : ''
+        )}>
+          {isUser ? (
+            <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+          ) : (
+            <MarkdownRenderer content={message.content} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// 스트리밍 메시지
+function StreamingMessage({
+  content,
+  toolCalls,
+  metadata
+}: {
+  content?: string
+  toolCalls: ToolCall[]
+  metadata?: Message['metadata']
+}) {
+  return (
+    <div className="flex gap-4 px-4 py-6 bg-muted/30">
+      {/* 아바타 */}
+      <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center shadow-sm bg-gradient-to-br from-violet-500 to-purple-600">
+        <Sparkles className="h-5 w-5 text-white animate-pulse" />
+      </div>
+
+      {/* 내용 */}
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="flex items-center gap-3">
+          <span className="font-semibold text-sm">Claude Flow</span>
+          <span className="flex items-center gap-1 text-xs text-primary">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+            응답 중
+          </span>
+        </div>
+
+        {/* 에이전트 정보 */}
+        {metadata?.agentName && (
+          <AgentBadge
+            agentName={metadata.agentName}
+            confidence={metadata.confidence}
+            routingMethod={metadata.routingMethod}
+          />
+        )}
+
+        {/* 진행 중인 도구 호출 */}
+        {toolCalls.length > 0 && (
+          <div className="mb-3">
+            <ToolCallsList tools={toolCalls} />
+          </div>
+        )}
+
+        {/* 스트리밍 텍스트 */}
+        {content ? (
+          <MarkdownRenderer content={content} />
+        ) : toolCalls.length === 0 ? (
+          <TypingIndicator />
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function ChatMessages({
   messages,
   isStreaming,
@@ -40,6 +262,7 @@ export function ChatMessages({
   streamingContent
 }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   // 새 메시지가 추가되면 자동 스크롤
   useEffect(() => {
@@ -47,125 +270,25 @@ export function ChatMessages({
   }, [messages, streamingContent, currentToolCalls])
 
   if (messages.length === 0 && !isStreaming) {
-    return (
-      <div className="h-full flex items-center justify-center p-8">
-        <div className="text-center max-w-md">
-          <Bot className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
-          <h3 className="text-lg font-medium mb-2">Claude Flow Chat</h3>
-          <p className="text-muted-foreground text-sm">
-            메시지를 입력하면 적합한 에이전트가 자동으로 선택됩니다.
-            코드 리뷰, 버그 수정, 리팩토링 등 다양한 작업을 요청해보세요.
-          </p>
-        </div>
-      </div>
-    )
+    return <EmptyState />
   }
 
   return (
-    <div className="h-full p-4 space-y-4">
-      {messages.map((message) => (
-        <MessageBubble key={message.id} message={message} />
-      ))}
+    <div ref={containerRef} className="flex-1 overflow-y-auto">
+      <div className="divide-y divide-border/30">
+        {messages.map((message) => (
+          <MessageBubble key={message.id} message={message} />
+        ))}
 
-      {/* 스트리밍 중인 응답 */}
-      {isStreaming && (
-        <div className="flex gap-3">
-          <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-            <Bot className="h-5 w-5 text-primary" />
-          </div>
-          <div className="flex-1 max-w-[85%]">
-            {/* 진행 중인 도구 호출 */}
-            {currentToolCalls.length > 0 && (
-              <ToolCallsList tools={currentToolCalls} />
-            )}
-
-            {/* 스트리밍 텍스트 */}
-            {streamingContent && (
-              <div className="rounded-lg bg-muted p-4">
-                <div className="prose dark:prose-invert prose-sm max-w-none">
-                  <ReactMarkdown>{streamingContent}</ReactMarkdown>
-                </div>
-              </div>
-            )}
-
-            {/* 스트리밍 인디케이터 */}
-            {!streamingContent && currentToolCalls.length === 0 && (
-              <div className="rounded-lg bg-muted p-4 flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">응답 생성 중...</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div ref={messagesEndRef} />
-    </div>
-  )
-}
-
-interface MessageBubbleProps {
-  message: Message
-}
-
-function MessageBubble({ message }: MessageBubbleProps) {
-  const isUser = message.role === 'user'
-
-  return (
-    <div className={cn('flex gap-3', isUser && 'flex-row-reverse')}>
-      {/* 아바타 */}
-      <div
-        className={cn(
-          'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
-          isUser ? 'bg-primary' : 'bg-primary/10'
-        )}
-      >
-        {isUser ? (
-          <User className="h-5 w-5 text-primary-foreground" />
-        ) : (
-          <Bot className="h-5 w-5 text-primary" />
+        {/* 스트리밍 중인 응답 */}
+        {isStreaming && (
+          <StreamingMessage
+            content={streamingContent}
+            toolCalls={currentToolCalls}
+          />
         )}
       </div>
-
-      {/* 메시지 내용 */}
-      <div className={cn('flex-1 max-w-[85%]', isUser && 'flex flex-col items-end')}>
-        {/* 에이전트 메타데이터 */}
-        {!isUser && message.metadata?.agentName && (
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-medium text-primary">
-              {message.metadata.agentName}
-            </span>
-            {message.metadata.confidence !== undefined && (
-              <span className="text-xs text-muted-foreground">
-                ({Math.round(message.metadata.confidence * 100)}% confidence)
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* 도구 호출 */}
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <ToolCallsList tools={message.toolCalls} />
-        )}
-
-        {/* 메시지 텍스트 */}
-        <div
-          className={cn(
-            'rounded-lg p-4',
-            isUser
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-muted'
-          )}
-        >
-          {isUser ? (
-            <p className="whitespace-pre-wrap">{message.content}</p>
-          ) : (
-            <div className="prose dark:prose-invert prose-sm max-w-none">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
-            </div>
-          )}
-        </div>
-      </div>
+      <div ref={messagesEndRef} className="h-4" />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useRef, useEffect } from 'react'
-import { Send, Loader2 } from 'lucide-react'
+import { Send, Loader2, Paperclip, Mic } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface ChatInputProps {
@@ -21,6 +21,13 @@ export function ChatInput({ input, onChange, onSubmit, isLoading, disabled }: Ch
     }
   }, [input])
 
+  // 포커스 유지
+  useEffect(() => {
+    if (!isLoading && textareaRef.current) {
+      textareaRef.current.focus()
+    }
+  }, [isLoading])
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter로 전송, Shift+Enter로 줄바꿈
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -31,48 +38,96 @@ export function ChatInput({ input, onChange, onSubmit, isLoading, disabled }: Ch
     }
   }
 
+  const charCount = input.length
+  const maxChars = 10000
+  const isNearLimit = charCount > maxChars * 0.8
+
   return (
-    <form onSubmit={onSubmit} className="border-t border-border bg-background p-4">
-      <div className="flex items-end gap-3">
-        <div className="flex-1 relative">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={onChange}
-            onKeyDown={handleKeyDown}
-            placeholder="메시지를 입력하세요... (Enter로 전송, Shift+Enter로 줄바꿈)"
-            disabled={isLoading || disabled}
-            className={cn(
-              'w-full resize-none rounded-lg border border-border bg-muted/50 px-4 py-3',
-              'focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary',
-              'placeholder:text-muted-foreground',
-              'disabled:opacity-50 disabled:cursor-not-allowed',
-              'min-h-[52px] max-h-[200px]'
-            )}
-            rows={1}
-          />
+    <div className="border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <form onSubmit={onSubmit} className="p-4">
+        <div className="relative">
+          {/* 메인 입력 영역 */}
+          <div className={cn(
+            'flex items-end gap-2 rounded-2xl border bg-muted/30 transition-all duration-200',
+            'focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20',
+            disabled && 'opacity-50'
+          )}>
+            {/* 첨부 버튼 (비활성) */}
+            <button
+              type="button"
+              disabled
+              className="p-3 text-muted-foreground/50 cursor-not-allowed"
+              title="파일 첨부 (준비 중)"
+            >
+              <Paperclip className="h-5 w-5" />
+            </button>
+
+            {/* 텍스트 입력 */}
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={onChange}
+              onKeyDown={handleKeyDown}
+              placeholder="메시지를 입력하세요..."
+              disabled={isLoading || disabled}
+              className={cn(
+                'flex-1 resize-none bg-transparent py-3 pr-2',
+                'focus:outline-none',
+                'placeholder:text-muted-foreground/60',
+                'disabled:cursor-not-allowed',
+                'min-h-[24px] max-h-[200px]',
+                'text-base leading-relaxed'
+              )}
+              rows={1}
+            />
+
+            {/* 음성 버튼 (비활성) */}
+            <button
+              type="button"
+              disabled
+              className="p-3 text-muted-foreground/50 cursor-not-allowed"
+              title="음성 입력 (준비 중)"
+            >
+              <Mic className="h-5 w-5" />
+            </button>
+
+            {/* 전송 버튼 */}
+            <button
+              type="submit"
+              disabled={!input.trim() || isLoading || disabled}
+              className={cn(
+                'flex items-center justify-center rounded-xl m-1.5 p-2.5',
+                'transition-all duration-200',
+                input.trim() && !isLoading && !disabled
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md hover:shadow-lg'
+                  : 'bg-muted text-muted-foreground cursor-not-allowed'
+              )}
+            >
+              {isLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Send className="h-5 w-5" />
+              )}
+            </button>
+          </div>
+
+          {/* 하단 정보 */}
+          <div className="flex items-center justify-between mt-2 px-2">
+            <p className="text-xs text-muted-foreground">
+              <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">Enter</kbd>
+              {' '}전송 {'·'}
+              <kbd className="px-1.5 py-0.5 rounded bg-muted text-[10px] font-mono">Shift + Enter</kbd>
+              {' '}줄바꿈
+            </p>
+            <span className={cn(
+              'text-xs transition-colors',
+              isNearLimit ? 'text-yellow-500' : 'text-muted-foreground/50'
+            )}>
+              {charCount > 0 && `${charCount.toLocaleString()} / ${maxChars.toLocaleString()}`}
+            </span>
+          </div>
         </div>
-        <button
-          type="submit"
-          disabled={!input.trim() || isLoading || disabled}
-          className={cn(
-            'flex items-center justify-center rounded-lg px-4 py-3',
-            'bg-primary text-primary-foreground',
-            'hover:bg-primary/90 transition-colors',
-            'disabled:opacity-50 disabled:cursor-not-allowed',
-            'min-w-[52px] h-[52px]'
-          )}
-        >
-          {isLoading ? (
-            <Loader2 className="h-5 w-5 animate-spin" />
-          ) : (
-            <Send className="h-5 w-5" />
-          )}
-        </button>
-      </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Claude Flow에 연결되어 있습니다. 에이전트가 자동으로 선택됩니다.
-      </p>
-    </form>
+      </form>
+    </div>
   )
 }

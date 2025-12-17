@@ -15,15 +15,18 @@ import {
   AlertCircle,
   Loader2,
   Save,
+  Edit3,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { projectsApi, settingsApi, type ProjectAlias } from '@/lib/api'
 import { formatNumber, cn } from '@/lib/utils'
+import type { Project } from '@/types'
 
 export function Projects() {
   const queryClient = useQueryClient()
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
   const [newChannelInput, setNewChannelInput] = useState('')
 
   // Fetch projects
@@ -203,6 +206,13 @@ export function Projects() {
                   description={selected.description || 'No description'}
                   action={
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowEditModal(true)}
+                        className="p-2 hover:bg-muted rounded-lg transition-colors"
+                        title="Edit project"
+                      >
+                        <Edit3 className="h-4 w-4" />
+                      </button>
                       {!selected.isDefault && (
                         <button
                           onClick={() => setDefaultMutation.mutate(selected.id)}
@@ -414,6 +424,18 @@ export function Projects() {
           onClose={() => setShowCreateModal(false)}
           onSuccess={() => {
             setShowCreateModal(false)
+            queryClient.invalidateQueries({ queryKey: ['projects'] })
+          }}
+        />
+      )}
+
+      {/* Edit Project Modal */}
+      {showEditModal && selected && (
+        <EditProjectModal
+          project={selected}
+          onClose={() => setShowEditModal(false)}
+          onSuccess={() => {
+            setShowEditModal(false)
             queryClient.invalidateQueries({ queryKey: ['projects'] })
           }}
         />
@@ -841,6 +863,209 @@ function CreateProjectModal({
                 <Check className="h-4 w-4" />
               )}
               Create Project
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// Edit Project Modal
+function EditProjectModal({
+  project,
+  onClose,
+  onSuccess,
+}: {
+  project: Project
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [formData, setFormData] = useState({
+    name: project.name,
+    description: project.description || '',
+    workingDirectory: project.workingDirectory,
+    gitRemote: project.gitRemote || '',
+    defaultBranch: project.defaultBranch,
+    enableUserContext: project.enableUserContext,
+    classifyModel: project.classifyModel,
+    classifyTimeout: project.classifyTimeout,
+    rateLimitRpm: project.rateLimitRpm,
+    fallbackAgentId: project.fallbackAgentId,
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: () => projectsApi.update(project.id, formData),
+    onSuccess,
+  })
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold">Edit Project</h2>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-lg">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            updateMutation.mutate()
+          }}
+          className="space-y-4"
+        >
+          <div>
+            <label className="text-sm font-medium">Project ID</label>
+            <input
+              type="text"
+              value={project.id}
+              disabled
+              className="w-full mt-1 px-3 py-2 bg-muted/50 border border-border rounded-lg text-muted-foreground cursor-not-allowed"
+            />
+            <p className="text-xs text-muted-foreground mt-1">Project ID cannot be changed</p>
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Name *</label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+              placeholder="My Project"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Description</label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+              placeholder="Project description..."
+              rows={2}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium">Working Directory *</label>
+            <input
+              type="text"
+              value={formData.workingDirectory}
+              onChange={(e) => setFormData({ ...formData, workingDirectory: e.target.value })}
+              className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg font-mono text-sm"
+              placeholder="/path/to/project"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium">Git Remote</label>
+              <input
+                type="text"
+                value={formData.gitRemote}
+                onChange={(e) => setFormData({ ...formData, gitRemote: e.target.value })}
+                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg text-sm"
+                placeholder="https://github.com/..."
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Default Branch</label>
+              <input
+                type="text"
+                value={formData.defaultBranch}
+                onChange={(e) => setFormData({ ...formData, defaultBranch: e.target.value })}
+                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+                placeholder="main"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium">Classify Model</label>
+              <select
+                value={formData.classifyModel}
+                onChange={(e) => setFormData({ ...formData, classifyModel: e.target.value })}
+                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+              >
+                <option value="haiku">Haiku (Fast)</option>
+                <option value="sonnet">Sonnet (Balanced)</option>
+                <option value="opus">Opus (Best)</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium">Rate Limit (RPM)</label>
+              <input
+                type="number"
+                value={formData.rateLimitRpm}
+                onChange={(e) => setFormData({ ...formData, rateLimitRpm: parseInt(e.target.value) || 0 })}
+                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+                min={0}
+                placeholder="0 = unlimited"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-sm font-medium">Classify Timeout (sec)</label>
+              <input
+                type="number"
+                value={formData.classifyTimeout}
+                onChange={(e) => setFormData({ ...formData, classifyTimeout: parseInt(e.target.value) || 30 })}
+                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+                min={1}
+                max={300}
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Fallback Agent</label>
+              <input
+                type="text"
+                value={formData.fallbackAgentId}
+                onChange={(e) => setFormData({ ...formData, fallbackAgentId: e.target.value })}
+                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
+                placeholder="general"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.enableUserContext}
+                onChange={(e) => setFormData({ ...formData, enableUserContext: e.target.checked })}
+                className="w-4 h-4 rounded"
+              />
+              <span className="text-sm">Enable user context</span>
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-border">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={updateMutation.isPending || !formData.name || !formData.workingDirectory}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {updateMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              Save Changes
             </button>
           </div>
         </form>

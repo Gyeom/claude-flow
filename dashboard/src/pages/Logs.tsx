@@ -138,17 +138,28 @@ function LogRow({
                   <Copy className="w-3 h-3" />
                 </button>
               </div>
-              <div className="space-y-1">
-                {Object.entries(log.details).map(([key, value]) => (
-                  <div key={key} className="flex gap-2 text-sm">
-                    <span className="text-purple-400 shrink-0">{key}:</span>
-                    <span className="text-foreground break-all">
-                      {typeof value === 'object'
-                        ? JSON.stringify(value)
-                        : String(value)}
-                    </span>
-                  </div>
-                ))}
+              <div className="space-y-2">
+                {Object.entries(log.details).map(([key, value]) => {
+                  const stringValue = typeof value === 'object'
+                    ? JSON.stringify(value, null, 2)
+                    : String(value)
+                  const isLongText = stringValue.length > 80
+
+                  return (
+                    <div key={key} className={cn(
+                      "text-sm",
+                      isLongText ? "flex flex-col gap-1" : "flex gap-2"
+                    )}>
+                      <span className="text-purple-400 shrink-0">{key}:</span>
+                      <pre className={cn(
+                        "text-foreground whitespace-pre-wrap break-all",
+                        isLongText && "bg-black/20 rounded p-2 text-xs"
+                      )}>
+                        {stringValue}
+                      </pre>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}

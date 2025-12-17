@@ -27,6 +27,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     val settingsRepository: SettingsRepository
     val analyticsRepository: AnalyticsRepository
     val projectRepository: ProjectRepository
+    val projectAliasRepository: ProjectAliasRepository
 
     init {
         Class.forName("org.sqlite.JDBC")
@@ -43,6 +44,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         settingsRepository = SettingsRepository(this)
         analyticsRepository = AnalyticsRepository(this, executionRepository, feedbackRepository)
         projectRepository = ProjectRepository(this)
+        projectAliasRepository = ProjectAliasRepository(this)
 
         logger.info { "Storage initialized: $dbPath" }
     }
@@ -208,6 +210,17 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     retry_count INTEGER DEFAULT 0,
                     failed_at TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                )
+            """)
+
+            // 프로젝트 별칭 테이블
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS project_aliases (
+                    project_id TEXT PRIMARY KEY,
+                    patterns TEXT NOT NULL,
+                    description TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
             """)
 
