@@ -335,65 +335,7 @@ class ClaudeFlowController(
         enabled = enabled
     )
 
-    // ==================== 프로젝트 관리 API ====================
-
-    /**
-     * 프로젝트 목록 조회
-     */
-    @GetMapping("/projects")
-    fun listProjects(): Mono<ResponseEntity<ProjectListResponse>> = mono {
-        val projects = projectRegistry.listAll().map { it.toDto() }
-        val defaultProject = projectRegistry.getDefaultProject()?.id
-        ResponseEntity.ok(ProjectListResponse(
-            projects = projects,
-            defaultProject = defaultProject
-        ))
-    }
-
-    /**
-     * 프로젝트 상세 조회
-     */
-    @GetMapping("/projects/{projectId}")
-    fun getProject(@PathVariable projectId: String): Mono<ResponseEntity<ProjectDto>> = mono {
-        val project = projectRegistry.get(projectId)
-        if (project != null) {
-            ResponseEntity.ok(project.toDto())
-        } else {
-            ResponseEntity.notFound().build()
-        }
-    }
-
-    /**
-     * 프로젝트 등록
-     */
-    @PostMapping("/projects")
-    fun registerProject(@RequestBody request: RegisterProjectRequest): Mono<ResponseEntity<ProjectDto>> = mono {
-        val project = Project(
-            id = request.id,
-            name = request.name,
-            description = request.description,
-            workingDirectory = request.workingDirectory,
-            gitRemote = request.gitRemote,
-            defaultBranch = request.defaultBranch ?: "main"
-        )
-
-        val success = projectRegistry.register(project)
-        if (success) {
-            logger.info { "Registered project: ${project.id}" }
-            ResponseEntity.ok(project.toDto())
-        } else {
-            ResponseEntity.badRequest().build()
-        }
-    }
-
-    /**
-     * 프로젝트 삭제
-     */
-    @DeleteMapping("/projects/{projectId}")
-    fun deleteProject(@PathVariable projectId: String): Mono<ResponseEntity<Map<String, Boolean>>> = mono {
-        val success = projectRegistry.unregister(projectId)
-        ResponseEntity.ok(mapOf("success" to success))
-    }
+    // ==================== 프로젝트 관리 API (레거시 - ProjectsController로 마이그레이션됨) ====================
 
     /**
      * 채널에 프로젝트 설정
@@ -419,12 +361,16 @@ class ClaudeFlowController(
      * 채널의 프로젝트 조회
      */
     @GetMapping("/projects/channel/{channel}")
-    fun getChannelProject(@PathVariable channel: String): Mono<ResponseEntity<ProjectDto?>> = mono {
+    fun getChannelProject(@PathVariable channel: String): Mono<ResponseEntity<Map<String, Any?>>> = mono {
         val project = projectRegistry.getChannelProject(channel)
         if (project != null) {
-            ResponseEntity.ok(project.toDto())
+            ResponseEntity.ok(mapOf(
+                "projectId" to project.id,
+                "projectName" to project.name,
+                "workingDirectory" to project.workingDirectory
+            ))
         } else {
-            ResponseEntity.ok(null)
+            ResponseEntity.ok(emptyMap())
         }
     }
 
@@ -448,16 +394,6 @@ class ClaudeFlowController(
             ResponseEntity.badRequest().body(mapOf("success" to false, "error" to "Project not found"))
         }
     }
-
-    // Project -> DTO 변환 확장 함수
-    private fun Project.toDto() = ProjectDto(
-        id = id,
-        name = name,
-        description = description,
-        workingDirectory = workingDirectory,
-        gitRemote = gitRemote,
-        defaultBranch = defaultBranch
-    )
 
     /**
      * 라우팅 + 실행 통합 API
@@ -859,30 +795,7 @@ data class SetAgentEnabledRequest(
     val enabled: Boolean
 )
 
-// Project DTOs
-data class ProjectDto(
-    val id: String,
-    val name: String,
-    val description: String?,
-    val workingDirectory: String,
-    val gitRemote: String?,
-    val defaultBranch: String
-)
-
-data class ProjectListResponse(
-    val projects: List<ProjectDto>,
-    val defaultProject: String?
-)
-
-data class RegisterProjectRequest(
-    val id: String,
-    val name: String,
-    val description: String? = null,
-    val workingDirectory: String,
-    val gitRemote: String? = null,
-    val defaultBranch: String? = "main"
-)
-
+// Project DTOs (Legacy)
 data class SetChannelProjectRequest(
     val channel: String,
     val projectId: String

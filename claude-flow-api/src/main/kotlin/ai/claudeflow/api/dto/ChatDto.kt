@@ -1,0 +1,116 @@
+package ai.claudeflow.api.dto
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+
+/**
+ * 채팅 요청 DTO
+ *
+ * Vercel AI SDK 호환 형식
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ChatRequest(
+    val messages: List<ChatMessage>,
+    val projectId: String? = null,
+    val agentId: String? = null,
+    val userId: String? = null,
+    val model: String? = null,
+    val maxTurns: Int? = null
+)
+
+/**
+ * 채팅 메시지
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class ChatMessage(
+    val role: String,  // "user" | "assistant" | "system"
+    val content: String,
+    val name: String? = null  // 사용자 이름 (optional)
+)
+
+/**
+ * 채팅 스트리밍 이벤트
+ *
+ * SSE로 전송되는 이벤트 타입들
+ */
+sealed class ChatStreamEvent {
+    /**
+     * 텍스트 청크 (assistant 응답)
+     */
+    data class Text(
+        val content: String
+    ) : ChatStreamEvent()
+
+    /**
+     * 도구 호출 시작
+     */
+    data class ToolStart(
+        val toolId: String,
+        val toolName: String,
+        val input: Map<String, Any?>
+    ) : ChatStreamEvent()
+
+    /**
+     * 도구 호출 완료
+     */
+    data class ToolEnd(
+        val toolId: String,
+        val toolName: String,
+        val result: String?,
+        val success: Boolean
+    ) : ChatStreamEvent()
+
+    /**
+     * 메타데이터 (라우팅 정보)
+     */
+    data class Metadata(
+        val agentId: String,
+        val agentName: String,
+        val confidence: Double,
+        val routingMethod: String
+    ) : ChatStreamEvent()
+
+    /**
+     * 에러
+     */
+    data class Error(
+        val message: String,
+        val code: String? = null
+    ) : ChatStreamEvent()
+
+    /**
+     * 완료
+     */
+    data class Done(
+        val requestId: String,
+        val agentId: String,
+        val durationMs: Long,
+        val usage: UsageInfo? = null,
+        val cost: Double? = null
+    ) : ChatStreamEvent()
+}
+
+/**
+ * 토큰 사용량 정보
+ */
+data class UsageInfo(
+    val inputTokens: Int,
+    val outputTokens: Int,
+    val cacheReadTokens: Int = 0,
+    val cacheWriteTokens: Int = 0
+)
+
+/**
+ * 채팅 응답 (비스트리밍용)
+ */
+data class ChatResponse(
+    val requestId: String,
+    val success: Boolean,
+    val content: String?,
+    val agentId: String,
+    val agentName: String,
+    val confidence: Double,
+    val durationMs: Long,
+    val usage: UsageInfo? = null,
+    val cost: Double? = null,
+    val error: String? = null
+)

@@ -26,11 +26,13 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     val agentRepository: AgentRepository
     val settingsRepository: SettingsRepository
     val analyticsRepository: AnalyticsRepository
+    val projectRepository: ProjectRepository
 
     init {
         Class.forName("org.sqlite.JDBC")
         connection = DriverManager.getConnection("jdbc:sqlite:$dbPath")
         initTables()
+        migrateSchema()
 
         // Initialize repositories
         executionRepository = ExecutionRepository(this)
@@ -40,6 +42,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         agentRepository = AgentRepository(this)
         settingsRepository = SettingsRepository(this)
         analyticsRepository = AnalyticsRepository(this, executionRepository, feedbackRepository)
+        projectRepository = ProjectRepository(this)
 
         logger.info { "Storage initialized: $dbPath" }
     }
@@ -77,6 +80,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     execution_id TEXT NOT NULL,
                     user_id TEXT NOT NULL,
                     reaction TEXT NOT NULL,
+                    category TEXT DEFAULT 'other',
+                    is_verified INTEGER DEFAULT 0,
+                    verified_at TEXT,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (execution_id) REFERENCES executions(id)
                 )
@@ -91,7 +97,16 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     working_directory TEXT NOT NULL,
                     git_remote TEXT,
                     default_branch TEXT DEFAULT 'main',
-                    created_at TEXT NOT NULL
+                    is_default INTEGER DEFAULT 0,
+                    enable_user_context INTEGER DEFAULT 1,
+                    classify_model TEXT DEFAULT 'haiku',
+                    classify_timeout INTEGER DEFAULT 30,
+                    rate_limit_rpm INTEGER DEFAULT 0,
+                    allowed_tools TEXT,
+                    disallowed_tools TEXT,
+                    fallback_agent_id TEXT DEFAULT 'general',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
             """)
 
@@ -155,6 +170,10 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     enabled INTEGER DEFAULT 1,
                     priority INTEGER DEFAULT 0,
                     examples TEXT,
+                    timeout INTEGER,
+                    static_response INTEGER DEFAULT 0,
+                    output_schema TEXT,
+                    isolated INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (id, project_id)
@@ -201,6 +220,45 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_routing_metrics_created ON routing_metrics(created_at)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_queue(created_at)")
+        }
+    }
+
+    /**
+     * 기존 DB 스키마 마이그레이션
+     */
+    private fun migrateSchema() {
+        connection.createStatement().use { stmt ->
+            // projects 테이블에 새 컬럼 추가 (기존 테이블에 없을 경우)
+            val projectColumns = mutableSetOf<String>()
+            stmt.executeQuery("PRAGMA table_info(projects)").use { rs ->
+                while (rs.next()) {
+                    projectColumns.add(rs.getString("name"))
+                }
+            }
+
+            val newProjectColumns = mapOf(
+                "is_default" to "INTEGER DEFAULT 0",
+                "enable_user_context" to "INTEGER DEFAULT 1",
+                "classify_model" to "TEXT DEFAULT 'haiku'",
+                "classify_timeout" to "INTEGER DEFAULT 30",
+                "rate_limit_rpm" to "INTEGER DEFAULT 0",
+                "allowed_tools" to "TEXT",
+                "disallowed_tools" to "TEXT",
+                "fallback_agent_id" to "TEXT DEFAULT 'general'",
+                "updated_at" to "TEXT",
+                "created_at" to "TEXT"
+            )
+
+            for ((column, definition) in newProjectColumns) {
+                if (!projectColumns.contains(column)) {
+                    try {
+                        stmt.executeUpdate("ALTER TABLE projects ADD COLUMN $column $definition")
+                        logger.info { "Migrated: Added column $column to projects table" }
+                    } catch (e: Exception) {
+                        logger.warn { "Migration skipped for $column: ${e.message}" }
+                    }
+                }
+            }
         }
     }
 

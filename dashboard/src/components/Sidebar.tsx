@@ -15,15 +15,19 @@ import {
   Users,
   Workflow,
   ScrollText,
+  FolderOpen,
+  MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Chat', href: '/chat', icon: MessageSquare },
   { name: 'Executions', href: '/executions', icon: History },
   { name: 'Live Logs', href: '/logs', icon: ScrollText },
   { name: 'History', href: '/history', icon: Clock },
+  { name: 'Projects', href: '/projects', icon: FolderOpen },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Classify', href: '/classify', icon: Target },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },

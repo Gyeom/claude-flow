@@ -97,7 +97,7 @@ class AnalyticsController(
     // ==================== Advanced Analytics APIs ====================
 
     /**
-     * 종합 통계 (Overview) - Claudio 스타일
+     * 종합 통계 (Overview)
      * P50/P90/P95/P99 백분위수 + 이전 기간 대비 변화율 포함
      */
     @GetMapping("/overview")
@@ -189,6 +189,50 @@ class AnalyticsController(
         val stats = storage.getFeedbackStats(since)
         ResponseEntity.ok(stats)
     }
+
+    /**
+     * Verified Feedback 통계
+     * 요청자의 피드백만 실제 점수에 반영
+     */
+    @GetMapping("/feedback/verified")
+    fun getVerifiedFeedback(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<VerifiedFeedbackStatsDto>> = mono {
+        logger.info { "Get verified feedback stats for $days days" }
+        val dateRange = DateRange.lastDays(days)
+        val stats = storage.feedbackRepository.getVerifiedFeedbackStats(dateRange)
+        ResponseEntity.ok(VerifiedFeedbackStatsDto(
+            totalFeedback = stats.totalFeedback,
+            verifiedFeedback = stats.verifiedFeedback,
+            verifiedPositive = stats.verifiedPositive,
+            verifiedNegative = stats.verifiedNegative,
+            verificationRate = stats.verificationRate,
+            satisfactionRate = stats.satisfactionRate
+        ))
+    }
+
+    /**
+     * 피드백 카테고리별 통계
+     */
+    @GetMapping("/feedback/categories")
+    fun getFeedbackByCategory(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<List<FeedbackByCategoryDto>>> = mono {
+        logger.info { "Get feedback by category for $days days" }
+        val dateRange = DateRange.lastDays(days)
+
+        // 카테고리별 피드백 집계
+        val categories = listOf("feedback", "trigger", "action", "other")
+        val result = categories.map { category ->
+            val feedbackList = storage.feedbackRepository.findByCategory(category, dateRange)
+            FeedbackByCategoryDto(
+                category = category,
+                count = feedbackList.size.toLong(),
+                verifiedCount = feedbackList.count { it.isVerified }.toLong()
+            )
+        }
+        ResponseEntity.ok(result)
+    }
 }
 
 data class StorageStatsDto(
@@ -198,4 +242,19 @@ data class StorageStatsDto(
     val avgDurationMs: Double,
     val thumbsUp: Int,
     val thumbsDown: Int
+)
+
+data class VerifiedFeedbackStatsDto(
+    val totalFeedback: Long,
+    val verifiedFeedback: Long,
+    val verifiedPositive: Long,
+    val verifiedNegative: Long,
+    val verificationRate: Double,
+    val satisfactionRate: Double
+)
+
+data class FeedbackByCategoryDto(
+    val category: String,
+    val count: Long,
+    val verifiedCount: Long
 )

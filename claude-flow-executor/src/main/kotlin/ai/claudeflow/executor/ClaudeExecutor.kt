@@ -8,6 +8,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import mu.KotlinLogging
 import java.io.File
 import java.util.UUID
@@ -174,6 +177,238 @@ class ClaudeExecutor(
         if (expiredKeys.isNotEmpty()) {
             logger.info { "Cleaned up ${expiredKeys.size} expired sessions" }
         }
+    }
+
+    /**
+     * Claude CLI 스트리밍 실행 (Flow 기반)
+     *
+     * 실시간으로 StreamingEvent를 emit하여 SSE 스트리밍 지원
+     * - text: 어시스턴트 텍스트 청크
+     * - tool_start: 도구 호출 시작
+     * - tool_end: 도구 호출 완료
+     * - done: 실행 완료
+     * - error: 에러 발생
+     */
+    fun executeStreaming(request: ExecutionRequest): Flow<StreamingEvent> = channelFlow {
+        val requestId = UUID.randomUUID().toString()
+        val startTime = System.currentTimeMillis()
+
+        logManager.agentStart(requestId, request.agentId ?: "unknown", request.prompt)
+
+        // 작업 디렉토리 검증
+        val workingDir = request.workingDirectory?.let { File(it) }
+        if (workingDir != null && !workingDir.exists()) {
+            send(StreamingEvent.Error(
+                requestId = requestId,
+                message = "Working directory does not exist: ${request.workingDirectory}"
+            ))
+            return@channelFlow
+        }
+
+        // Session 조회 또는 생성
+        val sessionKey = buildSessionKey(request)
+        val existingSession = sessionKey?.let { getValidSession(it) }
+
+        // CLI 인자 구성 (항상 stream-json 사용)
+        val args = buildArgsForStreaming(request, existingSession?.sessionId)
+
+        val timeoutSeconds = (request.config?.timeoutSeconds ?: defaultConfig.timeoutSeconds).toLong()
+
+        try {
+            val claudePath = findClaudePath()
+            logger.info { "[$requestId] Starting streaming execution: $claudePath" }
+
+            val processBuilder = ProcessBuilder(listOf(claudePath) + args)
+                .apply {
+                    workingDir?.let { directory(it) }
+                    redirectErrorStream(false)
+                    environment().putAll(System.getenv())
+                }
+
+            val process = processBuilder.start()
+            process.outputStream.close()
+
+            var sessionId: String? = null
+            var usage: TokenUsage? = null
+            var cost: Double? = null
+            val assistantMessages = StringBuilder()
+
+            // stderr 별도 처리
+            val stderrJob = CoroutineScope(Dispatchers.IO).async {
+                process.errorStream.bufferedReader().use { it.readText() }
+            }
+
+            // stdout 스트리밍 처리
+            withContext(Dispatchers.IO) {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        if (line.isBlank()) continue
+
+                        try {
+                            val event = objectMapper.readValue<StreamEvent>(line)
+
+                            when (event.type) {
+                                "assistant" -> {
+                                    event.message?.content?.forEach { content ->
+                                        if (content.type == "text" && !content.text.isNullOrEmpty()) {
+                                            assistantMessages.append(content.text)
+                                            send(StreamingEvent.Text(
+                                                requestId = requestId,
+                                                content = content.text
+                                            ))
+                                        }
+                                    }
+                                }
+                                "tool_use" -> {
+                                    val toolId = event.id ?: UUID.randomUUID().toString()
+                                    val toolName = event.name ?: "unknown"
+                                    val toolInput = event.input?.let {
+                                        when (it) {
+                                            is Map<*, *> -> it.mapKeys { k -> k.key.toString() }
+                                                .mapValues { v -> v.value }
+                                            else -> mapOf("input" to it.toString())
+                                        }
+                                    } ?: emptyMap()
+
+                                    send(StreamingEvent.ToolStart(
+                                        requestId = requestId,
+                                        toolId = toolId,
+                                        toolName = toolName,
+                                        input = toolInput
+                                    ))
+                                    logManager.toolStart(requestId, toolName, toolInput.mapValues { it.value })
+                                }
+                                "tool_result" -> {
+                                    val toolId = event.id ?: ""
+                                    val toolName = event.name ?: "unknown"
+                                    val success = event.isError != true
+
+                                    send(StreamingEvent.ToolEnd(
+                                        requestId = requestId,
+                                        toolId = toolId,
+                                        toolName = toolName,
+                                        result = event.content?.toString()?.take(500),
+                                        success = success
+                                    ))
+                                    logManager.toolEnd(requestId, toolName, success, 0L)
+                                }
+                                "result" -> {
+                                    sessionId = event.sessionId
+                                    usage = event.usage
+                                    cost = event.cost
+                                }
+                                "system" -> {
+                                    sessionId = event.sessionId ?: sessionId
+                                }
+                            }
+                        } catch (e: Exception) {
+                            logger.debug { "[$requestId] Failed to parse stream line: ${line.take(100)}" }
+                        }
+                    }
+                }
+            }
+
+            // 프로세스 완료 대기
+            val completed = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+            val stderr = stderrJob.await()
+
+            if (!completed) {
+                process.destroyForcibly()
+                send(StreamingEvent.Error(
+                    requestId = requestId,
+                    message = "Execution timed out after $timeoutSeconds seconds"
+                ))
+                return@channelFlow
+            }
+
+            val exitCode = process.exitValue()
+            val durationMs = System.currentTimeMillis() - startTime
+
+            if (exitCode != 0) {
+                send(StreamingEvent.Error(
+                    requestId = requestId,
+                    message = stderr.ifEmpty { "Claude CLI exited with code $exitCode" }
+                ))
+                return@channelFlow
+            }
+
+            // Session 캐시 저장
+            if (sessionId != null && sessionKey != null) {
+                sessionCache[sessionKey] = SessionInfo(sessionId)
+            }
+
+            // 완료 이벤트
+            send(StreamingEvent.Done(
+                requestId = requestId,
+                sessionId = sessionId,
+                durationMs = durationMs,
+                usage = usage,
+                cost = cost,
+                result = assistantMessages.toString().ifEmpty { null }
+            ))
+
+            logManager.agentEnd(requestId, request.agentId ?: "unknown", "SUCCESS", durationMs)
+
+        } catch (e: Exception) {
+            logger.error(e) { "[$requestId] Streaming execution failed" }
+            send(StreamingEvent.Error(
+                requestId = requestId,
+                message = "Execution failed: ${e.message}"
+            ))
+            logManager.agentEnd(requestId, request.agentId ?: "unknown", "ERROR", System.currentTimeMillis() - startTime)
+        }
+    }
+
+    /**
+     * 스트리밍용 CLI 인자 구성 (항상 stream-json)
+     */
+    private fun buildArgsForStreaming(request: ExecutionRequest, resumeSessionId: String? = null): List<String> {
+        val config = request.config ?: defaultConfig
+        val args = mutableListOf<String>()
+
+        // Session 재개
+        if (resumeSessionId != null) {
+            args.addAll(listOf("--resume", resumeSessionId))
+        } else {
+            args.add("-p")
+        }
+
+        // 항상 stream-json
+        args.addAll(listOf("--output-format", "stream-json"))
+        args.add("--verbose")
+
+        // 모델
+        if (resumeSessionId == null) {
+            args.addAll(listOf("--model", request.model ?: config.model))
+        }
+
+        // 권한 모드
+        args.add("--dangerously-skip-permissions")
+
+        // max-turns
+        request.maxTurns?.let {
+            args.addAll(listOf("--max-turns", it.toString()))
+        }
+
+        // 도구 설정 (새 세션일 때만)
+        if (resumeSessionId == null) {
+            val allowedTools = request.allowedTools ?: config.allowedTools
+            if (allowedTools.isNotEmpty()) {
+                args.addAll(listOf("--allowedTools", allowedTools.joinToString(" ")))
+            }
+
+            val deniedTools = request.deniedTools ?: config.deniedTools
+            if (deniedTools.isNotEmpty()) {
+                args.addAll(listOf("--disallowedTools", deniedTools.joinToString(" ")))
+            }
+
+            request.systemPrompt?.let {
+                args.addAll(listOf("--system-prompt", it))
+            }
+        }
+
+        args.add(request.prompt)
+        return args
     }
 
     private fun buildArgs(request: ExecutionRequest, resumeSessionId: String? = null): List<String> {
@@ -573,9 +808,11 @@ data class StreamEvent(
     val subtype: String? = null,
     // assistant 메시지
     val message: StreamMessage? = null,
-    // tool_use
+    // tool_use / tool_result
+    val id: String? = null,  // 도구 호출 ID
     val name: String? = null,
     val input: Any? = null,
+    val content: Any? = null,  // tool_result 결과
     // tool_result
     @com.fasterxml.jackson.annotation.JsonProperty("is_error")
     @com.fasterxml.jackson.annotation.JsonAlias("isError")
@@ -602,3 +839,59 @@ data class StreamContent(
     val type: String? = null,
     val text: String? = null
 )
+
+/**
+ * 스트리밍 실행 이벤트
+ *
+ * executeStreaming()에서 emit되는 이벤트들
+ */
+sealed class StreamingEvent {
+    /**
+     * 텍스트 청크 (assistant 응답)
+     */
+    data class Text(
+        val requestId: String,
+        val content: String
+    ) : StreamingEvent()
+
+    /**
+     * 도구 호출 시작
+     */
+    data class ToolStart(
+        val requestId: String,
+        val toolId: String,
+        val toolName: String,
+        val input: Map<String, Any?>
+    ) : StreamingEvent()
+
+    /**
+     * 도구 호출 완료
+     */
+    data class ToolEnd(
+        val requestId: String,
+        val toolId: String,
+        val toolName: String,
+        val result: String?,
+        val success: Boolean
+    ) : StreamingEvent()
+
+    /**
+     * 에러 발생
+     */
+    data class Error(
+        val requestId: String,
+        val message: String
+    ) : StreamingEvent()
+
+    /**
+     * 실행 완료
+     */
+    data class Done(
+        val requestId: String,
+        val sessionId: String?,
+        val durationMs: Long,
+        val usage: TokenUsage?,
+        val cost: Double?,
+        val result: String?
+    ) : StreamingEvent()
+}

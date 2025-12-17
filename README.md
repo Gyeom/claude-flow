@@ -6,9 +6,31 @@ Slack에서 Claude를 호출하고, GitLab MR 리뷰를 자동화하는 AI 에�
 
 - **Slack 연동**: `@claude` 멘션으로 Claude와 대화
 - **GitLab MR 리뷰**: `@claude project-name !123 리뷰해줘`로 자동 코드 리뷰
-- **사용자 컨텍스트**: 대화 기록 요약, 개인별 선호도 저장
-- **실시간 분석**: 응답 시간, 사용량, 비용 대시보드
+- **실시간 스트리밍 채팅**: SSE 기반 실시간 응답 스트리밍
+- **지능형 라우팅**: 키워드 → 시맨틱 → LLM 폴백 3단계 라우팅
+- **프로젝트 관리**: 프로젝트별 에이전트, 채널 매핑, Rate Limiting
+- **사용자 컨텍스트**: 대화 기록 요약, 개인별 선호도/규칙 저장
+- **실시간 분석**: P50/P90/P95/P99 통계, 시계열 차트, 피드백 분석
 - **n8n 워크플로우**: 유연한 이벤트 처리 및 확장
+
+### Dashboard 기능
+
+| 페이지 | 기능 |
+|--------|------|
+| Dashboard | 실시간 통계, 요약 차트 |
+| Chat | 웹 기반 채팅 인터페이스 |
+| Projects | 프로젝트/에이전트 관리 |
+| Agents | 글로벌 에이전트 설정 |
+| Classify | 라우팅 테스트 도구 |
+| Analytics | 상세 통계 (백분위수, 시계열) |
+| Executions | 실행 이력 조회 |
+| Users | 사용자 컨텍스트 관리 |
+| Feedback | 피드백 분석 |
+| Errors | 에러 통계 |
+| Models | 모델별 사용량 |
+| Logs | 실시간 로그 스트리밍 |
+| Workflows | n8n 워크플로우 관리 |
+| Settings | 시스템 설정 |
 
 ## 빠른 시작
 
@@ -97,6 +119,7 @@ docker compose up -d
 
 **접속 URL:**
 - API: http://localhost:8080
+- Dashboard: http://localhost:5173
 - n8n: http://localhost:5678 (admin@local.dev / Localdev123)
 
 ### 6. 사용
@@ -191,23 +214,66 @@ claude-flow/
 
 ## API
 
-### Execute
+### Execute & Chat
 | Method | Endpoint | 설명 |
 |--------|----------|------|
 | POST | `/api/v1/execute` | Claude 실행 |
+| POST | `/api/v1/execute-with-routing` | 라우팅 + 실행 통합 |
+| POST | `/api/v1/chat/stream` | SSE 스트리밍 채팅 |
+| POST | `/api/v1/chat/execute` | 비스트리밍 채팅 |
 | GET | `/api/v1/health` | 헬스체크 |
+
+### Projects
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/projects` | 프로젝트 목록 |
+| POST | `/api/v1/projects` | 프로젝트 생성 |
+| GET | `/api/v1/projects/{id}` | 프로젝트 조회 |
+| PATCH | `/api/v1/projects/{id}` | 프로젝트 수정 |
+| DELETE | `/api/v1/projects/{id}` | 프로젝트 삭제 |
+| GET | `/api/v1/projects/{id}/agents` | 프로젝트 에이전트 목록 |
+| POST | `/api/v1/projects/{id}/channels` | 채널 매핑 |
+| GET | `/api/v1/projects/{id}/stats` | 프로젝트 통계 |
+
+### Agents (v1 & v2)
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/agents` | 에이전트 목록 |
+| POST | `/api/v1/agents` | 에이전트 생성 |
+| GET | `/api/v2/agents` | 에이전트 목록 (v2) |
+| GET | `/api/v2/agents/{id}` | 에이전트 조회 |
+| PATCH | `/api/v2/agents/{id}` | 에이전트 수정 |
+| DELETE | `/api/v2/agents/{id}` | 에이전트 삭제 |
 
 ### Analytics
 | Method | Endpoint | 설명 |
 |--------|----------|------|
 | GET | `/api/v1/analytics/dashboard` | 대시보드 데이터 |
 | GET | `/api/v1/analytics/overview` | P50/P90/P95/P99 통계 |
+| GET | `/api/v1/analytics/percentiles` | 백분위수 조회 |
+| GET | `/api/v1/analytics/timeseries` | 시계열 데이터 |
+| GET | `/api/v1/analytics/models` | 모델별 통계 |
+| GET | `/api/v1/analytics/errors` | 에러 통계 |
+| GET | `/api/v1/analytics/users` | 사용자별 통계 |
+| GET | `/api/v1/analytics/feedback/verified` | 검증된 피드백 통계 |
 
-### User Context
+### Users
 | Method | Endpoint | 설명 |
 |--------|----------|------|
+| GET | `/api/v1/users` | 사용자 목록 |
+| GET | `/api/v1/users/{userId}` | 사용자 상세 |
 | GET | `/api/v1/users/{userId}/context` | 사용자 컨텍스트 |
+| PUT | `/api/v1/users/{userId}/context` | 컨텍스트 저장 |
+| GET | `/api/v1/users/{userId}/rules` | 규칙 조회 |
 | POST | `/api/v1/users/{userId}/rules` | 규칙 추가 |
+| GET | `/api/v1/users/{userId}/context/formatted` | 포맷팅된 컨텍스트 |
+
+### System
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/system/health` | 시스템 상태 |
+| GET | `/api/v1/system/slack/status` | Slack 연결 상태 |
+| POST | `/api/v1/system/slack/reconnect` | Slack 재연결 |
 
 ## 문제 해결
 

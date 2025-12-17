@@ -52,6 +52,10 @@ data class ExecutionRecord(
  * 주요 기능:
  * - 카테고리 분류 (feedback, trigger, action)
  * - 점수 계산 지원
+ * - Verified Feedback: 요청자의 피드백만 실제 점수에 반영
+ *
+ * @property isVerified 요청자(질문한 사람)의 피드백인지 여부
+ * @property verifiedAt 검증 시간 (verified feedback인 경우)
  */
 data class FeedbackRecord(
     val id: String,
@@ -59,18 +63,34 @@ data class FeedbackRecord(
     val userId: String,
     val reaction: String,  // thumbsup, thumbsdown, jira, wrench, one, two, etc.
     val category: String = categorizeReaction(reaction),  // feedback, trigger, action
+    val isVerified: Boolean = false,  // 요청자의 피드백만 검증됨
+    val verifiedAt: Instant? = null,
     val createdAt: Instant = Instant.now()
 ) {
     companion object {
+        /**
+         * 리액션 카테고리 분류
+         *
+         * - feedback: 응답 품질 평가 (점수에 반영)
+         * - trigger: 외부 시스템 연동 트리거 (Jira 티켓 생성 등)
+         * - action: 선택지 응답 (Claude의 제안 중 선택)
+         */
         fun categorizeReaction(reaction: String): String = when (reaction) {
             "thumbsup", "thumbsdown", "+1", "-1", "heart", "tada" -> "feedback"
-            "jira", "ticket", "bug" -> "trigger"
-            "wrench", "hammer", "one", "two", "three", "four", "five" -> "action"
+            "jira", "ticket", "bug", "gitlab", "github" -> "trigger"
+            "wrench", "hammer", "one", "two", "three", "four", "five",
+            "a", "b", "c", "d", "white_check_mark", "x" -> "action"
             else -> "other"
         }
 
         fun isFeedbackReaction(reaction: String): Boolean =
             categorizeReaction(reaction) == "feedback"
+
+        fun isTriggerReaction(reaction: String): Boolean =
+            categorizeReaction(reaction) == "trigger"
+
+        fun isActionReaction(reaction: String): Boolean =
+            categorizeReaction(reaction) == "action"
 
         fun isPositiveReaction(reaction: String): Boolean =
             reaction in listOf("thumbsup", "+1", "heart", "tada")
@@ -80,11 +100,91 @@ data class FeedbackRecord(
 
         /**
          * 피드백 점수 계산 (0-100)
+         * Verified feedback만 카운트
          */
         fun calculateScore(positive: Int, negative: Int): Int? {
             val total = positive + negative
             if (total == 0) return null
             return ((positive.toDouble() / total) * 100).toInt()
+        }
+
+        /**
+         * Verified Feedback 생성
+         * 요청자의 피드백인 경우 자동으로 verified 처리
+         */
+        fun createVerified(
+            id: String,
+            executionId: String,
+            userId: String,
+            reaction: String,
+            requesterId: String  // 원래 요청한 사용자 ID
+        ): FeedbackRecord {
+            val isVerified = userId == requesterId
+            return FeedbackRecord(
+                id = id,
+                executionId = executionId,
+                userId = userId,
+                reaction = reaction,
+                category = categorizeReaction(reaction),
+                isVerified = isVerified,
+                verifiedAt = if (isVerified) Instant.now() else null
+            )
+        }
+    }
+}
+
+/**
+ * 리액션 카테고리 열거형
+ */
+enum class ReactionCategory {
+    FEEDBACK,  // 품질 평가 (thumbsup, thumbsdown)
+    TRIGGER,   // 외부 시스템 트리거 (jira, gitlab)
+    ACTION,    // 선택지 응답 (one, two, a, b)
+    OTHER;     // 기타
+
+    companion object {
+        fun fromReaction(reaction: String): ReactionCategory = when {
+            FeedbackRecord.isFeedbackReaction(reaction) -> FEEDBACK
+            FeedbackRecord.isTriggerReaction(reaction) -> TRIGGER
+            FeedbackRecord.isActionReaction(reaction) -> ACTION
+            else -> OTHER
+        }
+    }
+}
+
+/**
+ * Verified Feedback 통계
+ */
+data class VerifiedFeedbackStats(
+    val totalFeedback: Long,
+    val verifiedFeedback: Long,
+    val verifiedPositive: Long,
+    val verifiedNegative: Long,
+    val verificationRate: Double,  // verified / total
+    val satisfactionRate: Double   // verifiedPositive / (verifiedPositive + verifiedNegative)
+) {
+    companion object {
+        fun calculate(feedbacks: List<FeedbackRecord>): VerifiedFeedbackStats {
+            val feedbackOnly = feedbacks.filter { FeedbackRecord.isFeedbackReaction(it.reaction) }
+            val verified = feedbackOnly.filter { it.isVerified }
+            val verifiedPositive = verified.count { FeedbackRecord.isPositiveReaction(it.reaction) }
+            val verifiedNegative = verified.count { FeedbackRecord.isNegativeReaction(it.reaction) }
+
+            val total = feedbackOnly.size.toLong()
+            val verifiedCount = verified.size.toLong()
+            val verificationRate = if (total > 0) verifiedCount.toDouble() / total else 0.0
+            val satisfactionTotal = verifiedPositive + verifiedNegative
+            val satisfactionRate = if (satisfactionTotal > 0)
+                verifiedPositive.toDouble() / satisfactionTotal else 0.0
+
+            return VerifiedFeedbackStats(
+                totalFeedback = total,
+                verifiedFeedback = verifiedCount,
+                verifiedPositive = verifiedPositive.toLong(),
+                verifiedNegative = verifiedNegative.toLong(),
+                verificationRate = verificationRate,
+                satisfactionRate = satisfactionRate
+            )
         }
     }
 }

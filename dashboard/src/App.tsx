@@ -4,6 +4,7 @@ import { Layout } from '@/components/Layout'
 
 // Lazy load pages for code splitting
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
+const Chat = lazy(() => import('@/pages/Chat').then(m => ({ default: m.Chat })))
 const Executions = lazy(() => import('@/pages/Executions').then(m => ({ default: m.Executions })))
 const Agents = lazy(() => import('@/pages/Agents').then(m => ({ default: m.Agents })))
 const Analytics = lazy(() => import('@/pages/Analytics').then(m => ({ default: m.Analytics })))
@@ -15,6 +16,7 @@ const History = lazy(() => import('@/pages/History').then(m => ({ default: m.His
 const Plugins = lazy(() => import('@/pages/Plugins').then(m => ({ default: m.Plugins })))
 const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })))
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
+const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
 const Logs = lazy(() => import('@/pages/Logs'))
 const Settings = lazy(() => import('@/pages/Settings'))
 
@@ -34,6 +36,11 @@ function App() {
         <Route path="/" element={
           <Suspense fallback={<PageLoader />}>
             <Dashboard />
+          </Suspense>
+        } />
+        <Route path="/chat" element={
+          <Suspense fallback={<PageLoader />}>
+            <Chat />
           </Suspense>
         } />
         <Route path="/executions" element={
@@ -89,6 +96,11 @@ function App() {
         <Route path="/workflows" element={
           <Suspense fallback={<PageLoader />}>
             <Workflows />
+          </Suspense>
+        } />
+        <Route path="/projects" element={
+          <Suspense fallback={<PageLoader />}>
+            <Projects />
           </Suspense>
         } />
         <Route path="/logs" element={

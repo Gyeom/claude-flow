@@ -8,10 +8,12 @@ import {
   Meh,
   Frown,
   Calendar,
+  ShieldCheck,
+  Tags,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { ChartContainer } from '@/components/Chart'
-import { analyticsApi } from '@/lib/api'
+import { analyticsApi, verifiedFeedbackApi } from '@/lib/api'
 import { formatNumber, formatPercent, cn } from '@/lib/utils'
 import {
   XAxis,
@@ -47,7 +49,17 @@ export function Feedback() {
     queryFn: () => analyticsApi.getFeedback(period),
   })
 
-  const isLoading = feedbackLoading
+  const { data: verifiedStats, isLoading: verifiedLoading } = useQuery({
+    queryKey: ['analytics', 'feedback', 'verified', period],
+    queryFn: () => verifiedFeedbackApi.getStats(parseInt(period.replace('d', ''))),
+  })
+
+  const { data: categoryStats, isLoading: categoryLoading } = useQuery({
+    queryKey: ['analytics', 'feedback', 'categories', period],
+    queryFn: () => verifiedFeedbackApi.getByCategory(parseInt(period.replace('d', ''))),
+  })
+
+  const isLoading = feedbackLoading || verifiedLoading || categoryLoading
 
   // Use API data directly with default values
   const feedbackData = feedback || {
@@ -211,6 +223,91 @@ export function Feedback() {
           </ResponsiveContainer>
         </ChartContainer>
       </div>
+
+      {/* Verified Feedback Section */}
+      {verifiedStats && (
+        <div>
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-green-500" />
+            Verified Feedback
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            Only feedback from the original requester is counted for satisfaction scores
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <StatCard
+              title="Total Feedback"
+              value={formatNumber(verifiedStats.totalFeedback)}
+              icon={<TrendingUp className="h-6 w-6" />}
+            />
+            <StatCard
+              title="Verified"
+              value={formatNumber(verifiedStats.verifiedFeedback)}
+              icon={<ShieldCheck className="h-6 w-6 text-green-500" />}
+              className="border-green-500/30"
+            />
+            <StatCard
+              title="Verification Rate"
+              value={formatPercent(verifiedStats.verificationRate)}
+              icon={<TrendingUp className="h-6 w-6 text-blue-500" />}
+            />
+            <Card className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Verified Satisfaction</p>
+                  <p className={cn(
+                    "text-3xl font-bold mt-1",
+                    verifiedStats.satisfactionRate >= 0.7 ? 'text-green-500' :
+                    verifiedStats.satisfactionRate >= 0.5 ? 'text-yellow-500' : 'text-red-500'
+                  )}>
+                    {formatPercent(verifiedStats.satisfactionRate)}
+                  </p>
+                </div>
+                <ShieldCheck className={cn(
+                  "h-8 w-8",
+                  verifiedStats.satisfactionRate >= 0.7 ? 'text-green-500' :
+                  verifiedStats.satisfactionRate >= 0.5 ? 'text-yellow-500' : 'text-red-500'
+                )} />
+              </div>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* Category Breakdown */}
+      {categoryStats && categoryStats.length > 0 && (
+        <div>
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Tags className="h-5 w-5" />
+            Feedback by Category
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {categoryStats.map((cat) => (
+              <Card key={cat.category} className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium capitalize">{cat.category}</span>
+                  <span className={cn(
+                    "text-xs px-2 py-1 rounded-full",
+                    cat.category === 'feedback' ? 'bg-green-500/10 text-green-500' :
+                    cat.category === 'trigger' ? 'bg-blue-500/10 text-blue-500' :
+                    cat.category === 'action' ? 'bg-purple-500/10 text-purple-500' :
+                    'bg-gray-500/10 text-gray-500'
+                  )}>
+                    {cat.category === 'feedback' ? 'thumbsup/down' :
+                     cat.category === 'trigger' ? 'jira/gitlab' :
+                     cat.category === 'action' ? 'numbers' : 'other'}
+                  </span>
+                </div>
+                <p className="text-2xl font-bold">{formatNumber(cat.count)}</p>
+                <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                  <ShieldCheck className="h-3 w-3 text-green-500" />
+                  <span>{formatNumber(cat.verifiedCount)} verified</span>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Detailed Metrics */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

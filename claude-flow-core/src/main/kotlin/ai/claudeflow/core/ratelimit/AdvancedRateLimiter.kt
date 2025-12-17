@@ -9,7 +9,7 @@ private val logger = KotlinLogging.logger {}
 /**
  * 고급 Rate Limiter
  *
- * Claudio 대비 차별화 기능:
+ * 차별화 기능:
  * 1. 다차원 Rate Limiting (사용자/프로젝트/에이전트/모델별)
  * 2. 토큰/비용 기반 제한
  * 3. 슬라이딩 윈도우 알고리즘

@@ -124,18 +124,22 @@ class ClaudeFlowConfiguration(
         SlackMessageSender(slackConfig.botToken)
 
     @Bean
-    fun projectRegistry(): ProjectRegistry {
+    fun projectRegistry(storage: Storage): ProjectRegistry {
         // 단일 workspace로 설정 - Claude가 알아서 하위 프로젝트 탐색
         val workspacePath = properties.workspace.path
 
-        val registry = ProjectRegistry(listOf(
-            Project(
-                id = "workspace",
-                name = "Workspace",
-                description = "Multi-project workspace",
-                workingDirectory = workspacePath
+        val registry = ProjectRegistry(
+            projectRepository = storage.projectRepository,
+            initialProjects = listOf(
+                Project(
+                    id = "workspace",
+                    name = "Workspace",
+                    description = "Multi-project workspace",
+                    workingDirectory = workspacePath,
+                    isDefault = true
+                )
             )
-        ))
+        )
 
         logger.info { "Workspace configured: $workspacePath" }
         logger.info { "Claude will automatically explore subdirectories" }

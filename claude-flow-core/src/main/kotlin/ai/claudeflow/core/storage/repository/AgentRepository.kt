@@ -5,6 +5,8 @@ import ai.claudeflow.core.storage.BaseRepository
 import ai.claudeflow.core.storage.ConnectionProvider
 import ai.claudeflow.core.storage.DateRange
 import ai.claudeflow.core.storage.query.QueryBuilder
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import mu.KotlinLogging
 import java.sql.ResultSet
 import java.time.Instant
@@ -13,16 +15,21 @@ private val logger = KotlinLogging.logger {}
 
 /**
  * Repository for agent management
+ * 확장 지원 (timeout, staticResponse, outputSchema, isolated)
  */
 class AgentRepository(
     connectionProvider: ConnectionProvider
 ) : BaseRepository<Agent, String>(connectionProvider) {
+
+    private val json = Json { ignoreUnknownKeys = true }
 
     override val tableName: String = "agents"
     override val primaryKeyColumn: String = "id"
 
     override fun mapRow(rs: ResultSet): Agent {
         val projectIdValue = rs.getString("project_id")
+        val outputSchemaStr = rs.getString("output_schema")
+
         return Agent(
             id = rs.getString("id"),
             name = rs.getString("name"),
@@ -36,7 +43,16 @@ class AgentRepository(
             enabled = rs.getInt("enabled") == 1,
             priority = rs.getInt("priority"),
             examples = rs.getString("examples")?.split("|||")?.filter { it.isNotBlank() } ?: emptyList(),
-            projectId = if (projectIdValue == "global") null else projectIdValue
+            projectId = if (projectIdValue == "global") null else projectIdValue,
+            // 확장 필드
+            timeout = rs.getInt("timeout").takeIf { !rs.wasNull() && it > 0 },
+            staticResponse = rs.getInt("static_response") == 1,
+            outputSchema = outputSchemaStr?.let {
+                try { json.parseToJsonElement(it) } catch (e: Exception) { null }
+            },
+            isolated = rs.getInt("isolated") == 1,
+            createdAt = rs.getString("created_at"),
+            updatedAt = rs.getString("updated_at")
         )
     }
 
@@ -59,7 +75,12 @@ class AgentRepository(
                 "enabled" to (if (entity.enabled) 1 else 0),
                 "priority" to entity.priority,
                 "examples" to entity.examples.joinToString("|||"),
-                "created_at" to now,
+                // 확장 필드
+                "timeout" to entity.timeout,
+                "static_response" to (if (entity.staticResponse) 1 else 0),
+                "output_schema" to entity.outputSchema?.toString(),
+                "isolated" to (if (entity.isolated) 1 else 0),
+                "created_at" to (entity.createdAt ?: now),
                 "updated_at" to now
             )
             .executeOrReplace()

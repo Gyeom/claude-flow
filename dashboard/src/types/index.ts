@@ -210,3 +210,60 @@ export interface ErrorStats {
   count: number
   lastOccurred: string
 }
+
+// Project Types (멀티테넌시)
+export interface Project {
+  id: string
+  name: string
+  description: string | null
+  workingDirectory: string
+  gitRemote: string | null
+  defaultBranch: string
+  isDefault: boolean
+  enableUserContext: boolean
+  classifyModel: string
+  classifyTimeout: number
+  rateLimitRpm: number
+  allowedTools: string[]
+  disallowedTools: string[]
+  fallbackAgentId: string
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface ProjectStats {
+  projectId: string
+  projectName: string
+  totalExecutions: number
+  uniqueUsers: number
+  agentCount: number
+  totalCost: number
+  avgDurationMs: number
+}
+
+export interface ChannelMapping {
+  channel: string
+  projectId: string
+}
+
+// Verified Feedback Types
+export interface VerifiedFeedbackStats {
+  totalFeedback: number
+  verifiedFeedback: number
+  verifiedPositive: number
+  verifiedNegative: number
+  verificationRate: number
+  satisfactionRate: number
+}
+
+export interface FeedbackByCategory {
+  category: string
+  count: number
+  verifiedCount: number
+}
+
+export interface ExtendedFeedbackStats {
+  basic: FeedbackAnalysis
+  verified: VerifiedFeedbackStats
+  byCategory: FeedbackByCategory[]
+}

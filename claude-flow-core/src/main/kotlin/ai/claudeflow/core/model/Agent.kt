@@ -1,6 +1,7 @@
 package ai.claudeflow.core.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /**
  * AI 에이전트 설정
@@ -8,10 +9,24 @@ import kotlinx.serialization.Serializable
  * 각 에이전트는 특정 역할(코드리뷰, QA, 버그픽스 등)을 담당하며
  * 키워드 또는 시맨틱 매칭으로 라우팅됨
  *
- * @property priority 에이전트 우선순위 (0-1000). 높을수록 시맨틱 매칭에서 가중치 부여
+ * @property id 에이전트 ID (프로젝트 스코프: {projectId}-{slug} 또는 글로벌: {slug})
+ * @property projectId 소속 프로젝트 ID (null이면 글로벌)
+ * @property name 에이전트 이름
+ * @property description 에이전트 설명 (LLM 분류에 사용)
+ * @property keywords 키워드 목록 (정규식 지원: /pattern/)
+ * @property systemPrompt 시스템 프롬프트 (instruction)
+ * @property model 사용할 모델
+ * @property maxTokens 최대 토큰 수
+ * @property allowedTools 허용 도구 목록
+ * @property workingDirectory 작업 디렉토리
+ * @property enabled 활성화 여부
+ * @property priority 우선순위 (0-1000). 높을수록 시맨틱 매칭에서 가중치 부여
  *                    adjusted_score = score * (1.0 + priority/1000.0)
  * @property examples 시맨틱 라우팅을 위한 예제 문장 목록
- * @property projectId 소속 프로젝트 ID (null이면 글로벌)
+ * @property timeout 실행 타임아웃 (초, null이면 프로젝트 기본값 사용)
+ * @property staticResponse true이면 Claude 실행 없이 systemPrompt를 바로 반환 (비용 절감)
+ * @property outputSchema JSON Schema로 구조화된 출력 정의 (Claude --output-format json 사용)
+ * @property isolated true이면 격리된 임시 디렉토리에서 실행
  */
 @Serializable
 data class Agent(
@@ -25,9 +40,16 @@ data class Agent(
     val allowedTools: List<String> = emptyList(),
     val workingDirectory: String? = null,
     val enabled: Boolean = true,
-    val priority: Int = 0,  // 0-1000, Claude Flow 스타일 우선순위
-    val examples: List<String> = emptyList(),  // 시맨틱 라우팅 예제
-    val projectId: String? = null  // 프로젝트별 에이전트 지원
+    val priority: Int = 0,
+    val examples: List<String> = emptyList(),
+    val projectId: String? = null,
+    // 확장 필드
+    val timeout: Int? = null,  // 에이전트별 타임아웃 (초)
+    val staticResponse: Boolean = false,  // Claude 실행 없이 instruction 반환
+    val outputSchema: JsonElement? = null,  // 구조화된 출력 스키마
+    val isolated: Boolean = false,  // 격리된 디렉토리에서 실행
+    val createdAt: String? = null,
+    val updatedAt: String? = null
 ) {
     companion object {
         val GENERAL = Agent(
@@ -54,7 +76,7 @@ data class Agent(
                 - Just answer directly without meta-commentary
                 - Focus on providing helpful, accurate answers grounded in actual code
             """.trimIndent(),
-            priority = 0,  // 가장 낮은 우선순위 (폴백용)
+            priority = 0,
             examples = listOf(
                 "이거 어떻게 하는거야",
                 "설명해줘",
@@ -69,7 +91,7 @@ data class Agent(
             id = "code-reviewer",
             name = "Code Reviewer",
             description = "코드 리뷰 및 MR/PR 작업을 수행하는 에이전트",
-            keywords = listOf("review", "리뷰", "MR", "PR", "코드리뷰"),
+            keywords = listOf("review", "리뷰", "MR", "PR", "코드리뷰", "/MR.*봐/", "/!\\d+/"),
             systemPrompt = """
                 You are a senior code reviewer and development assistant.
 
@@ -153,7 +175,7 @@ data class Agent(
             id = "bug-fixer",
             name = "Bug Fixer",
             description = "버그를 분석하고 수정하는 에이전트",
-            keywords = listOf("fix", "bug", "버그", "수정", "에러", "error"),
+            keywords = listOf("fix", "bug", "버그", "수정", "에러", "error", "/Exception/", "/오류.*고쳐/"),
             systemPrompt = """
                 You are a bug fixing expert.
 
@@ -178,7 +200,7 @@ data class Agent(
                 - Just fix the bug directly
             """.trimIndent(),
             allowedTools = listOf("Read", "Edit", "Grep", "Glob", "Bash"),
-            priority = 200,  // 높은 우선순위
+            priority = 200,
             examples = listOf(
                 "버그 수정해줘",
                 "에러 발생하는데 고쳐줘",
@@ -188,6 +210,85 @@ data class Agent(
                 "테스트 실패 원인 찾아줘"
             )
         )
+
+        /**
+         * 도움말 에이전트 (static_response 예시)
+         * Claude 실행 없이 바로 도움말 텍스트 반환
+         */
+        val HELP = Agent(
+            id = "help",
+            name = "Help",
+            description = "사용 가능한 명령어와 기능을 안내하는 에이전트",
+            keywords = listOf("/^(help|도움말|사용법|명령어)$/"),
+            systemPrompt = """
+                # Claude Flow 사용 가이드
+
+                ## 사용 가능한 에이전트
+                - **일반 질문**: 그냥 질문하세요
+                - **코드 리뷰**: "MR 리뷰해줘", "코드 검토해줘"
+                - **리팩토링**: "리팩토링 해줘", "코드 정리해줘"
+                - **버그 수정**: "버그 고쳐줘", "에러 해결해줘"
+
+                ## 피드백
+                - 👍 좋은 응답이면 thumbsup
+                - 👎 개선이 필요하면 thumbsdown
+
+                ## 사용자 규칙
+                규칙을 설정하면 모든 응답에 적용됩니다.
+                예: "항상 한국어로 답변해줘"
+            """.trimIndent(),
+            priority = 1000,  // 최고 우선순위 (정확한 키워드 매칭)
+            staticResponse = true,  // Claude 실행 없이 바로 반환
+            examples = emptyList()
+        )
+    }
+
+    /**
+     * 키워드가 정규식 패턴인지 확인
+     * 형식: /pattern/
+     */
+    fun isRegexKeyword(keyword: String): Boolean {
+        return keyword.startsWith("/") && keyword.endsWith("/") && keyword.length > 2
+    }
+
+    /**
+     * 키워드에서 정규식 패턴 추출
+     */
+    fun extractRegexPattern(keyword: String): String? {
+        return if (isRegexKeyword(keyword)) {
+            keyword.substring(1, keyword.length - 1)
+        } else null
+    }
+
+    /**
+     * 주어진 텍스트가 키워드와 매칭되는지 확인
+     * 정규식 패턴과 일반 키워드 모두 지원
+     */
+    fun matchesKeyword(text: String, keyword: String): Boolean {
+        val pattern = extractRegexPattern(keyword)
+        return if (pattern != null) {
+            try {
+                Regex(pattern, RegexOption.IGNORE_CASE).containsMatchIn(text)
+            } catch (e: Exception) {
+                false
+            }
+        } else {
+            text.contains(keyword, ignoreCase = true)
+        }
+    }
+
+    /**
+     * 텍스트에 매칭되는 첫 번째 키워드 반환
+     */
+    fun findMatchingKeyword(text: String): String? {
+        return keywords.firstOrNull { matchesKeyword(text, it) }
+    }
+
+    /**
+     * 실제 타임아웃 값 (에이전트 설정 또는 기본값)
+     */
+    fun getEffectiveTimeout(defaultTimeout: Int = 300): Int {
+        return timeout ?: defaultTimeout
     }
 }
 
@@ -199,7 +300,9 @@ data class AgentMatch(
     val agent: Agent,
     val confidence: Double,
     val matchedKeyword: String? = null,
-    val method: RoutingMethod = RoutingMethod.DEFAULT
+    val matchedExample: String? = null,
+    val method: RoutingMethod = RoutingMethod.DEFAULT,
+    val reasoning: String? = null  // LLM 분류 시 이유
 )
 
 /**
@@ -207,10 +310,29 @@ data class AgentMatch(
  */
 @Serializable
 enum class RoutingMethod {
-    KEYWORD,    // 키워드 매칭
-    PATTERN,    // 정규식 패턴 매칭
-    SEMANTIC,   // 시맨틱 검색
-    LLM,        // LLM 분류
+    KEYWORD,    // 키워드 매칭 (정확도 0.95)
+    PATTERN,    // 정규식 패턴 매칭 (정확도 0.90)
+    SEMANTIC,   // 시맨틱 검색 (정확도: similarity score)
+    LLM,        // LLM 분류 (정확도 0.80)
     CACHE,      // 캐시 히트
-    DEFAULT     // 기본 폴백
+    DEFAULT     // 기본 폴백 (정확도 0.50)
+}
+
+/**
+ * 라우팅 신뢰도 상수
+ */
+object RoutingConfidence {
+    const val KEYWORD = 0.95
+    const val PATTERN = 0.90
+    const val LLM = 0.80
+    const val DEFAULT = 0.50
+
+    /**
+     * 시맨틱 점수에 priority 보정 적용
+     * 우선순위 점수 보정 공식: score * (1.0 + priority/1000.0)
+     */
+    fun adjustSemanticScore(rawScore: Double, priority: Int): Double {
+        val bonus = priority.coerceIn(0, 1000) / 1000.0
+        return rawScore * (1.0 + bonus)
+    }
 }

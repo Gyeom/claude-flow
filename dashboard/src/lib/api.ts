@@ -13,6 +13,10 @@ import type {
   RoutingStats,
   RequesterStats,
   ErrorStats,
+  Project,
+  ProjectStats,
+  VerifiedFeedbackStats,
+  FeedbackByCategory,
 } from '@/types'
 
 const API_BASE_V1 = '/api/v1'
@@ -621,4 +625,114 @@ export const settingsApi = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),
+}
+
+// Projects API (멀티테넌시)
+export const projectsApi = {
+  // Get all projects
+  getAll: () =>
+    fetchApi<Project[]>('/projects'),
+
+  // Get project by ID
+  getById: (projectId: string) =>
+    fetchApi<Project>(`/projects/${projectId}`),
+
+  // Create project
+  create: (project: Omit<Project, 'createdAt' | 'updatedAt'>) =>
+    fetchApi<Project>('/projects', {
+      method: 'POST',
+      body: JSON.stringify(project),
+    }),
+
+  // Update project
+  update: (projectId: string, data: Partial<Project>) =>
+    fetchApi<Project>(`/projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  // Delete project
+  delete: (projectId: string) =>
+    fetchApi<{ success: boolean }>(`/projects/${projectId}`, {
+      method: 'DELETE',
+    }),
+
+  // Set as default project
+  setDefault: (projectId: string) =>
+    fetchApi<{ success: boolean }>(`/projects/${projectId}/default`, {
+      method: 'POST',
+    }),
+
+  // Get project stats
+  getStats: (projectId: string) =>
+    fetchApi<ProjectStats>(`/projects/${projectId}/stats`),
+
+  // Get project agents
+  getAgents: (projectId: string) =>
+    fetchApi<Agent[]>(`/projects/${projectId}/agents`),
+
+  // Create agent for project
+  createAgent: (projectId: string, agent: Omit<Agent, 'id' | 'projectId'>) =>
+    fetchApi<Agent>(`/projects/${projectId}/agents`, {
+      method: 'POST',
+      body: JSON.stringify(agent),
+    }),
+
+  // Delete project agent
+  deleteAgent: (projectId: string, agentId: string) =>
+    fetchApi<{ success: boolean }>(`/projects/${projectId}/agents/${agentId}`, {
+      method: 'DELETE',
+    }),
+
+  // Get project channels
+  getChannels: (projectId: string) =>
+    fetchApi<string[]>(`/projects/${projectId}/channels`),
+
+  // Map channel to project
+  mapChannel: (projectId: string, channel: string) =>
+    fetchApi<{ success: boolean }>(`/projects/${projectId}/channels`, {
+      method: 'POST',
+      body: JSON.stringify({ channel }),
+    }),
+
+  // Unmap channel
+  unmapChannel: (projectId: string, channel: string) =>
+    fetchApi<{ success: boolean }>(`/projects/${projectId}/channels/${channel}`, {
+      method: 'DELETE',
+    }),
+
+  // Update rate limit
+  updateRateLimit: (projectId: string, rpm: number) =>
+    fetchApi<{ success: boolean }>(`/projects/${projectId}/rate-limit`, {
+      method: 'PATCH',
+      body: JSON.stringify({ rpm }),
+    }),
+}
+
+// Extended Analytics API (Verified Feedback)
+export const verifiedFeedbackApi = {
+  // Get verified feedback stats
+  getStats: (days = 7) =>
+    fetchApi<VerifiedFeedbackStats>(`/analytics/feedback/verified?days=${days}`),
+
+  // Get feedback by category
+  getByCategory: (days = 7) =>
+    fetchApi<FeedbackByCategory[]>(`/analytics/feedback/categories?days=${days}`),
+
+  // Get extended feedback stats (combines basic + verified)
+  getExtended: async (days = 7) => {
+    const [basic, verified, byCategory] = await Promise.all([
+      analyticsApi.getFeedback(`${days}d`),
+      verifiedFeedbackApi.getStats(days).catch(() => ({
+        totalFeedback: 0,
+        verifiedFeedback: 0,
+        verifiedPositive: 0,
+        verifiedNegative: 0,
+        verificationRate: 0,
+        satisfactionRate: 0,
+      })),
+      verifiedFeedbackApi.getByCategory(days).catch(() => []),
+    ])
+    return { basic, verified, byCategory }
+  },
 }
