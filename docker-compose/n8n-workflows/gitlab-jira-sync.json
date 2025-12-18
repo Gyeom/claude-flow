@@ -1,0 +1,297 @@
+{
+  "name": "GitLab-Jira Sync",
+  "versionId": "gitlab-jira-sync-v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gitlab-jira-sync",
+        "options": {}
+      },
+      "id": "gitlab-webhook",
+      "name": "GitLab Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "gitlab-jira-sync-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.item.json.body;\nconst headers = $input.item.json.headers;\n\n// GitLab webhook 이벤트 타입 확인\nconst eventType = headers['x-gitlab-event'];\n\nif (!eventType) {\n  return { json: { skip: true, reason: 'Not a GitLab webhook' } };\n}\n\nlet result = {\n  eventType,\n  skip: false\n};\n\n// Merge Request 이벤트 처리\nif (eventType === 'Merge Request Hook') {\n  const mr = body.object_attributes;\n  const project = body.project;\n  \n  // MR 제목이나 설명에서 Jira 이슈 키 추출 (예: CCDC-123)\n  const jiraKeyRegex = /([A-Z]+-\\d+)/g;\n  const title = mr.title || '';\n  const description = mr.description || '';\n  const branchName = mr.source_branch || '';\n  \n  const jiraKeys = new Set();\n  [title, description, branchName].forEach(text => {\n    const matches = text.match(jiraKeyRegex);\n    if (matches) matches.forEach(key => jiraKeys.add(key));\n  });\n  \n  result = {\n    ...result,\n    action: mr.action,\n    mrId: mr.iid,\n    mrUrl: mr.url,\n    mrTitle: title,\n    mrState: mr.state,\n    sourceBranch: mr.source_branch,\n    targetBranch: mr.target_branch,\n    projectName: project.name,\n    projectPath: project.path_with_namespace,\n    jiraKeys: Array.from(jiraKeys),\n    author: mr.author?.username || body.user?.username\n  };\n  \n  result.skip = jiraKeys.size === 0;\n}\n// Push 이벤트 처리\nelse if (eventType === 'Push Hook') {\n  const commits = body.commits || [];\n  const jiraKeys = new Set();\n  const jiraKeyRegex = /([A-Z]+-\\d+)/g;\n  \n  commits.forEach(commit => {\n    const message = commit.message || '';\n    const matches = message.match(jiraKeyRegex);\n    if (matches) matches.forEach(key => jiraKeys.add(key));\n  });\n  \n  result = {\n    ...result,\n    action: 'push',\n    commitCount: commits.length,\n    branch: body.ref?.replace('refs/heads/', ''),\n    projectPath: body.project?.path_with_namespace,\n    jiraKeys: Array.from(jiraKeys),\n    commits: commits.map(c => ({ id: c.id?.substring(0, 8), message: c.message?.split('\\n')[0] }))\n  };\n  \n  result.skip = jiraKeys.size === 0;\n}\nelse {\n  result.skip = true;\n  result.reason = `Unsupported event type: ${eventType}`;\n}\n\nreturn { json: result };"
+      },
+      "id": "parse-webhook",
+      "name": "Parse GitLab Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip }}",
+              "value2": true,
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "check-has-jira-keys",
+      "name": "Has Jira Keys?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.item.json;\nconst results = [];\n\n// 각 Jira 키에 대해 별도 아이템 생성\nfor (const jiraKey of data.jiraKeys || []) {\n  results.push({\n    json: {\n      ...data,\n      currentJiraKey: jiraKey\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "split-jira-keys",
+      "name": "Split by Jira Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "merge",
+              "operation": "equals"
+            }
+          ]
+        }
+      },
+      "id": "check-mr-merged",
+      "name": "MR Merged?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues/{{ $json.currentJiraKey }}/comments",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ comment: '🎉 MR Merged!\\n\\n**MR**: [!' + $json.mrId + '](' + $json.mrUrl + ')\\n**Title**: ' + $json.mrTitle + '\\n**Branch**: ' + $json.sourceBranch + ' → ' + $json.targetBranch + '\\n**Author**: @' + $json.author + '\\n**Project**: ' + $json.projectPath }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "add-merged-comment",
+      "name": "Add Merged Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues/{{ $json.currentJiraKey }}/transition",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"status\": \"Done\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "transition-to-done",
+      "name": "Transition to Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues/{{ $json.currentJiraKey }}/comments",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ comment: '📋 MR ' + ($json.action === 'open' ? 'Created' : $json.action === 'update' ? 'Updated' : $json.action) + '\\n\\n**MR**: [!' + $json.mrId + '](' + $json.mrUrl + ')\\n**Title**: ' + $json.mrTitle + '\\n**Status**: ' + $json.mrState + '\\n**Branch**: ' + $json.sourceBranch + ' → ' + $json.targetBranch + '\\n**Author**: @' + $json.author }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "add-mr-comment",
+      "name": "Add MR Update Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues/{{ $json.currentJiraKey }}/labels",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"action\": \"add\", \"label\": \"has-mr\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "add-has-mr-label",
+      "name": "Add has-mr Label",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "open",
+              "operation": "equals"
+            }
+          ]
+        }
+      },
+      "id": "check-mr-opened",
+      "name": "MR Opened?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues/{{ $json.currentJiraKey }}/transition",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"status\": \"In Review\"}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "transition-to-review",
+      "name": "Transition to In Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1850, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/issues/{{ $json.currentJiraKey }}/links",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ linkType: 'relates', targetIssue: $json.currentJiraKey }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "link-related-issues",
+      "name": "Link Related Issues",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2050, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $env.SLACK_DEV_CHANNEL || '#dev', text: '🔗 GitLab-Jira Sync: <' + $json.mrUrl + '|!' + $json.mrId + '> → <' + ($env.JIRA_URL || 'https://jira.example.com') + '/browse/' + $json.currentJiraKey + '|' + $json.currentJiraKey + '>' }) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.SLACK_BOT_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "id": "notify-slack-sync",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 300],
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "GitLab Webhook": {
+      "main": [
+        [{ "node": "Parse GitLab Event", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse GitLab Event": {
+      "main": [
+        [{ "node": "Has Jira Keys?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Jira Keys?": {
+      "main": [
+        [{ "node": "Split by Jira Key", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Split by Jira Key": {
+      "main": [
+        [{ "node": "MR Merged?", "type": "main", "index": 0 }]
+      ]
+    },
+    "MR Merged?": {
+      "main": [
+        [{ "node": "Add Merged Comment", "type": "main", "index": 0 }],
+        [{ "node": "Add MR Update Comment", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add Merged Comment": {
+      "main": [
+        [{ "node": "Transition to Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Transition to Done": {
+      "main": [
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add MR Update Comment": {
+      "main": [
+        [{ "node": "Add has-mr Label", "type": "main", "index": 0 }]
+      ]
+    },
+    "Add has-mr Label": {
+      "main": [
+        [{ "node": "MR Opened?", "type": "main", "index": 0 }]
+      ]
+    },
+    "MR Opened?": {
+      "main": [
+        [{ "node": "Transition to In Review", "type": "main", "index": 0 }],
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }]
+      ]
+    },
+    "Transition to In Review": {
+      "main": [
+        [{ "node": "Notify Slack", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "id": "jira-integration",
+      "name": "jira"
+    },
+    {
+      "id": "gitlab-integration",
+      "name": "gitlab"
+    }
+  ]
+}

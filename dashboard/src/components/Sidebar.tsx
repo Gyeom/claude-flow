@@ -17,6 +17,7 @@ import {
   ScrollText,
   FolderOpen,
   MessageSquare,
+  Ticket,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
@@ -28,6 +29,7 @@ const navigation = [
   { name: 'Live Logs', href: '/logs', icon: ScrollText },
   { name: 'History', href: '/history', icon: Clock },
   { name: 'Projects', href: '/projects', icon: FolderOpen },
+  { name: 'Jira', href: '/jira', icon: Ticket },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Classify', href: '/classify', icon: Target },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },

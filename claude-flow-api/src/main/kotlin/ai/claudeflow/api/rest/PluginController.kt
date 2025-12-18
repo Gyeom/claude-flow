@@ -188,8 +188,13 @@ class PluginController(
      * Jira 스프린트 이슈
      */
     @GetMapping("/jira/sprint")
-    fun getJiraSprintIssues(@RequestParam boardId: Int?): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
-        val args: Map<String, Any> = if (boardId != null) mapOf("board_id" to boardId) else emptyMap()
+    fun getJiraSprintIssues(
+        @RequestParam boardId: Int?,
+        @RequestParam sprintId: Int?
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val args = mutableMapOf<String, Any>()
+        if (boardId != null) args["board_id"] = boardId
+        if (sprintId != null) args["sprint_id"] = sprintId
         val result = pluginManager.execute("jira", "sprint", args)
         ResponseEntity.ok(PluginExecuteResponse(
             success = result.success,
@@ -221,10 +226,174 @@ class PluginController(
         @PathVariable issueKey: String,
         @RequestBody request: JiraTransitionRequest
     ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
-        val result = pluginManager.execute("jira", "transition", mapOf(
+        val args = mutableMapOf<String, Any>(
             "issue_key" to issueKey,
             "status" to request.status
+        )
+        request.dueDate?.let { args["due_date"] = it }
+        request.startDate?.let { args["start_date"] = it }
+
+        val result = pluginManager.execute("jira", "transition", args)
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
         ))
+    }
+
+    /**
+     * Jira 이슈 생성
+     */
+    @PostMapping("/jira/issues")
+    fun createJiraIssue(@RequestBody request: JiraCreateIssueRequest): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val args = mutableMapOf<String, Any>(
+            "project" to request.project,
+            "summary" to request.summary
+        )
+        request.description?.let { args["description"] = it }
+        request.issueType?.let { args["issue_type"] = it }
+
+        val result = pluginManager.execute("jira", "create", args)
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 이슈 댓글 추가
+     */
+    @PostMapping("/jira/issues/{issueKey}/comments")
+    fun addJiraComment(
+        @PathVariable issueKey: String,
+        @RequestBody request: JiraCommentRequest
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "comment", mapOf(
+            "issue_key" to issueKey,
+            "comment" to request.comment
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 이슈 댓글 조회
+     */
+    @GetMapping("/jira/issues/{issueKey}/comments")
+    fun getJiraComments(@PathVariable issueKey: String): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "comments", mapOf("issue_key" to issueKey))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 이슈 담당자 변경
+     */
+    @PutMapping("/jira/issues/{issueKey}/assignee")
+    fun assignJiraIssue(
+        @PathVariable issueKey: String,
+        @RequestBody request: JiraAssignRequest
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "assign", mapOf(
+            "issue_key" to issueKey,
+            "assignee" to request.assignee
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 이슈 라벨 관리
+     */
+    @PostMapping("/jira/issues/{issueKey}/labels")
+    fun manageJiraLabels(
+        @PathVariable issueKey: String,
+        @RequestBody request: JiraLabelRequest
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "labels", mapOf(
+            "issue_key" to issueKey,
+            "action" to request.action,
+            "label" to request.label
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 이슈 링크 생성
+     */
+    @PostMapping("/jira/issues/{issueKey}/links")
+    fun linkJiraIssues(
+        @PathVariable issueKey: String,
+        @RequestBody request: JiraLinkRequest
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "link", mapOf(
+            "issue_key" to issueKey,
+            "link_type" to request.linkType,
+            "target_issue" to request.targetIssue
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 프로젝트 목록
+     */
+    @GetMapping("/jira/projects")
+    fun listJiraProjects(): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "projects", emptyMap())
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 보드 목록
+     */
+    @GetMapping("/jira/boards")
+    fun listJiraBoards(@RequestParam projectKey: String?): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val args: Map<String, Any> = if (projectKey != null) mapOf("project_key" to projectKey) else emptyMap()
+        val result = pluginManager.execute("jira", "boards", args)
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 보드의 스프린트 목록
+     */
+    @GetMapping("/jira/boards/{boardId}/sprints")
+    fun listJiraSprints(@PathVariable boardId: Int): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "sprints", mapOf("board_id" to boardId))
         ResponseEntity.ok(PluginExecuteResponse(
             success = result.success,
             data = result.data,
@@ -275,5 +444,32 @@ data class SetEnabledRequest(
 )
 
 data class JiraTransitionRequest(
-    val status: String
+    val status: String,
+    val dueDate: String? = null,      // 기한 (yyyy-MM-dd 형식)
+    val startDate: String? = null     // 시작일 (yyyy-MM-dd 형식)
+)
+
+data class JiraCreateIssueRequest(
+    val project: String,
+    val summary: String,
+    val description: String? = null,
+    val issueType: String? = "Task"
+)
+
+data class JiraCommentRequest(
+    val comment: String
+)
+
+data class JiraAssignRequest(
+    val assignee: String
+)
+
+data class JiraLabelRequest(
+    val action: String,  // "add" or "remove"
+    val label: String
+)
+
+data class JiraLinkRequest(
+    val linkType: String,  // "blocks", "relates", "duplicates" etc.
+    val targetIssue: String
 )

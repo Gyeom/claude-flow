@@ -28,6 +28,21 @@ claude-flow:
   workspace:
     path: ${WORKSPACE_PATH:.}
 
+  # GitLab 연동
+  gitlab:
+    url: ${GITLAB_URL:}
+    token: ${GITLAB_TOKEN:}
+
+  # GitHub 연동
+  github:
+    token: ${GITHUB_TOKEN:}
+
+  # Jira 연동
+  jira:
+    url: ${JIRA_URL:}
+    email: ${JIRA_EMAIL:}
+    api-token: ${JIRA_API_TOKEN:}
+
 management:
   endpoints:
     web:

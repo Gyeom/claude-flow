@@ -776,6 +776,234 @@ export const projectsApi = {
     }),
 }
 
+// Jira API
+export interface JiraIssue {
+  key: string
+  summary: string
+  description: string | null
+  status: string
+  priority: string | null
+  assignee: string | null
+  reporter: string | null
+  issuetype: string
+  created: string
+  updated: string
+  url: string
+  labels?: string[]
+}
+
+export interface JiraIssueListItem {
+  key: string
+  summary: string
+  status: string
+  assignee: string | null
+  priority: string | null
+  type: string
+  url: string
+}
+
+export interface JiraProject {
+  key: string
+  name: string
+  projectTypeKey: string
+  style: string
+  url: string
+  avatarUrl?: string
+}
+
+export interface JiraBoard {
+  id: number
+  name: string
+  type: string
+  projectKey: string | null
+  projectName: string | null
+}
+
+export interface JiraComment {
+  id: string
+  author: string
+  body: string | null
+  created: string
+  updated: string
+}
+
+export interface JiraSprint {
+  id: number
+  name: string
+  state: 'active' | 'closed' | 'future'
+  startDate: string | null
+  endDate: string | null
+  completeDate: string | null
+  goal: string | null
+}
+
+export const jiraApi = {
+  // Get issue details
+  getIssue: (issueKey: string) =>
+    fetchApi<{ success: boolean; data: JiraIssue; error?: string }>(`/plugins/jira/issues/${issueKey}`),
+
+  // Get my issues
+  getMyIssues: () =>
+    fetchApi<{ success: boolean; data: JiraIssueListItem[]; message?: string; error?: string }>('/plugins/jira/my-issues'),
+
+  // Search issues by JQL
+  searchIssues: (jql: string) =>
+    fetchApi<{ success: boolean; data: JiraIssueListItem[]; message?: string; error?: string }>(
+      `/plugins/jira/search?jql=${encodeURIComponent(jql)}`
+    ),
+
+  // Create issue
+  createIssue: (project: string, summary: string, description?: string, issueType = 'Task') =>
+    fetchApi<{ success: boolean; data: { key: string; id: string; url: string }; message?: string; error?: string }>(
+      '/plugins/jira/issues',
+      {
+        method: 'POST',
+        body: JSON.stringify({ project, summary, description, issueType }),
+      }
+    ),
+
+  // Transition issue
+  transitionIssue: (
+    issueKey: string,
+    status: string,
+    options?: { dueDate?: string; startDate?: string }
+  ) =>
+    fetchApi<{ success: boolean; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/transition`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          status,
+          dueDate: options?.dueDate,
+          startDate: options?.startDate,
+        }),
+      }
+    ),
+
+  // Add comment
+  addComment: (issueKey: string, comment: string) =>
+    fetchApi<{ success: boolean; data?: { id: string; created: string }; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/comments`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ comment }),
+      }
+    ),
+
+  // Get comments
+  getComments: (issueKey: string) =>
+    fetchApi<{ success: boolean; data: JiraComment[]; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/comments`
+    ),
+
+  // Assign issue
+  assignIssue: (issueKey: string, assignee: string) =>
+    fetchApi<{ success: boolean; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/assignee`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ assignee }),
+      }
+    ),
+
+  // Manage labels
+  manageLabels: (issueKey: string, action: 'add' | 'remove', label: string) =>
+    fetchApi<{ success: boolean; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/labels`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ action, label }),
+      }
+    ),
+
+  // Link issues
+  linkIssues: (issueKey: string, linkType: string, targetIssue: string) =>
+    fetchApi<{ success: boolean; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/links`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ linkType, targetIssue }),
+      }
+    ),
+
+  // Get projects
+  getProjects: () =>
+    fetchApi<{ success: boolean; data: JiraProject[]; message?: string; error?: string }>('/plugins/jira/projects'),
+
+  // Get boards
+  getBoards: (projectKey?: string) => {
+    const params = projectKey ? `?projectKey=${projectKey}` : ''
+    return fetchApi<{ success: boolean; data: JiraBoard[]; message?: string; error?: string }>(`/plugins/jira/boards${params}`)
+  },
+
+  // Get sprints for a board
+  getSprints: (boardId: number) =>
+    fetchApi<{ success: boolean; data: JiraSprint[]; message?: string; error?: string }>(`/plugins/jira/boards/${boardId}/sprints`),
+
+  // Get sprint issues
+  getSprintIssues: (boardId?: number, sprintId?: number) => {
+    const params = new URLSearchParams()
+    if (boardId) params.set('boardId', boardId.toString())
+    if (sprintId) params.set('sprintId', sprintId.toString())
+    const queryString = params.toString()
+    return fetchApi<{ success: boolean; data: JiraIssueListItem[]; message?: string; error?: string }>(
+      `/plugins/jira/sprint${queryString ? `?${queryString}` : ''}`
+    )
+  },
+
+  // AI Analysis - Analyze issue with Claude
+  analyzeIssue: (issueKey: string, options?: { context?: string; projectPath?: string; addComment?: boolean }) =>
+    fetchApi<{
+      success: boolean
+      analysis?: string
+      issueKey?: string
+      issueSummary?: string
+      tokensUsed?: number
+      error?: string
+    }>(`/jira/analyze/${issueKey}`, {
+      method: 'POST',
+      body: JSON.stringify(options || {}),
+    }),
+
+  // AI Analysis - Code context
+  analyzeCodeContext: (issueKey: string, projectPath: string) =>
+    fetchApi<{
+      success: boolean
+      issueKey?: string
+      analysis?: string
+      projectPath?: string
+      error?: string
+    }>(`/jira/analyze/${issueKey}/code-context`, {
+      method: 'POST',
+      body: JSON.stringify({ projectPath }),
+    }),
+
+  // AI Analysis - Sprint report
+  generateSprintReport: (boardId?: number) =>
+    fetchApi<{
+      success: boolean
+      report?: string
+      totalIssues?: number
+      byStatus?: Record<string, number>
+      error?: string
+    }>('/jira/sprint-report', {
+      method: 'POST',
+      body: JSON.stringify({ boardId }),
+    }),
+
+  // AI Analysis - Auto-label issue
+  autoLabelIssue: (issueKey: string) =>
+    fetchApi<{
+      success: boolean
+      issueKey?: string
+      suggestedLabels?: string[]
+      analysis?: string
+      error?: string
+    }>(`/jira/auto-label/${issueKey}`, {
+      method: 'POST',
+    }),
+}
+
 // Extended Analytics API (Verified Feedback)
 export const verifiedFeedbackApi = {
   // Get verified feedback stats
