@@ -22,6 +22,7 @@ class PluginLoader(
         registerBuiltIn("gitlab") { GitLabPlugin() }
         registerBuiltIn("github") { GitHubPlugin() }
         registerBuiltIn("jira") { JiraPlugin() }
+        registerBuiltIn("n8n") { N8nPlugin() }
     }
 
     /**

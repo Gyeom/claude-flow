@@ -55,7 +55,13 @@ claude-flow/
 │   ├── plugin/             # 플러그인 시스템
 │   │   ├── PluginRegistry.kt       # 플러그인 레지스트리
 │   │   ├── PluginLoader.kt         # 동적 로더
-│   │   └── PluginConfigManager.kt  # 설정 관리
+│   │   ├── PluginConfigManager.kt  # 설정 관리
+│   │   ├── GitLabPlugin.kt         # GitLab 연동
+│   │   ├── GitHubPlugin.kt         # GitHub 연동
+│   │   ├── JiraPlugin.kt           # Jira 연동
+│   │   └── N8nPlugin.kt            # n8n 워크플로우 관리
+│   ├── n8n/                # n8n 워크플로우 생성
+│   │   └── N8nWorkflowGenerator.kt # AI 기반 워크플로우 생성기
 │   ├── ratelimit/          # Rate Limiting
 │   │   ├── RateLimitPolicy.kt      # 정책 정의
 │   │   └── AdvancedRateLimiter.kt  # 다차원 제한
@@ -178,6 +184,11 @@ GITLAB_TOKEN=glpat-xxx
 JIRA_URL=https://your-company.atlassian.net
 JIRA_EMAIL=your-email@company.com
 JIRA_API_TOKEN=xxx
+
+# 선택 (n8n 연동)
+N8N_URL=http://localhost:5678
+N8N_EMAIL=admin@local.dev
+N8N_PASSWORD=your-password
 ```
 
 ## Claude Code 통합
@@ -190,6 +201,8 @@ JIRA_API_TOKEN=xxx
 - `/agents` - 에이전트 목록
 - `/user-context <user-id>` - 사용자 컨텍스트 조회
 - `/gitlab-mr <project> <mr>` - MR 리뷰
+- `/n8n <command>` - n8n 워크플로우 관리 및 자동 생성
+- `/jira <command>` - Jira 이슈 관리
 
 ### Hooks
 - `enrich-context.sh` - 사용자 컨텍스트 주입

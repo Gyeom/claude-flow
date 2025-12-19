@@ -1,5 +1,7 @@
 package ai.claudeflow.api.rest
 
+import ai.claudeflow.core.n8n.N8nWorkflowGenerator
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import kotlinx.coroutines.reactor.mono
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -14,6 +16,7 @@ import reactor.core.publisher.Mono
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
+private val mapper = jacksonObjectMapper()
 
 /**
  * n8n API Proxy Controller
@@ -251,6 +254,212 @@ class N8nProxyController(
             ResponseEntity.ok(mapOf("success" to false, "error" to (e.message ?: "Unknown error")))
         }
     }
+
+    // ==================== 워크플로우 생성 기능 ====================
+
+    private val workflowGenerator = N8nWorkflowGenerator()
+
+    /**
+     * 자연어 설명으로 워크플로우 생성
+     */
+    @PostMapping("/workflows/generate")
+    fun generateWorkflow(
+        @RequestBody request: GenerateWorkflowRequest
+    ): Mono<ResponseEntity<GenerateWorkflowResponse>> = mono {
+        try {
+            logger.info { "Generating workflow from description: ${request.description}" }
+
+            val workflow = workflowGenerator.generate(request.description)
+            val workflowJson = mapper.writeValueAsString(workflow)
+
+            // n8n에 직접 생성할지 여부
+            if (request.createInN8n == true) {
+                val cookie = ensureAuthenticated()
+                val createResponse = webClient.post()
+                    .uri("/rest/workflows")
+                    .header("Cookie", cookie ?: "")
+                    .bodyValue(workflow)
+                    .retrieve()
+                    .awaitBodyOrNull<Map<String, Any>>()
+
+                val createdWorkflow = createResponse?.get("data") as? Map<*, *>
+                val workflowId = createdWorkflow?.get("id")?.toString()
+
+                if (workflowId != null) {
+                    logger.info { "Created workflow in n8n: $workflowId" }
+                    ResponseEntity.ok(GenerateWorkflowResponse(
+                        success = true,
+                        workflow = workflow,
+                        workflowJson = workflowJson,
+                        createdId = workflowId,
+                        message = "워크플로우가 n8n에 생성되었습니다: ${workflow.name}"
+                    ))
+                } else {
+                    ResponseEntity.ok(GenerateWorkflowResponse(
+                        success = true,
+                        workflow = workflow,
+                        workflowJson = workflowJson,
+                        message = "워크플로우 JSON이 생성되었습니다 (n8n 저장 실패)"
+                    ))
+                }
+            } else {
+                ResponseEntity.ok(GenerateWorkflowResponse(
+                    success = true,
+                    workflow = workflow,
+                    workflowJson = workflowJson,
+                    message = "워크플로우 JSON이 생성되었습니다. createInN8n=true로 설정하면 바로 n8n에 저장됩니다."
+                ))
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to generate workflow" }
+            ResponseEntity.ok(GenerateWorkflowResponse(
+                success = false,
+                error = e.message
+            ))
+        }
+    }
+
+    /**
+     * 템플릿 기반 워크플로우 생성
+     */
+    @PostMapping("/workflows/template/{templateId}")
+    fun generateFromTemplate(
+        @PathVariable templateId: String,
+        @RequestBody(required = false) config: Map<String, Any>?
+    ): Mono<ResponseEntity<GenerateWorkflowResponse>> = mono {
+        try {
+            logger.info { "Generating workflow from template: $templateId" }
+
+            val workflow = workflowGenerator.generateFromTemplate(templateId, config ?: emptyMap())
+            val workflowJson = mapper.writeValueAsString(workflow)
+
+            // n8n에 생성
+            val cookie = ensureAuthenticated()
+            val createResponse = webClient.post()
+                .uri("/rest/workflows")
+                .header("Cookie", cookie ?: "")
+                .bodyValue(workflow)
+                .retrieve()
+                .awaitBodyOrNull<Map<String, Any>>()
+
+            val createdWorkflow = createResponse?.get("data") as? Map<*, *>
+            val workflowId = createdWorkflow?.get("id")?.toString()
+
+            ResponseEntity.ok(GenerateWorkflowResponse(
+                success = true,
+                workflow = workflow,
+                workflowJson = workflowJson,
+                createdId = workflowId,
+                message = if (workflowId != null)
+                    "템플릿 '$templateId' 기반 워크플로우가 생성되었습니다 (ID: $workflowId)"
+                else
+                    "워크플로우 JSON이 생성되었습니다"
+            ))
+        } catch (e: IllegalArgumentException) {
+            logger.warn { "Unknown template: $templateId" }
+            ResponseEntity.badRequest().body(GenerateWorkflowResponse(
+                success = false,
+                error = "알 수 없는 템플릿: $templateId"
+            ))
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to generate workflow from template" }
+            ResponseEntity.ok(GenerateWorkflowResponse(
+                success = false,
+                error = e.message
+            ))
+        }
+    }
+
+    /**
+     * 사용 가능한 템플릿 목록
+     */
+    @GetMapping("/templates")
+    fun listTemplates(): Mono<ResponseEntity<List<WorkflowTemplateInfo>>> = mono {
+        val templates = listOf(
+            WorkflowTemplateInfo(
+                id = "slack-mention-handler",
+                name = "Slack Mention Handler",
+                description = "Slack 멘션 수신 → Claude 처리 → 응답 전송",
+                trigger = "webhook",
+                integrations = listOf("Slack", "Claude Flow API")
+            ),
+            WorkflowTemplateInfo(
+                id = "gitlab-mr-review",
+                name = "GitLab MR Auto Review",
+                description = "GitLab MR 생성 시 자동 코드 리뷰",
+                trigger = "webhook",
+                integrations = listOf("GitLab", "Claude Flow API")
+            ),
+            WorkflowTemplateInfo(
+                id = "daily-report",
+                name = "Daily Report",
+                description = "매일 아침 Jira/GitLab 요약 Slack 전송",
+                trigger = "schedule",
+                integrations = listOf("Jira", "GitLab", "Slack")
+            ),
+            WorkflowTemplateInfo(
+                id = "jira-auto-fix",
+                name = "Jira Auto Fix Scheduler",
+                description = "미해결 이슈 자동 분석 및 해결 제안",
+                trigger = "schedule",
+                integrations = listOf("Jira", "Claude Flow API")
+            ),
+            WorkflowTemplateInfo(
+                id = "slack-feedback-handler",
+                name = "Slack Feedback Handler",
+                description = "Slack 리액션 피드백 수집",
+                trigger = "webhook",
+                integrations = listOf("Slack", "Claude Flow API")
+            ),
+            WorkflowTemplateInfo(
+                id = "webhook-to-slack",
+                name = "Webhook to Slack",
+                description = "Webhook → Slack 알림",
+                trigger = "webhook",
+                integrations = listOf("Slack")
+            ),
+            WorkflowTemplateInfo(
+                id = "schedule-api-call",
+                name = "Schedule API Call",
+                description = "주기적 API 호출",
+                trigger = "schedule",
+                integrations = listOf("HTTP")
+            )
+        )
+        ResponseEntity.ok(templates)
+    }
+
+    /**
+     * 워크플로우 삭제
+     */
+    @DeleteMapping("/workflows/{id}")
+    fun deleteWorkflow(@PathVariable id: String): Mono<ResponseEntity<Map<String, Any>>> = mono {
+        try {
+            val cookie = ensureAuthenticated()
+            webClient.delete()
+                .uri("/rest/workflows/$id")
+                .header("Cookie", cookie ?: "")
+                .retrieve()
+                .awaitBodyOrNull<Any>()
+
+            logger.info { "Deleted workflow $id" }
+            ResponseEntity.ok(mapOf("success" to true, "id" to id))
+        } catch (e: Exception) {
+            logger.warn { "Failed to delete workflow $id: ${e.message}" }
+            ResponseEntity.ok(mapOf("success" to false, "error" to (e.message ?: "Unknown error")))
+        }
+    }
+
+    /**
+     * Claude에게 보낼 프롬프트 생성 (AI 기반 고급 생성용)
+     */
+    @PostMapping("/workflows/prompt")
+    fun generatePrompt(
+        @RequestBody request: GenerateWorkflowRequest
+    ): Mono<ResponseEntity<Map<String, String>>> = mono {
+        val prompt = workflowGenerator.generatePromptForClaude(request.description)
+        ResponseEntity.ok(mapOf("prompt" to prompt))
+    }
 }
 
 // n8n API Response Types
@@ -338,4 +547,27 @@ data class N8nAuthResponse(
     val n8nUrl: String,
     val success: Boolean,
     val error: String? = null
+)
+
+// 워크플로우 생성 관련 DTOs
+data class GenerateWorkflowRequest(
+    val description: String,
+    val createInN8n: Boolean? = false
+)
+
+data class GenerateWorkflowResponse(
+    val success: Boolean,
+    val workflow: ai.claudeflow.core.n8n.N8nWorkflow? = null,
+    val workflowJson: String? = null,
+    val createdId: String? = null,
+    val message: String? = null,
+    val error: String? = null
+)
+
+data class WorkflowTemplateInfo(
+    val id: String,
+    val name: String,
+    val description: String,
+    val trigger: String,
+    val integrations: List<String>
 )
