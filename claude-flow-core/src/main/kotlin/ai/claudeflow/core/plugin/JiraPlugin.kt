@@ -159,6 +159,9 @@ class JiraPlugin : BasePlugin() {
                 args["due_date"] as? String,
                 args["start_date"] as? String
             )
+            "get_transitions" -> getAvailableTransitions(
+                args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required")
+            )
             "create" -> createIssue(
                 args["project"] as? String ?: return PluginResult(false, error = "Project key required"),
                 args["summary"] as? String ?: return PluginResult(false, error = "Summary required"),
@@ -274,6 +277,40 @@ class JiraPlugin : BasePlugin() {
             )
         } catch (e: Exception) {
             logger.error(e) { "Failed to search issues: $jql" }
+            PluginResult(false, error = e.message)
+        }
+    }
+
+    /**
+     * 이슈에 사용 가능한 트랜지션 목록 조회
+     */
+    fun getAvailableTransitions(issueKey: String): PluginResult {
+        val transitionsUrl = "$baseUrl/rest/api/3/issue/$issueKey/transitions"
+
+        return try {
+            val response = apiGet(transitionsUrl)
+            val result = mapper.readValue(response, Map::class.java) as Map<String, Any>
+            val transitions = result["transitions"] as? List<Map<String, Any>> ?: emptyList()
+
+            val transitionList = transitions.map { t ->
+                mapOf(
+                    "id" to (t["id"] as? String ?: ""),
+                    "name" to (t["name"] as? String ?: ""),
+                    "to" to ((t["to"] as? Map<*, *>)?.let { to ->
+                        mapOf(
+                            "id" to (to["id"] as? String ?: ""),
+                            "name" to (to["name"] as? String ?: "")
+                        )
+                    } ?: emptyMap<String, String>())
+                )
+            }
+
+            PluginResult(
+                success = true,
+                data = mapOf("transitions" to transitionList)
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get transitions for issue: $issueKey" }
             PluginResult(false, error = e.message)
         }
     }

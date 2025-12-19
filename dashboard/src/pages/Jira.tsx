@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -49,14 +49,33 @@ import {
   Brain,
   Wand2,
   GripVertical,
-  Bot,
 } from 'lucide-react'
 import { Card } from '@/components/Card'
+import { SmartSearch } from '@/components/jira/SmartSearch'
 import { jiraApi, type JiraIssueListItem, type JiraIssue, type JiraComment, type JiraProject, type JiraBoard, type JiraSprint } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 type AssigneeFilter = 'me' | 'all' | 'unassigned'
 type DisplayMode = 'list' | 'board'
+type PageTab = 'browse' | 'quick-actions'
+
+// Quick Actions용 필터 타입
+interface QuickFilter {
+  id: string
+  type: 'project' | 'status' | 'assignee' | 'type' | 'priority' | 'label'
+  value: string
+  label: string
+}
+
+// Bulk Action 타입
+interface BulkAction {
+  status?: string
+  assignee?: string | 'keep' | 'unassign'
+  priority?: string | 'keep'
+  comment?: string
+  startDate?: string
+  dueDate?: string
+}
 
 // 선택된 프로젝트 정보 타입
 interface SelectedProject {
@@ -66,7 +85,8 @@ interface SelectedProject {
 
 // 동적 상태 설정 - 실제 데이터에서 추출
 const STATUS_CATEGORIES = {
-  todo: ['To Do', 'Open', 'Backlog', '할 일', 'New', 'Postpone'],
+  backlog: ['Backlog', 'Open', 'New', 'Postpone'],
+  todo: ['To Do', '할 일', '해야할일', 'Selected for Development'],
   inProgress: ['In Progress', '진행 중', 'In Development', 'Working'],
   inReview: ['In Review', '검토 중', 'Review', 'Code Review', 'QA'],
   done: ['Done', 'Closed', '완료', '해결됨', 'Resolved', 'Released'],
@@ -84,6 +104,7 @@ function getStatusCategory(status: string): keyof typeof STATUS_CATEGORIES {
 
 // 상태 카테고리별 스타일
 const categoryStyles = {
+  backlog: { icon: Circle, color: 'text-gray-400', bg: 'bg-gray-100 dark:bg-gray-800', border: 'border-gray-200 dark:border-gray-700' },
   todo: { icon: Circle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', border: 'border-slate-200 dark:border-slate-700' },
   inProgress: { icon: PlayCircle, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/30', border: 'border-blue-200 dark:border-blue-800' },
   inReview: { icon: Eye, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', border: 'border-purple-200 dark:border-purple-800' },
@@ -153,17 +174,61 @@ export function Jira() {
     dueDate: string
   }>({ startDate: '', dueDate: '' })
 
-  // Natural Language Processing states
-  const [showNlpPanel, setShowNlpPanel] = useState(false)
-  const [nlpInput, setNlpInput] = useState('')
-  const [nlpProcessing, setNlpProcessing] = useState(false)
-  const [nlpResult, setNlpResult] = useState<{
-    action: string
-    issueKey?: string
-    status?: string
-    message: string
-    success: boolean
-  } | null>(null)
+  // Page Tab state
+  const [activeTab, setActiveTab] = useState<PageTab>('browse')
+
+  // Quick Actions states
+  const [quickFilters, setQuickFilters] = useState<QuickFilter[]>([])
+  const [quickFilterInput, setQuickFilterInput] = useState('')
+  const [showQuickFilterDropdown, setShowQuickFilterDropdown] = useState(false)
+  const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set())
+  const [bulkAction, setBulkAction] = useState<BulkAction>({ status: undefined, assignee: 'keep', priority: 'keep', comment: '', startDate: '', dueDate: '' })
+  const [bulkProcessing, setBulkProcessing] = useState(false)
+  const [availableTransitions, setAvailableTransitions] = useState<Array<{ name: string; count: number }>>([])
+  const [loadingTransitions, setLoadingTransitions] = useState(false)
+
+  // 선택된 이슈의 공통 트랜지션 가져오기
+  useEffect(() => {
+    const fetchTransitions = async () => {
+      if (selectedIssues.size === 0) {
+        setAvailableTransitions([])
+        return
+      }
+
+      setLoadingTransitions(true)
+      try {
+        // 선택된 이슈들의 트랜지션을 병렬로 가져옴
+        const issueKeys = Array.from(selectedIssues)
+        const results = await Promise.all(
+          issueKeys.slice(0, 5).map(key => jiraApi.getTransitions(key)) // 최대 5개만 체크
+        )
+
+        // 모든 이슈에서 공통으로 사용 가능한 트랜지션 찾기
+        const transitionCounts = new Map<string, number>()
+        results.forEach(result => {
+          if (result.success && result.data?.transitions) {
+            result.data.transitions.forEach(t => {
+              transitionCounts.set(t.name, (transitionCounts.get(t.name) || 0) + 1)
+            })
+          }
+        })
+
+        // 모든 이슈에서 공통인 트랜지션 또는 일부에서 가능한 트랜지션
+        const transitions = Array.from(transitionCounts.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+
+        setAvailableTransitions(transitions)
+      } catch (error) {
+        console.error('Failed to fetch transitions:', error)
+        setAvailableTransitions([])
+      } finally {
+        setLoadingTransitions(false)
+      }
+    }
+
+    fetchTransitions()
+  }, [selectedIssues])
 
   // DnD sensors
   const sensors = useSensors(
@@ -375,103 +440,6 @@ export function Jira() {
     },
   })
 
-  // Natural Language Processing handler
-  const handleNlpSubmit = async () => {
-    if (!nlpInput.trim()) return
-
-    setNlpProcessing(true)
-    setNlpResult(null)
-
-    try {
-      // 자연어 명령 파싱 및 실행
-      const input = nlpInput.toLowerCase().trim()
-
-      // 패턴 매칭으로 의도 파악
-      let action = ''
-      let issueKey = ''
-      let targetStatus = ''
-
-      // 이슈 키 추출 (예: CCDC-123, ABC-1)
-      const issueKeyMatch = nlpInput.match(/([A-Z]+-\d+)/i)
-      if (issueKeyMatch) {
-        issueKey = issueKeyMatch[1].toUpperCase()
-      }
-
-      // 상태 변경 패턴
-      if (input.includes('진행') || input.includes('시작') || input.includes('start') || input.includes('progress')) {
-        action = 'transition'
-        targetStatus = 'In Progress'
-      } else if (input.includes('완료') || input.includes('done') || input.includes('finish') || input.includes('close')) {
-        action = 'transition'
-        targetStatus = 'Done'
-      } else if (input.includes('리뷰') || input.includes('review') || input.includes('검토')) {
-        action = 'transition'
-        targetStatus = 'In Review'
-      } else if (input.includes('백로그') || input.includes('backlog')) {
-        action = 'transition'
-        targetStatus = 'Backlog'
-      } else if (input.includes('할 일') || input.includes('todo') || input.includes('to do')) {
-        action = 'transition'
-        targetStatus = 'To Do'
-      } else if (input.includes('코멘트') || input.includes('comment') || input.includes('댓글')) {
-        action = 'comment'
-      } else if (input.includes('분석') || input.includes('analyze') || input.includes('요약')) {
-        action = 'analyze'
-      } else if (input.includes('생성') || input.includes('create') || input.includes('만들')) {
-        action = 'create'
-      }
-
-      // 액션 실행
-      if (action === 'transition' && issueKey && targetStatus) {
-        await transitionMutation.mutateAsync({ issueKey, status: targetStatus })
-        setNlpResult({
-          action: 'transition',
-          issueKey,
-          status: targetStatus,
-          message: `${issueKey}를 "${targetStatus}" 상태로 변경했습니다.`,
-          success: true,
-        })
-      } else if (action === 'analyze' && issueKey) {
-        setSelectedIssue(issueKey)
-        handleAnalyzeIssue(issueKey)
-        setNlpResult({
-          action: 'analyze',
-          issueKey,
-          message: `${issueKey} 분석을 시작합니다...`,
-          success: true,
-        })
-      } else if (action === 'create') {
-        setShowCreateModal(true)
-        setNlpResult({
-          action: 'create',
-          message: '새 이슈 생성 창을 열었습니다.',
-          success: true,
-        })
-      } else if (!issueKey && action) {
-        setNlpResult({
-          action,
-          message: '이슈 키를 찾을 수 없습니다. 예: "CCDC-123 진행 중으로 변경"',
-          success: false,
-        })
-      } else {
-        // AI에게 더 복잡한 처리 위임 (향후 확장)
-        setNlpResult({
-          action: 'unknown',
-          message: `명령을 이해하지 못했습니다. 다음과 같이 시도해보세요:\n• "CCDC-123 진행 중으로 변경"\n• "ABC-456 완료 처리"\n• "PROJ-789 분석해줘"`,
-          success: false,
-        })
-      }
-    } catch (error) {
-      setNlpResult({
-        action: 'error',
-        message: `오류가 발생했습니다: ${error instanceof Error ? error.message : '알 수 없는 오류'}`,
-        success: false,
-      })
-    } finally {
-      setNlpProcessing(false)
-    }
-  }
-
   // Get current issues based on filters
   const currentIssues = useMemo(() => {
     // Priority: manual search > sprint > filter-based search
@@ -548,27 +516,33 @@ export function Jira() {
     return currentIssues.find(i => i.key === activeId)
   }, [activeId, currentIssues])
 
-  // 기본 상태 컬럼 (항상 표시) + 데이터에서 추출된 추가 상태
-  const DEFAULT_STATUS_COLUMNS = ['Backlog', 'To Do', 'In Progress', 'In Review', 'Done']
+  // 카테고리 기반 컬럼 정의
+  const CATEGORY_COLUMNS: { key: keyof typeof STATUS_CATEGORIES; label: string }[] = [
+    { key: 'backlog', label: 'Backlog' },
+    { key: 'todo', label: 'To Do' },
+    { key: 'inProgress', label: 'In Progress' },
+    { key: 'inReview', label: 'In Review' },
+    { key: 'done', label: 'Done' },
+  ]
 
-  // 동적으로 상태 컬럼 생성 - 기본 컬럼 + 실제 데이터에서 추출
+  // 동적으로 상태 컬럼 생성 - 카테고리 기반으로 그룹화
   const { statusColumns, issuesByStatus, issuesByProject } = useMemo(() => {
-    const statusMap = new Map<string, JiraIssueListItem[]>()
+    // 카테고리별로 이슈 그룹화
+    const categoryMap = new Map<string, JiraIssueListItem[]>()
     const projectMap = new Map<string, { name: string; issues: JiraIssueListItem[] }>()
-    const categoryOrder: (keyof typeof STATUS_CATEGORIES)[] = ['todo', 'inProgress', 'inReview', 'done']
 
-    // 기본 상태 컬럼 초기화 (빈 배열로)
-    DEFAULT_STATUS_COLUMNS.forEach(status => {
-      statusMap.set(status, [])
+    // 카테고리 컬럼 초기화
+    CATEGORY_COLUMNS.forEach(({ label }) => {
+      categoryMap.set(label, [])
     })
 
-    // 모든 이슈를 상태별 + 프로젝트별로 그룹화
+    // 모든 이슈를 카테고리별 + 프로젝트별로 그룹화
     currentIssues.forEach(issue => {
       const status = issue.status || 'Unknown'
-      if (!statusMap.has(status)) {
-        statusMap.set(status, [])
-      }
-      statusMap.get(status)!.push(issue)
+      const category = getStatusCategory(status)
+      const categoryLabel = CATEGORY_COLUMNS.find(c => c.key === category)?.label || 'To Do'
+
+      categoryMap.get(categoryLabel)!.push(issue)
 
       // 프로젝트별 그룹화 (issue.key에서 프로젝트 키 추출)
       const projectKey = issue.key.split('-')[0]
@@ -578,28 +552,31 @@ export function Jira() {
       projectMap.get(projectKey)!.issues.push(issue)
     })
 
-    // 카테고리별로 상태 정렬
-    const sortedStatuses = Array.from(statusMap.keys()).sort((a, b) => {
-      const catA = categoryOrder.indexOf(getStatusCategory(a))
-      const catB = categoryOrder.indexOf(getStatusCategory(b))
-      return catA - catB
-    })
+    // 컬럼 순서대로 반환
+    const sortedStatuses = CATEGORY_COLUMNS.map(c => c.label)
 
     return {
       statusColumns: sortedStatuses,
-      issuesByStatus: Object.fromEntries(statusMap),
+      issuesByStatus: Object.fromEntries(categoryMap),
       issuesByProject: Object.fromEntries(projectMap),
     }
   }, [currentIssues])
 
-  // 프로젝트별 + 상태별 이슈 매핑 (Board View용)
+  // 프로젝트별 + 카테고리별 이슈 매핑 (Board View용)
   const issuesByProjectAndStatus = useMemo(() => {
     const result: Record<string, Record<string, JiraIssueListItem[]>> = {}
 
     Object.entries(issuesByProject).forEach(([projectKey, { issues }]) => {
       result[projectKey] = {}
-      statusColumns.forEach(status => {
-        result[projectKey][status] = issues.filter(issue => issue.status === status)
+      // 카테고리별로 초기화
+      statusColumns.forEach(categoryLabel => {
+        result[projectKey][categoryLabel] = []
+      })
+      // 이슈를 카테고리별로 분류
+      issues.forEach(issue => {
+        const category = getStatusCategory(issue.status || 'Unknown')
+        const categoryLabel = CATEGORY_COLUMNS.find(c => c.key === category)?.label || 'To Do'
+        result[projectKey][categoryLabel].push(issue)
       })
     })
 
@@ -610,6 +587,7 @@ export function Jira() {
   const stats = useMemo(() => {
     const total = currentIssues.length
     const byCategory = {
+      backlog: 0,
       todo: 0,
       inProgress: 0,
       inReview: 0,
@@ -700,6 +678,173 @@ export function Jira() {
     }
   }
 
+  // Quick Actions: 필터 추가
+  const addQuickFilter = (filter: Omit<QuickFilter, 'id'>) => {
+    const id = `${filter.type}-${filter.value}-${Date.now()}`
+    setQuickFilters(prev => [...prev, { ...filter, id }])
+    setQuickFilterInput('')
+    setShowQuickFilterDropdown(false)
+  }
+
+  // Quick Actions: 필터 제거
+  const removeQuickFilter = (id: string) => {
+    setQuickFilters(prev => prev.filter(f => f.id !== id))
+  }
+
+  // Quick Actions: 필터링된 이슈 목록 (OR 로직 - 같은 타입 내에서는 OR, 다른 타입 간에는 AND)
+  const quickFilteredIssues = useMemo(() => {
+    if (quickFilters.length === 0) return currentIssues
+
+    // 필터를 타입별로 그룹화
+    const filtersByType: Record<string, QuickFilter[]> = {}
+    quickFilters.forEach(filter => {
+      if (!filtersByType[filter.type]) {
+        filtersByType[filter.type] = []
+      }
+      filtersByType[filter.type].push(filter)
+    })
+
+    return currentIssues.filter(issue => {
+      // 각 타입 그룹에 대해: 그룹 내 필터 중 하나라도 매칭되면 OK (OR)
+      // 모든 타입 그룹이 매칭되어야 함 (AND)
+      return Object.entries(filtersByType).every(([type, filters]) => {
+        return filters.some(filter => {
+          switch (type) {
+            case 'project':
+              return issue.key.startsWith(filter.value + '-')
+            case 'status':
+              return getStatusCategory(issue.status) === filter.value ||
+                     issue.status.toLowerCase().includes(filter.value.toLowerCase())
+            case 'assignee':
+              if (filter.value === 'me') return issue.assignee?.includes('나') || issue.assignee?.includes('me')
+              if (filter.value === 'unassigned') return !issue.assignee
+              return issue.assignee?.toLowerCase().includes(filter.value.toLowerCase())
+            case 'type':
+              return issue.type?.toLowerCase() === filter.value.toLowerCase()
+            case 'priority':
+              return issue.priority?.toLowerCase() === filter.value.toLowerCase()
+            default:
+              return true
+          }
+        })
+      })
+    })
+  }, [currentIssues, quickFilters])
+
+  // Quick Actions: 필터 제안 생성
+  const filterSuggestions = useMemo(() => {
+    const suggestions: { type: QuickFilter['type']; value: string; label: string }[] = []
+    const input = quickFilterInput.toLowerCase()
+
+    // 프로젝트 제안
+    const projectKeys = [...new Set(currentIssues.map(i => i.key.split('-')[0]))]
+    projectKeys.forEach(key => {
+      if (!input || key.toLowerCase().includes(input) || 'project'.includes(input)) {
+        if (!quickFilters.some(f => f.type === 'project' && f.value === key)) {
+          suggestions.push({ type: 'project', value: key, label: key })
+        }
+      }
+    })
+
+    // 상태 제안
+    const statusSuggestions = [
+      { value: 'backlog', label: 'Backlog' },
+      { value: 'todo', label: 'To Do' },
+      { value: 'inProgress', label: 'In Progress' },
+      { value: 'inReview', label: 'In Review' },
+      { value: 'done', label: 'Done' },
+    ]
+    statusSuggestions.forEach(s => {
+      if (!input || s.label.toLowerCase().includes(input) || 'status'.includes(input)) {
+        if (!quickFilters.some(f => f.type === 'status' && f.value === s.value)) {
+          suggestions.push({ type: 'status', value: s.value, label: `Status: ${s.label}` })
+        }
+      }
+    })
+
+    // 담당자 제안
+    if (!input || 'me'.includes(input) || 'my'.includes(input) || '나'.includes(input) || 'assignee'.includes(input)) {
+      if (!quickFilters.some(f => f.type === 'assignee' && f.value === 'me')) {
+        suggestions.push({ type: 'assignee', value: 'me', label: 'Assignee: Me' })
+      }
+    }
+    if (!input || 'unassigned'.includes(input) || '미배정'.includes(input)) {
+      if (!quickFilters.some(f => f.type === 'assignee' && f.value === 'unassigned')) {
+        suggestions.push({ type: 'assignee', value: 'unassigned', label: 'Assignee: Unassigned' })
+      }
+    }
+
+    // 타입 제안
+    const typeSuggestions = ['Bug', 'Task', 'Story', 'Epic', 'Sub-task']
+    typeSuggestions.forEach(t => {
+      if (!input || t.toLowerCase().includes(input) || 'type'.includes(input)) {
+        if (!quickFilters.some(f => f.type === 'type' && f.value === t.toLowerCase())) {
+          suggestions.push({ type: 'type', value: t.toLowerCase(), label: `Type: ${t}` })
+        }
+      }
+    })
+
+    // 우선순위 제안
+    const prioritySuggestions = ['Highest', 'High', 'Medium', 'Low', 'Lowest']
+    prioritySuggestions.forEach(p => {
+      if (!input || p.toLowerCase().includes(input) || 'priority'.includes(input)) {
+        if (!quickFilters.some(f => f.type === 'priority' && f.value === p.toLowerCase())) {
+          suggestions.push({ type: 'priority', value: p.toLowerCase(), label: `Priority: ${p}` })
+        }
+      }
+    })
+
+    return suggestions.slice(0, 10)
+  }, [quickFilterInput, quickFilters, currentIssues])
+
+
+  // Quick Actions: 벌크 상태 변경 실행
+  const executeBulkAction = async () => {
+    if (selectedIssues.size === 0 || !bulkAction.status) {
+      toast.error('이슈와 변경할 상태를 선택해주세요')
+      return
+    }
+
+    setBulkProcessing(true)
+    const results: { success: number; failed: number; errors: string[] } = { success: 0, failed: 0, errors: [] }
+    const issueKeys = Array.from(selectedIssues)
+
+    // 순차적으로 처리 (API rate limit 고려)
+    for (const issueKey of issueKeys) {
+      try {
+        const result = await jiraApi.transitionIssue(issueKey, bulkAction.status, {
+          startDate: bulkAction.startDate || undefined,
+          dueDate: bulkAction.dueDate || undefined,
+        })
+        if (result.success) {
+          results.success++
+        } else {
+          results.failed++
+          results.errors.push(`${issueKey}: ${result.error || 'Unknown error'}`)
+        }
+      } catch (error) {
+        results.failed++
+        results.errors.push(`${issueKey}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+    }
+
+    setBulkProcessing(false)
+
+    if (results.success > 0) {
+      toast.success(`${results.success}개 이슈 상태 변경 완료`)
+      setSelectedIssues(new Set())
+      setBulkAction({ status: undefined, assignee: 'keep', priority: 'keep', comment: '', startDate: '', dueDate: '' })
+      queryClient.invalidateQueries({ queryKey: ['jira'] })
+    }
+
+    if (results.failed > 0) {
+      toast.error(`${results.failed}개 이슈 변경 실패`, {
+        description: results.errors.slice(0, 3).join(', ') + (results.errors.length > 3 ? '...' : ''),
+      })
+      console.error('Bulk action errors:', results.errors)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -719,18 +864,18 @@ export function Jira() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* AI Natural Language Button */}
+          {/* AI Quick Actions Button - Quick Actions 탭으로 이동 */}
           <button
-            onClick={() => setShowNlpPanel(!showNlpPanel)}
+            onClick={() => setActiveTab('quick-actions')}
             className={cn(
               "flex items-center gap-2 px-4 py-2 rounded-lg transition-colors shadow-sm",
-              showNlpPanel
+              activeTab === 'quick-actions'
                 ? "bg-purple-600 text-white"
                 : "bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600"
             )}
           >
-            <Bot className="h-4 w-4" />
-            <span className="hidden sm:inline">AI 명령</span>
+            <Sparkles className="h-4 w-4" />
+            <span className="hidden sm:inline">Smart Search</span>
           </button>
           <button
             onClick={() => setShowCreateModal(true)}
@@ -749,101 +894,48 @@ export function Jira() {
         </div>
       </div>
 
-      {/* Natural Language Processing Panel */}
-      {showNlpPanel && (
-        <Card className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border-purple-200 dark:border-purple-800">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl flex items-center justify-center flex-shrink-0">
-              <Bot className="h-5 w-5 text-white" />
-            </div>
-            <div className="flex-1 space-y-3">
-              <div>
-                <h3 className="font-semibold text-sm mb-1">자연어로 Jira 제어하기</h3>
-                <p className="text-xs text-muted-foreground">
-                  이슈 키와 함께 명령을 입력하세요. 예: "CCDC-123 진행 중으로 변경", "ABC-456 완료 처리"
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={nlpInput}
-                  onChange={(e) => setNlpInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !nlpProcessing) {
-                      handleNlpSubmit()
-                    }
-                  }}
-                  placeholder="CCDC-123 진행 중으로 변경해줘..."
-                  className="flex-1 px-4 py-2 rounded-lg border bg-background text-sm focus:ring-2 focus:ring-purple-500/50 focus:border-purple-500"
-                  disabled={nlpProcessing}
-                />
-                <button
-                  onClick={handleNlpSubmit}
-                  disabled={!nlpInput.trim() || nlpProcessing}
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 transition-colors flex items-center gap-2"
-                >
-                  {nlpProcessing ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Send className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-
-              {/* Quick Commands */}
-              <div className="flex flex-wrap gap-2">
-                <span className="text-xs text-muted-foreground">빠른 명령:</span>
-                {[
-                  { label: '진행 중', cmd: '진행 중으로 변경' },
-                  { label: '완료', cmd: '완료 처리' },
-                  { label: '리뷰', cmd: '리뷰 요청' },
-                  { label: '분석', cmd: '분석해줘' },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    onClick={() => setNlpInput(prev => `${prev} ${item.cmd}`.trim())}
-                    className="px-2 py-1 text-xs bg-white dark:bg-gray-800 border rounded-md hover:bg-muted transition-colors"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Result */}
-              {nlpResult && (
-                <div className={cn(
-                  "p-3 rounded-lg text-sm",
-                  nlpResult.success
-                    ? "bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200"
-                    : "bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200"
-                )}>
-                  <div className="flex items-start gap-2">
-                    {nlpResult.success ? (
-                      <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                    ) : (
-                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                    )}
-                    <div className="whitespace-pre-wrap">{nlpResult.message}</div>
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={() => {
-                setShowNlpPanel(false)
-                setNlpResult(null)
-                setNlpInput('')
-              }}
-              className="p-1 hover:bg-muted rounded transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
+      {/* Tab Navigation */}
+      <div className="flex items-center gap-1 border-b">
+        <button
+          onClick={() => setActiveTab('browse')}
+          className={cn(
+            "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === 'browse'
+              ? "border-blue-500 text-blue-600"
+              : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <FolderKanban className="h-4 w-4" />
+            Browse
           </div>
-        </Card>
-      )}
+        </button>
+        <button
+          onClick={() => setActiveTab('quick-actions')}
+          className={cn(
+            "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === 'quick-actions'
+              ? "border-purple-500 text-purple-600"
+              : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
+          )}
+        >
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4" />
+            Quick Actions
+            {selectedIssues.size > 0 && (
+              <span className="px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/50 text-purple-600 text-xs rounded-full">
+                {selectedIssues.size}
+              </span>
+            )}
+          </div>
+        </button>
+      </div>
 
+      {/* Browse Tab Content */}
+      {activeTab === 'browse' && (
+        <>
       {/* Stats Bar */}
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-6 gap-4">
         <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -852,6 +944,17 @@ export function Jira() {
             </div>
             <div className="w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center">
               <FileText className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+            </div>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-muted-foreground">Backlog</p>
+              <p className="text-2xl font-bold text-gray-500">{stats.backlog}</p>
+            </div>
+            <div className="w-10 h-10 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center">
+              <Circle className="h-5 w-5 text-gray-400" />
             </div>
           </div>
         </Card>
@@ -1748,6 +1851,490 @@ export function Jira() {
         <div
           className="fixed inset-0 z-40"
           onClick={() => setShowAssigneeSelector(false)}
+        />
+      )}
+        </>
+      )}
+
+      {/* Quick Actions Tab Content */}
+      {activeTab === 'quick-actions' && (
+        <div className="space-y-4">
+          {/* Smart Search - 자연어 JQL 변환 */}
+          <Card className="p-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-purple-500" />
+                  <h3 className="font-semibold text-sm">Smart Search</h3>
+                  <span className="text-xs text-muted-foreground">자연어로 검색하면 자동으로 JQL로 변환됩니다</span>
+                </div>
+                {searchJql && (
+                  <button
+                    onClick={() => setSearchJql('')}
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-xs bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300 rounded-full hover:bg-purple-200 transition-colors"
+                  >
+                    <X className="h-3 w-3" />
+                    검색 초기화
+                  </button>
+                )}
+              </div>
+              <SmartSearch
+                onSearch={(jql) => {
+                  setSearchJql(jql)
+                  // 검색 결과를 바로 아래에 표시 (Browse 탭으로 이동하지 않음)
+                }}
+                projectKeys={allProjects.map(p => p.key)}
+                placeholder="예: 내가 진행중인 CCDC 버그, 이번주 생성된 이슈..."
+              />
+              {/* 현재 검색 JQL 표시 */}
+              {searchJql && (
+                <div className="flex items-center gap-2 p-2 bg-slate-100 dark:bg-slate-800 rounded-lg">
+                  <Search className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <code className="text-xs font-mono text-slate-600 dark:text-slate-300 truncate flex-1">{searchJql}</code>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Filter-based Selection (기존 기능 유지) */}
+          <Card className="p-4">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Search className="h-4 w-4 text-muted-foreground" />
+                <h3 className="font-semibold text-sm">필터 기반 선택</h3>
+                <span className="text-xs text-muted-foreground">여러 이슈를 선택하여 일괄 작업</span>
+              </div>
+              {/* Filter Input Row */}
+              <div className="flex items-center gap-2 flex-wrap border rounded-lg p-2 bg-muted/30">
+                {/* Active Filters as Chips */}
+                {quickFilters.map(filter => (
+                  <span
+                    key={filter.id}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium",
+                      filter.type === 'project' && "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300",
+                      filter.type === 'status' && "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300",
+                      filter.type === 'assignee' && "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
+                      filter.type === 'type' && "bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300",
+                      filter.type === 'priority' && "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+                    )}
+                  >
+                    {filter.label}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        removeQuickFilter(filter.id)
+                      }}
+                      className="hover:bg-black/10 dark:hover:bg-white/10 rounded-full p-0.5"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+
+                {/* Filter Input */}
+                <div className="relative flex-1 min-w-[200px]">
+                  <div className="flex items-center gap-2">
+                    <Search className="h-4 w-4 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={quickFilterInput}
+                      onChange={(e) => {
+                        setQuickFilterInput(e.target.value)
+                        setShowQuickFilterDropdown(true)
+                      }}
+                      onFocus={() => setShowQuickFilterDropdown(true)}
+                      placeholder={quickFilters.length === 0 ? "프로젝트, 상태, 담당자로 필터링..." : "+ 필터 추가"}
+                      className="w-full py-1 text-sm bg-transparent focus:outline-none placeholder:text-muted-foreground"
+                    />
+                  </div>
+
+                  {/* Filter Suggestions Dropdown */}
+                  {showQuickFilterDropdown && filterSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 mt-2 w-64 bg-background border rounded-lg shadow-xl z-[100] max-h-64 overflow-auto">
+                      <div className="p-2 border-b bg-muted/50">
+                        <span className="text-xs font-medium text-muted-foreground">필터 추가</span>
+                      </div>
+                      {filterSuggestions.map((suggestion, idx) => (
+                        <button
+                          key={`${suggestion.type}-${suggestion.value}-${idx}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            addQuickFilter(suggestion)
+                          }}
+                          className="w-full px-3 py-2.5 text-left text-sm hover:bg-muted flex items-center gap-2 bg-background"
+                        >
+                          <span className={cn(
+                            "w-2 h-2 rounded-full flex-shrink-0",
+                            suggestion.type === 'project' && "bg-blue-500",
+                            suggestion.type === 'status' && "bg-purple-500",
+                            suggestion.type === 'assignee' && "bg-green-500",
+                            suggestion.type === 'type' && "bg-orange-500",
+                            suggestion.type === 'priority' && "bg-red-500",
+                          )} />
+                          <span className="truncate">{suggestion.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Clear All Button */}
+                {quickFilters.length > 0 && (
+                  <button
+                    onClick={() => setQuickFilters([])}
+                    className="text-xs text-muted-foreground hover:text-foreground px-2 py-1"
+                  >
+                    초기화
+                  </button>
+                )}
+              </div>
+
+              {/* Quick Suggestions - 필터 없을 때만 표시 */}
+              {quickFilters.length === 0 && !showQuickFilterDropdown && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-muted-foreground">추천:</span>
+                  {filterSuggestions.slice(0, 6).map((s, idx) => (
+                    <button
+                      key={`quick-${idx}`}
+                      onClick={() => addQuickFilter(s)}
+                      className={cn(
+                        "text-xs px-2.5 py-1 rounded-full transition-colors",
+                        s.type === 'project' && "bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-300",
+                        s.type === 'status' && "bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-300",
+                        s.type === 'assignee' && "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300",
+                      )}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Active Filter Summary */}
+              {quickFilters.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  💡 같은 타입의 필터는 OR로, 다른 타입의 필터는 AND로 적용됩니다
+                </div>
+              )}
+            </div>
+          </Card>
+
+          {/* Results Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium">
+                {quickFilteredIssues.length}개 이슈
+              </span>
+              {selectedIssues.size > 0 && (
+                <span className="text-sm text-purple-600 font-medium">
+                  ({selectedIssues.size}개 선택됨)
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {selectedIssues.size > 0 && (
+                <button
+                  onClick={() => setSelectedIssues(new Set())}
+                  className="text-sm text-muted-foreground hover:text-foreground"
+                >
+                  선택 해제
+                </button>
+              )}
+              <span className="text-xs text-muted-foreground">
+                💡 같은 상태의 이슈만 함께 선택할 수 있습니다
+              </span>
+            </div>
+          </div>
+
+          {/* Issues List - Grouped by Status */}
+          <Card className="overflow-hidden">
+            {quickFilteredIssues.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p>필터 조건에 맞는 이슈가 없습니다</p>
+              </div>
+            ) : (
+              (() => {
+                // 상태별로 이슈 그룹화
+                const groupedByStatus = quickFilteredIssues.reduce((acc, issue) => {
+                  const status = issue.status || 'Unknown'
+                  if (!acc[status]) acc[status] = []
+                  acc[status].push(issue)
+                  return acc
+                }, {} as Record<string, typeof quickFilteredIssues>)
+
+                // 카테고리 순서대로 정렬: backlog → todo → inProgress → inReview → done
+                const categoryOrder: (keyof typeof STATUS_CATEGORIES)[] = ['backlog', 'todo', 'inProgress', 'inReview', 'done']
+                const sortedEntries = Object.entries(groupedByStatus).sort((a, b) => {
+                  const catA = categoryOrder.indexOf(getStatusCategory(a[0]))
+                  const catB = categoryOrder.indexOf(getStatusCategory(b[0]))
+                  return catA - catB
+                })
+
+                return sortedEntries.map(([status, issues]) => {
+                  const category = getStatusCategory(status)
+                  const style = categoryStyles[category]
+                  const StatusIcon = style.icon
+                  const allSelected = issues.every(i => selectedIssues.has(i.key))
+                  const someSelected = issues.some(i => selectedIssues.has(i.key))
+
+                  const toggleGroupSelection = () => {
+                    setSelectedIssues(prev => {
+                      const next = new Set(prev)
+                      // 다른 상태의 이슈는 모두 해제
+                      prev.forEach(key => {
+                        const issue = quickFilteredIssues.find(i => i.key === key)
+                        if (issue && issue.status !== status) {
+                          next.delete(key)
+                        }
+                      })
+                      // 현재 그룹 토글
+                      if (allSelected) {
+                        issues.forEach(i => next.delete(i.key))
+                      } else {
+                        issues.forEach(i => next.add(i.key))
+                      }
+                      return next
+                    })
+                  }
+
+                  return (
+                    <div key={status}>
+                      {/* Status Group Header */}
+                      <div
+                        onClick={toggleGroupSelection}
+                        className={cn(
+                          "flex items-center gap-3 px-4 py-2.5 cursor-pointer border-b",
+                          "bg-muted/50 hover:bg-muted/80 transition-colors",
+                          someSelected && "bg-purple-100/50 dark:bg-purple-900/20"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors",
+                          allSelected
+                            ? "bg-purple-600 border-purple-600"
+                            : someSelected
+                            ? "bg-purple-300 border-purple-400"
+                            : "border-gray-300 dark:border-gray-600"
+                        )}>
+                          {(allSelected || someSelected) && (
+                            <CheckCircle2 className="h-3 w-3 text-white" />
+                          )}
+                        </div>
+                        <div className={cn(
+                          "flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium",
+                          style.bg,
+                          style.color
+                        )}>
+                          <StatusIcon className="h-3 w-3" />
+                          {status}
+                        </div>
+                        <span className="text-sm text-muted-foreground">
+                          {issues.length}개 이슈
+                        </span>
+                        {someSelected && (
+                          <span className="text-xs text-purple-600 ml-auto">
+                            {issues.filter(i => selectedIssues.has(i.key)).length}개 선택됨
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Issues in this group */}
+                      <div className="divide-y">
+                        {issues.map((issue) => {
+                          const TypeIcon = issueTypeIcons[issue.type || ''] || FileText
+                          const isSelected = selectedIssues.has(issue.key)
+                          // 다른 상태 이슈가 선택되어 있으면 이 이슈는 선택 불가
+                          const otherStatusSelected = Array.from(selectedIssues).some(key => {
+                            const selectedIssue = quickFilteredIssues.find(i => i.key === key)
+                            return selectedIssue && selectedIssue.status !== status
+                          })
+
+                          return (
+                            <div
+                              key={issue.key}
+                              onClick={() => {
+                                if (otherStatusSelected && !isSelected) {
+                                  // 다른 상태가 선택되어 있으면 초기화하고 이 이슈 선택
+                                  setSelectedIssues(new Set([issue.key]))
+                                } else {
+                                  setSelectedIssues(prev => {
+                                    const next = new Set(prev)
+                                    if (next.has(issue.key)) {
+                                      next.delete(issue.key)
+                                    } else {
+                                      next.add(issue.key)
+                                    }
+                                    return next
+                                  })
+                                }
+                              }}
+                              className={cn(
+                                "flex items-center gap-3 px-4 py-3 cursor-pointer transition-all pl-8",
+                                isSelected
+                                  ? "bg-purple-50 dark:bg-purple-900/20"
+                                  : otherStatusSelected
+                                  ? "opacity-50 hover:bg-muted/30"
+                                  : "hover:bg-muted/50"
+                              )}
+                            >
+                              {/* Checkbox */}
+                              <div className={cn(
+                                "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors",
+                                isSelected
+                                  ? "bg-purple-600 border-purple-600"
+                                  : "border-gray-300 dark:border-gray-600"
+                              )}>
+                                {isSelected && (
+                                  <CheckCircle2 className="h-3 w-3 text-white" />
+                                )}
+                              </div>
+
+                              {/* Type Icon */}
+                              <TypeIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+
+                              {/* Key */}
+                              <span className="font-mono text-sm text-blue-600 dark:text-blue-400 font-medium flex-shrink-0 w-24">
+                                {issue.key}
+                              </span>
+
+                              {/* Summary */}
+                              <div className="flex-1 min-w-0">
+                                <span className="truncate block text-sm">{issue.summary}</span>
+                              </div>
+
+                              {/* Assignee */}
+                              <div className="flex-shrink-0 w-20 text-right">
+                                {issue.assignee ? (
+                                  <span className="text-xs text-muted-foreground truncate block">
+                                    {issue.assignee.split(' ')[0]}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground italic">-</span>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })
+              })()
+            )}
+          </Card>
+
+          {/* Bulk Actions Panel - Sticky Bottom */}
+          {selectedIssues.size > 0 && (
+            <div className="sticky bottom-4">
+              <Card className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/30 dark:to-blue-900/30 border-purple-200 dark:border-purple-700 shadow-lg">
+                <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                  {/* Selected Count */}
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
+                      <Zap className="h-4 w-4 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold">{selectedIssues.size}개 이슈 선택됨</p>
+                      <p className="text-xs text-muted-foreground">일괄 작업을 선택하세요</p>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex-1 flex flex-wrap items-center gap-3">
+                    {/* Status Change - 실제 가능한 트랜지션 표시 */}
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm text-muted-foreground">상태 변경:</label>
+                      {loadingTransitions ? (
+                        <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          로딩 중...
+                        </div>
+                      ) : availableTransitions.length > 0 ? (
+                        <select
+                          value={bulkAction.status || ''}
+                          onChange={(e) => setBulkAction(prev => ({ ...prev, status: e.target.value || undefined }))}
+                          className="px-3 py-1.5 text-sm border rounded-lg bg-background focus:ring-2 focus:ring-purple-500"
+                        >
+                          <option value="">트랜지션 선택...</option>
+                          {availableTransitions.map(t => (
+                            <option key={t.name} value={t.name}>
+                              {t.name} {t.count < selectedIssues.size && `(${t.count}/${selectedIssues.size})`}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">가능한 트랜지션 없음</span>
+                      )}
+                    </div>
+
+                    {/* Date Fields */}
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground whitespace-nowrap">시작일:</label>
+                      <input
+                        type="date"
+                        value={bulkAction.startDate || ''}
+                        onChange={(e) => setBulkAction(prev => ({ ...prev, startDate: e.target.value }))}
+                        className="px-2 py-1.5 text-sm border rounded-lg bg-background focus:ring-2 focus:ring-purple-500 [color-scheme:dark]"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-muted-foreground whitespace-nowrap">기한:</label>
+                      <input
+                        type="date"
+                        value={bulkAction.dueDate || ''}
+                        onChange={(e) => setBulkAction(prev => ({ ...prev, dueDate: e.target.value }))}
+                        className="px-2 py-1.5 text-sm border rounded-lg bg-background focus:ring-2 focus:ring-purple-500 [color-scheme:dark]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Execute Button */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setSelectedIssues(new Set())
+                        setBulkAction({ status: undefined, assignee: 'keep', priority: 'keep', comment: '', startDate: '', dueDate: '' })
+                      }}
+                      className="px-4 py-2 text-sm text-muted-foreground hover:bg-muted rounded-lg transition-colors"
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={executeBulkAction}
+                      disabled={!bulkAction.status || bulkProcessing}
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors",
+                        "bg-purple-600 text-white hover:bg-purple-700",
+                        (!bulkAction.status || bulkProcessing) && "opacity-50 cursor-not-allowed"
+                      )}
+                    >
+                      {bulkProcessing ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          처리 중...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="h-4 w-4" />
+                          {selectedIssues.size}개 이슈 변경
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Click outside to close quick filter dropdown */}
+      {showQuickFilterDropdown && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setShowQuickFilterDropdown(false)}
         />
       )}
     </div>

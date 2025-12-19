@@ -219,6 +219,22 @@ class PluginController(
     }
 
     /**
+     * Jira 이슈에 사용 가능한 트랜지션 목록 조회
+     */
+    @GetMapping("/jira/issues/{issueKey}/transitions")
+    fun getJiraIssueTransitions(
+        @PathVariable issueKey: String
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "get_transitions", mapOf("issue_key" to issueKey))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
      * Jira 이슈 상태 변경
      */
     @PostMapping("/jira/issues/{issueKey}/transition")

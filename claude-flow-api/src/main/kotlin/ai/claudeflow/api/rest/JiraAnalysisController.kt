@@ -5,6 +5,8 @@ import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
 import ai.claudeflow.executor.ExecutionStatus
 import kotlinx.coroutines.reactor.mono
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import mu.KotlinLogging
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
@@ -232,6 +234,113 @@ class JiraAnalysisController(
     }
 
     /**
+     * 자연어 → JQL 변환 (Claude 기반)
+     *
+     * 사용자의 자연어 검색 쿼리를 JQL로 변환합니다.
+     * 예: "내가 진행중인 CCDC 버그" → project = CCDC AND assignee = currentUser() AND status = "In Progress" AND issuetype = Bug
+     */
+    @PostMapping("/nl-to-jql")
+    fun convertNaturalLanguageToJql(
+        @RequestBody request: NlToJqlRequest
+    ): Mono<ResponseEntity<NlToJqlResponse>> = mono {
+        logger.info { "Converting natural language to JQL: ${request.query}" }
+
+        // 사용 가능한 프로젝트 목록 가져오기 (컨텍스트 제공)
+        val projectsInfo = if (request.includeProjects == true) {
+            val projectsResult = pluginManager.execute("jira", "projects", emptyMap())
+            if (projectsResult.success) {
+                val projects = projectsResult.data as? List<*>
+                projects?.mapNotNull { (it as? Map<*, *>)?.get("key") as? String }?.take(20)?.joinToString(", ")
+            } else null
+        } else null
+
+        val prompt = """
+            |당신은 Jira JQL 변환 전문가입니다. 사용자의 자연어 검색 요청을 정확한 JQL로 변환해주세요.
+            |
+            |## 자연어 쿼리
+            |"${request.query}"
+            |
+            |${projectsInfo?.let { "## 사용 가능한 프로젝트\n$it\n" } ?: ""}
+            |
+            |## JQL 변환 규칙
+            |
+            |### 담당자 (assignee)
+            |- "내 이슈", "나한테 할당된", "내가 담당" → assignee = currentUser()
+            |- "미할당", "담당자 없는" → assignee is EMPTY
+            |- "홍길동이 담당" → assignee = "홍길동"
+            |
+            |### 상태 (status)
+            |- "진행중", "작업중" → status = "In Progress"
+            |- "완료", "끝난", "해결된" → status = "Done" OR status = "Resolved"
+            |- "할일", "해야할" → status = "To Do"
+            |- "리뷰", "검토중" → status = "In Review"
+            |- "백로그" → status = "Backlog"
+            |
+            |### 이슈 타입 (issuetype)
+            |- "버그", "오류" → issuetype = Bug
+            |- "스토리", "기능" → issuetype = Story
+            |- "작업", "태스크" → issuetype = Task
+            |- "에픽" → issuetype = Epic
+            |
+            |### 우선순위 (priority)
+            |- "긴급", "높은 우선순위" → priority in (Highest, High)
+            |- "낮은 우선순위" → priority in (Low, Lowest)
+            |
+            |### 날짜 (created, updated)
+            |- "오늘" → created >= startOfDay()
+            |- "이번주" → created >= startOfWeek()
+            |- "이번달" → created >= startOfMonth()
+            |- "지난 7일", "최근 일주일" → created >= -7d
+            |- "지난달" → created >= -30d
+            |
+            |### 텍스트 검색
+            |- "로그인 관련" → text ~ "로그인"
+            |- "API 에러" → text ~ "API 에러"
+            |
+            |### 리포터 (reporter)
+            |- "내가 등록한", "내가 만든" → reporter = currentUser()
+            |
+            |## 응답 형식
+            |반드시 다음 JSON 형식으로만 응답하세요:
+            |```json
+            |{
+            |  "jql": "변환된 JQL 쿼리 (ORDER BY updated DESC 포함)",
+            |  "explanation": "변환 설명 (한국어)",
+            |  "confidence": 0.0-1.0 사이의 신뢰도,
+            |  "warnings": ["주의사항이 있으면 여기에"]
+            |}
+            |```
+            |
+            |주의: JSON 외의 다른 텍스트를 출력하지 마세요.
+        """.trimMargin()
+
+        try {
+            val result = claudeExecutor.execute(ExecutionRequest(
+                prompt = prompt,
+                workingDirectory = System.getProperty("user.dir"),
+                model = "claude-sonnet-4-20250514"
+            ))
+
+            val response = parseJqlResponse(result.result ?: "")
+
+            ResponseEntity.ok(NlToJqlResponse(
+                success = response != null,
+                jql = response?.jql,
+                explanation = response?.explanation,
+                confidence = response?.confidence ?: 0.0,
+                warnings = response?.warnings,
+                error = if (response == null) "Failed to parse LLM response" else null
+            ))
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to convert NL to JQL: ${request.query}" }
+            ResponseEntity.ok(NlToJqlResponse(
+                success = false,
+                error = e.message
+            ))
+        }
+    }
+
+    /**
      * 이슈 자동 분류/라벨링
      */
     @PostMapping("/auto-label/{issueKey}")
@@ -344,6 +453,83 @@ class JiraAnalysisController(
         """.trimMargin()
     }
 
+    // JSON 파서 (lenient 모드 - Claude 응답의 유연한 파싱)
+    private val json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+        coerceInputValues = true
+    }
+
+    @Serializable
+    private data class JqlJsonResponse(
+        val jql: String,
+        val explanation: String? = null,
+        val confidence: Double = 0.8,
+        val warnings: List<String> = emptyList()
+    )
+
+    private fun parseJqlResponse(response: String): ParsedJqlResponse? {
+        // JSON 블록에서 JQL 응답 추출
+        val jsonRegex = """```json\s*(\{[\s\S]*?})\s*```""".toRegex()
+        val match = jsonRegex.find(response)
+
+        val jsonStr = match?.groupValues?.get(1) ?: response.trim().let {
+            if (it.startsWith("{")) it else return null
+        }
+
+        return try {
+            // kotlinx.serialization으로 JSON 파싱
+            val parsed = json.decodeFromString<JqlJsonResponse>(jsonStr)
+
+            ParsedJqlResponse(
+                jql = parsed.jql,
+                explanation = parsed.explanation,
+                confidence = parsed.confidence,
+                warnings = parsed.warnings.takeIf { it.isNotEmpty() }
+            )
+        } catch (e: Exception) {
+            logger.warn { "Failed to parse JQL response with JSON parser: ${e.message}, trying regex fallback" }
+            // Fallback to regex parsing
+            parseJqlResponseWithRegex(jsonStr)
+        }
+    }
+
+    private fun parseJqlResponseWithRegex(jsonStr: String): ParsedJqlResponse? {
+        return try {
+            val jqlMatch = """"jql"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex().find(jsonStr)
+            val explanationMatch = """"explanation"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex().find(jsonStr)
+            val confidenceMatch = """"confidence"\s*:\s*([\d.]+)""".toRegex().find(jsonStr)
+            val warningsMatch = """"warnings"\s*:\s*\[(.*?)]""".toRegex().find(jsonStr)
+
+            val warnings = warningsMatch?.groupValues?.get(1)
+                ?.split(",")
+                ?.map { it.trim().removeSurrounding("\"") }
+                ?.filter { it.isNotBlank() }
+
+            val jql = jqlMatch?.groupValues?.get(1)
+                ?.replace("\\\"", "\"")
+                ?.replace("\\\\", "\\")
+                ?: return null
+
+            ParsedJqlResponse(
+                jql = jql,
+                explanation = explanationMatch?.groupValues?.get(1)?.replace("\\\"", "\""),
+                confidence = confidenceMatch?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.8,
+                warnings = warnings
+            )
+        } catch (e: Exception) {
+            logger.warn { "Failed to parse JQL response with regex: ${e.message}" }
+            null
+        }
+    }
+
+    private data class ParsedJqlResponse(
+        val jql: String,
+        val explanation: String?,
+        val confidence: Double,
+        val warnings: List<String>?
+    )
+
     private fun extractLabelsFromResponse(response: String): List<String> {
         // JSON 블록에서 labels 배열 추출 시도
         val jsonRegex = """```json\s*(\{[\s\S]*?})\s*```""".toRegex()
@@ -415,5 +601,19 @@ data class AutoLabelResponse(
     val issueKey: String? = null,
     val suggestedLabels: List<String>? = null,
     val analysis: String? = null,
+    val error: String? = null
+)
+
+data class NlToJqlRequest(
+    val query: String,
+    val includeProjects: Boolean? = true
+)
+
+data class NlToJqlResponse(
+    val success: Boolean,
+    val jql: String? = null,
+    val explanation: String? = null,
+    val confidence: Double = 0.0,
+    val warnings: List<String>? = null,
     val error: String? = null
 )

@@ -862,6 +862,20 @@ export const jiraApi = {
       }
     ),
 
+  // Get available transitions for an issue
+  getTransitions: (issueKey: string) =>
+    fetchApi<{
+      success: boolean
+      data?: {
+        transitions: Array<{
+          id: string
+          name: string
+          to: { id: string; name: string }
+        }>
+      }
+      error?: string
+    }>(`/plugins/jira/issues/${issueKey}/transitions`),
+
   // Transition issue
   transitionIssue: (
     issueKey: string,
@@ -1001,6 +1015,20 @@ export const jiraApi = {
       error?: string
     }>(`/jira/auto-label/${issueKey}`, {
       method: 'POST',
+    }),
+
+  // AI - Natural Language to JQL conversion (Claude 기반)
+  nlToJql: (query: string, includeProjects = true) =>
+    fetchApi<{
+      success: boolean
+      jql?: string
+      explanation?: string
+      confidence?: number
+      warnings?: string[]
+      error?: string
+    }>('/jira/nl-to-jql', {
+      method: 'POST',
+      body: JSON.stringify({ query, includeProjects }),
     }),
 }
 
