@@ -110,6 +110,12 @@ class JiraPlugin : BasePlugin() {
             description = "보드의 스프린트 목록 조회",
             usage = "/jira sprints <board-id>",
             examples = listOf("/jira sprints 123")
+        ),
+        PluginCommand(
+            name = "search_users",
+            description = "사용자 검색",
+            usage = "/jira search_users <query> [project-key]",
+            examples = listOf("/jira search_users john", "/jira search_users john PROJ")
         )
     )
 
@@ -163,10 +169,22 @@ class JiraPlugin : BasePlugin() {
                 args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required")
             )
             "create" -> createIssue(
-                args["project"] as? String ?: return PluginResult(false, error = "Project key required"),
-                args["summary"] as? String ?: return PluginResult(false, error = "Summary required"),
-                args["description"] as? String,
-                args["issue_type"] as? String ?: "Task"
+                projectKey = args["project"] as? String ?: return PluginResult(false, error = "Project key required"),
+                summary = args["summary"] as? String ?: return PluginResult(false, error = "Summary required"),
+                description = args["description"] as? String,
+                issueType = args["issue_type"] as? String ?: "Task",
+                priority = args["priority"] as? String,
+                assignee = args["assignee"] as? String,
+                reporter = args["reporter"] as? String,
+                labels = (args["labels"] as? List<*>)?.filterIsInstance<String>(),
+                components = (args["components"] as? List<*>)?.filterIsInstance<String>(),
+                parentIssue = args["parent"] as? String,
+                epicLink = args["epic_link"] as? String,
+                storyPoints = args["story_points"] as? Int,
+                originalEstimate = args["original_estimate"] as? String,
+                startDate = args["start_date"] as? String,
+                dueDate = args["due_date"] as? String,
+                sprintId = args["sprint_id"] as? Int
             )
             "comment" -> addComment(
                 args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
@@ -193,6 +211,10 @@ class JiraPlugin : BasePlugin() {
             "boards" -> listBoards(args["project_key"] as? String)
             "sprints" -> listSprints(
                 args["board_id"] as? Int ?: return PluginResult(false, error = "Board ID required")
+            )
+            "search_users" -> searchUsers(
+                args["query"] as? String ?: return PluginResult(false, error = "Search query required"),
+                args["project_key"] as? String
             )
             else -> PluginResult(false, error = "Unknown command: $command")
         }
@@ -430,7 +452,19 @@ class JiraPlugin : BasePlugin() {
         projectKey: String,
         summary: String,
         description: String?,
-        issueType: String
+        issueType: String,
+        priority: String? = null,
+        assignee: String? = null,
+        reporter: String? = null,
+        labels: List<String>? = null,
+        components: List<String>? = null,
+        parentIssue: String? = null,
+        epicLink: String? = null,
+        storyPoints: Int? = null,
+        originalEstimate: String? = null,
+        startDate: String? = null,
+        dueDate: String? = null,
+        sprintId: Int? = null
     ): PluginResult {
         val url = "$baseUrl/rest/api/3/issue"
 
@@ -456,9 +490,31 @@ class JiraPlugin : BasePlugin() {
             "issuetype" to mapOf("name" to issueType)
         )
 
-        if (descriptionAdf != null) {
-            fields["description"] = descriptionAdf
+        // Optional fields
+        descriptionAdf?.let { fields["description"] = it }
+        priority?.let { fields["priority"] = mapOf("name" to it) }
+        assignee?.let { fields["assignee"] = mapOf("accountId" to it) }
+        reporter?.let { fields["reporter"] = mapOf("accountId" to it) }
+        labels?.takeIf { it.isNotEmpty() }?.let { fields["labels"] = it }
+        components?.takeIf { it.isNotEmpty() }?.let {
+            fields["components"] = it.map { name -> mapOf("name" to name) }
         }
+
+        // Parent issue for Sub-tasks
+        parentIssue?.let { fields["parent"] = mapOf("key" to it) }
+
+        // Epic link (customfield - may vary by Jira instance)
+        epicLink?.let { fields["customfield_10014"] = it }  // Epic Link field
+
+        // Story points (customfield - may vary by Jira instance)
+        storyPoints?.let { fields["customfield_10016"] = it }  // Story Points field
+
+        // Time tracking
+        originalEstimate?.let { fields["timetracking"] = mapOf("originalEstimate" to it) }
+
+        // Dates
+        startDate?.let { fields["customfield_10015"] = it }  // Start date (if custom field)
+        dueDate?.let { fields["duedate"] = it }
 
         val body = mapOf("fields" to fields)
 
@@ -467,11 +523,25 @@ class JiraPlugin : BasePlugin() {
             val result = mapper.readValue(response, Map::class.java) as Map<String, Any>
 
             val issueKey = result["key"] as? String
+            val issueId = result["id"] as? String
+
+            // Sprint 설정 (이슈 생성 후 별도 API로 설정)
+            if (sprintId != null && issueId != null) {
+                try {
+                    val sprintUrl = "$baseUrl/rest/agile/1.0/sprint/$sprintId/issue"
+                    val sprintBody = mapOf("issues" to listOf(issueKey))
+                    apiPost(sprintUrl, mapper.writeValueAsString(sprintBody))
+                    logger.info { "Added issue $issueKey to sprint $sprintId" }
+                } catch (e: Exception) {
+                    logger.warn(e) { "Failed to add issue to sprint $sprintId, but issue was created" }
+                }
+            }
+
             PluginResult(
                 success = true,
                 data = mapOf(
                     "key" to issueKey,
-                    "id" to result["id"],
+                    "id" to issueId,
                     "url" to "$baseUrl/browse/$issueKey"
                 ),
                 message = "Issue $issueKey created successfully"
@@ -801,6 +871,43 @@ class JiraPlugin : BasePlugin() {
             )
         } catch (e: Exception) {
             logger.error(e) { "Failed to list sprints for board: $boardId" }
+            PluginResult(false, error = e.message)
+        }
+    }
+
+    /**
+     * 사용자 검색
+     */
+    private fun searchUsers(query: String, projectKey: String?): PluginResult {
+        return try {
+            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+            // projectKey가 있으면 해당 프로젝트에 할당 가능한 사용자만 검색
+            val url = if (projectKey != null) {
+                "$baseUrl/rest/api/3/user/assignable/search?query=$encodedQuery&project=$projectKey&maxResults=20"
+            } else {
+                "$baseUrl/rest/api/3/user/search?query=$encodedQuery&maxResults=20"
+            }
+
+            val response = apiGet(url)
+            val users = mapper.readValue(response, List::class.java) as? List<Map<String, Any>> ?: emptyList()
+
+            val formatted = users.map { user ->
+                val avatarUrls = user["avatarUrls"] as? Map<*, *>
+                mapOf(
+                    "accountId" to (user["accountId"] as? String ?: ""),
+                    "displayName" to (user["displayName"] as? String ?: ""),
+                    "emailAddress" to (user["emailAddress"] as? String ?: ""),
+                    "avatarUrl" to (avatarUrls?.get("24x24") as? String ?: "")
+                )
+            }
+
+            PluginResult(
+                success = true,
+                data = formatted,
+                message = "Found ${formatted.size} users"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to search users: $query" }
             PluginResult(false, error = e.message)
         }
     }

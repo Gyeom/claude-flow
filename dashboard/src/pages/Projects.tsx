@@ -4,8 +4,6 @@ import {
   FolderOpen,
   Plus,
   Star,
-  Hash,
-  Bot,
   Trash2,
   X,
   Check,
@@ -16,10 +14,11 @@ import {
   Loader2,
   Save,
   Edit3,
+  GitBranch,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { projectsApi, settingsApi, type ProjectAlias } from '@/lib/api'
-import { formatNumber, cn } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
 
 export function Projects() {
@@ -27,7 +26,6 @@ export function Projects() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
-  const [newChannelInput, setNewChannelInput] = useState('')
 
   // Fetch projects
   const { data: projects, isLoading } = useQuery({
@@ -39,18 +37,6 @@ export function Projects() {
   const { data: projectStats } = useQuery({
     queryKey: ['projects', selectedProject, 'stats'],
     queryFn: () => projectsApi.getStats(selectedProject!),
-    enabled: !!selectedProject,
-  })
-
-  const { data: projectChannels } = useQuery({
-    queryKey: ['projects', selectedProject, 'channels'],
-    queryFn: () => projectsApi.getChannels(selectedProject!),
-    enabled: !!selectedProject,
-  })
-
-  const { data: projectAgents } = useQuery({
-    queryKey: ['projects', selectedProject, 'agents'],
-    queryFn: () => projectsApi.getAgents(selectedProject!),
     enabled: !!selectedProject,
   })
 
@@ -72,27 +58,6 @@ export function Projects() {
       queryClient.invalidateQueries({ queryKey: ['projects'] })
       setSelectedProject(null)
     },
-  })
-
-  const mapChannelMutation = useMutation({
-    mutationFn: ({ projectId, channel }: { projectId: string; channel: string }) =>
-      projectsApi.mapChannel(projectId, channel),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['projects', selectedProject, 'channels'] })
-      setNewChannelInput('')
-    },
-  })
-
-  const unmapChannelMutation = useMutation({
-    mutationFn: ({ projectId, channel }: { projectId: string; channel: string }) =>
-      projectsApi.unmapChannel(projectId, channel),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects', selectedProject, 'channels'] }),
-  })
-
-  const updateRateLimitMutation = useMutation({
-    mutationFn: ({ projectId, rpm }: { projectId: string; rpm: number }) =>
-      projectsApi.updateRateLimit(projectId, rpm),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
   })
 
   if (isLoading) {
@@ -127,7 +92,7 @@ export function Projects() {
       </div>
 
       {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
           title="Total Projects"
           value={projectList.length}
@@ -139,14 +104,9 @@ export function Projects() {
           icon={<Star className="h-6 w-6 text-yellow-500" />}
         />
         <StatCard
-          title="Total Agents"
-          value={projectStats?.agentCount || 0}
-          icon={<Bot className="h-6 w-6" />}
-        />
-        <StatCard
-          title="Active Channels"
-          value={projectChannels?.length || 0}
-          icon={<Hash className="h-6 w-6" />}
+          title="Total Executions"
+          value={projectStats?.totalExecutions || 0}
+          icon={<GitBranch className="h-6 w-6" />}
         />
       </div>
 
@@ -260,18 +220,14 @@ export function Projects() {
               {projectStats && (
                 <Card>
                   <CardHeader title="Statistics" />
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-3 gap-4">
                     <div className="p-3 rounded-lg bg-primary/5 text-center">
-                      <p className="text-2xl font-bold">{formatNumber(projectStats.totalExecutions)}</p>
+                      <p className="text-2xl font-bold">{projectStats.totalExecutions}</p>
                       <p className="text-xs text-muted-foreground">Executions</p>
                     </div>
                     <div className="p-3 rounded-lg bg-primary/5 text-center">
-                      <p className="text-2xl font-bold">{formatNumber(projectStats.uniqueUsers)}</p>
+                      <p className="text-2xl font-bold">{projectStats.uniqueUsers}</p>
                       <p className="text-xs text-muted-foreground">Users</p>
-                    </div>
-                    <div className="p-3 rounded-lg bg-primary/5 text-center">
-                      <p className="text-2xl font-bold">{projectStats.agentCount}</p>
-                      <p className="text-xs text-muted-foreground">Agents</p>
                     </div>
                     <div className="p-3 rounded-lg bg-primary/5 text-center">
                       <p className="text-2xl font-bold">${projectStats.totalCost.toFixed(2)}</p>
@@ -287,127 +243,6 @@ export function Projects() {
                 alias={selectedAlias}
                 onUpdate={() => queryClient.invalidateQueries({ queryKey: ['projectAliases'] })}
               />
-
-              {/* Rate Limit */}
-              <Card>
-                <CardHeader title="Rate Limiting" />
-                <div className="flex items-center gap-4">
-                  <div className="flex-1">
-                    <label className="text-sm text-muted-foreground">Requests per Minute (RPM)</label>
-                    <input
-                      type="number"
-                      value={selected.rateLimitRpm}
-                      onChange={(e) => {
-                        const rpm = parseInt(e.target.value) || 0
-                        updateRateLimitMutation.mutate({ projectId: selected.id, rpm })
-                      }}
-                      className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-                      min={0}
-                      placeholder="0 = unlimited"
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-6">
-                    {selected.rateLimitRpm === 0 ? 'Unlimited' : `${selected.rateLimitRpm} req/min`}
-                  </p>
-                </div>
-              </Card>
-
-              {/* Channel Mappings */}
-              <Card>
-                <CardHeader
-                  title="Channel Mappings"
-                  description="Slack channels mapped to this project (supports multiple projects per channel)"
-                />
-                <div className="space-y-3">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newChannelInput}
-                      onChange={(e) => setNewChannelInput(e.target.value)}
-                      placeholder="#channel-name"
-                      className="flex-1 px-3 py-2 bg-muted border border-border rounded-lg text-sm"
-                    />
-                    <button
-                      onClick={() => {
-                        if (newChannelInput.trim()) {
-                          mapChannelMutation.mutate({
-                            projectId: selected.id,
-                            channel: newChannelInput.replace('#', '').trim(),
-                          })
-                        }
-                      }}
-                      disabled={!newChannelInput.trim() || mapChannelMutation.isPending}
-                      className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {projectChannels?.map((channel) => (
-                      <span
-                        key={channel}
-                        className="inline-flex items-center gap-1 px-3 py-1 bg-muted rounded-full text-sm"
-                      >
-                        <Hash className="h-3 w-3" />
-                        {channel}
-                        <button
-                          onClick={() => unmapChannelMutation.mutate({ projectId: selected.id, channel })}
-                          className="ml-1 hover:text-red-500 transition-colors"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ))}
-                    {(!projectChannels || projectChannels.length === 0) && (
-                      <p className="text-sm text-muted-foreground">No channels mapped</p>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Tip: A channel can be mapped to multiple projects. When a message comes in, the system will
-                    auto-detect which project to use based on aliases or message content.
-                  </p>
-                </div>
-              </Card>
-
-              {/* Project Agents */}
-              <Card>
-                <CardHeader
-                  title="Project Agents"
-                  description={`${projectAgents?.length || 0} agents in this project`}
-                />
-                <div className="space-y-2">
-                  {projectAgents?.map((agent) => (
-                    <div
-                      key={agent.id}
-                      className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Bot className={cn(
-                          "h-5 w-5",
-                          agent.enabled ? "text-green-500" : "text-muted-foreground"
-                        )} />
-                        <div>
-                          <p className="font-medium">{agent.name}</p>
-                          <p className="text-xs text-muted-foreground">{agent.model}</p>
-                        </div>
-                      </div>
-                      <span className={cn(
-                        "px-2 py-1 text-xs rounded-full",
-                        agent.enabled
-                          ? "bg-green-500/10 text-green-500"
-                          : "bg-muted text-muted-foreground"
-                      )}>
-                        {agent.enabled ? 'Active' : 'Disabled'}
-                      </span>
-                    </div>
-                  ))}
-                  {(!projectAgents || projectAgents.length === 0) && (
-                    <p className="text-center text-muted-foreground py-4">
-                      No agents in this project
-                    </p>
-                  )}
-                </div>
-              </Card>
             </>
           ) : (
             <Card className="flex flex-col items-center justify-center py-16">
@@ -696,13 +531,6 @@ function CreateProjectModal({
     gitRemote: '',
     defaultBranch: 'main',
     isDefault: false,
-    enableUserContext: true,
-    classifyModel: 'haiku',
-    classifyTimeout: 30,
-    rateLimitRpm: 0,
-    allowedTools: [] as string[],
-    disallowedTools: [] as string[],
-    fallbackAgentId: 'general',
   })
 
   const createMutation = useMutation({
@@ -782,7 +610,7 @@ function CreateProjectModal({
                 value={formData.gitRemote}
                 onChange={(e) => setFormData({ ...formData, gitRemote: e.target.value })}
                 className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg text-sm"
-                placeholder="https://github.com/..."
+                placeholder="https://gitlab.example.com/..."
               />
             </div>
             <div>
@@ -797,33 +625,7 @@ function CreateProjectModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium">Classify Model</label>
-              <select
-                value={formData.classifyModel}
-                onChange={(e) => setFormData({ ...formData, classifyModel: e.target.value })}
-                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-              >
-                <option value="haiku">Haiku (Fast)</option>
-                <option value="sonnet">Sonnet (Balanced)</option>
-                <option value="opus">Opus (Best)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Rate Limit (RPM)</label>
-              <input
-                type="number"
-                value={formData.rateLimitRpm}
-                onChange={(e) => setFormData({ ...formData, rateLimitRpm: parseInt(e.target.value) || 0 })}
-                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-                min={0}
-                placeholder="0 = unlimited"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
+          <div className="flex items-center">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -832,15 +634,6 @@ function CreateProjectModal({
                 className="w-4 h-4 rounded"
               />
               <span className="text-sm">Set as default project</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formData.enableUserContext}
-                onChange={(e) => setFormData({ ...formData, enableUserContext: e.target.checked })}
-                className="w-4 h-4 rounded"
-              />
-              <span className="text-sm">Enable user context</span>
             </label>
           </div>
 
@@ -887,11 +680,6 @@ function EditProjectModal({
     workingDirectory: project.workingDirectory,
     gitRemote: project.gitRemote || '',
     defaultBranch: project.defaultBranch,
-    enableUserContext: project.enableUserContext,
-    classifyModel: project.classifyModel,
-    classifyTimeout: project.classifyTimeout,
-    rateLimitRpm: project.rateLimitRpm,
-    fallbackAgentId: project.fallbackAgentId,
   })
 
   const updateMutation = useMutation({
@@ -970,7 +758,7 @@ function EditProjectModal({
                 value={formData.gitRemote}
                 onChange={(e) => setFormData({ ...formData, gitRemote: e.target.value })}
                 className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg text-sm"
-                placeholder="https://github.com/..."
+                placeholder="https://gitlab.example.com/..."
               />
             </div>
             <div>
@@ -983,68 +771,6 @@ function EditProjectModal({
                 placeholder="main"
               />
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium">Classify Model</label>
-              <select
-                value={formData.classifyModel}
-                onChange={(e) => setFormData({ ...formData, classifyModel: e.target.value })}
-                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-              >
-                <option value="haiku">Haiku (Fast)</option>
-                <option value="sonnet">Sonnet (Balanced)</option>
-                <option value="opus">Opus (Best)</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-sm font-medium">Rate Limit (RPM)</label>
-              <input
-                type="number"
-                value={formData.rateLimitRpm}
-                onChange={(e) => setFormData({ ...formData, rateLimitRpm: parseInt(e.target.value) || 0 })}
-                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-                min={0}
-                placeholder="0 = unlimited"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium">Classify Timeout (sec)</label>
-              <input
-                type="number"
-                value={formData.classifyTimeout}
-                onChange={(e) => setFormData({ ...formData, classifyTimeout: parseInt(e.target.value) || 30 })}
-                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-                min={1}
-                max={300}
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium">Fallback Agent</label>
-              <input
-                type="text"
-                value={formData.fallbackAgentId}
-                onChange={(e) => setFormData({ ...formData, fallbackAgentId: e.target.value })}
-                className="w-full mt-1 px-3 py-2 bg-muted border border-border rounded-lg"
-                placeholder="general"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={formData.enableUserContext}
-                onChange={(e) => setFormData({ ...formData, enableUserContext: e.target.checked })}
-                className="w-4 h-4 rounded"
-              />
-              <span className="text-sm">Enable user context</span>
-            </label>
           </div>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-border">

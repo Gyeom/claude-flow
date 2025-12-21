@@ -14,6 +14,7 @@ import type {
   RequesterStats,
   ErrorStats,
   Project,
+  ProjectInput,
   ProjectStats,
   VerifiedFeedbackStats,
   FeedbackByCategory,
@@ -705,7 +706,7 @@ export const projectsApi = {
     fetchApi<Project>(`/projects/${projectId}`),
 
   // Create project
-  create: (project: Omit<Project, 'createdAt' | 'updatedAt'>) =>
+  create: (project: ProjectInput) =>
     fetchApi<Project>('/projects', {
       method: 'POST',
       body: JSON.stringify(project),
@@ -853,12 +854,37 @@ export const jiraApi = {
     ),
 
   // Create issue
-  createIssue: (project: string, summary: string, description?: string, issueType = 'Task') =>
+  createIssue: (
+    project: string,
+    summary: string,
+    description?: string,
+    issueType = 'Task',
+    options?: {
+      priority?: string
+      parentIssue?: string
+      epicLink?: string
+      assignee?: string
+      reporter?: string
+      labels?: string[]
+      components?: string[]
+      storyPoints?: number
+      originalEstimate?: string
+      startDate?: string
+      dueDate?: string
+      sprintId?: number
+    }
+  ) =>
     fetchApi<{ success: boolean; data: { key: string; id: string; url: string }; message?: string; error?: string }>(
       '/plugins/jira/issues',
       {
         method: 'POST',
-        body: JSON.stringify({ project, summary, description, issueType }),
+        body: JSON.stringify({
+          project,
+          summary,
+          description,
+          issueType,
+          ...options,
+        }),
       }
     ),
 
@@ -1030,6 +1056,49 @@ export const jiraApi = {
       method: 'POST',
       body: JSON.stringify({ query, includeProjects }),
     }),
+
+  // AI - Natural Language Issue Analysis (자연어를 분석하여 이슈 필드 제안)
+  analyzeIssueFromText: (text: string) =>
+    fetchApi<{
+      success: boolean
+      data?: {
+        summary: string
+        description: string
+        issueType: string
+        priority: string
+        labels?: string[]
+      }
+      error?: string
+    }>('/jira/analyze-text', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  // Search users (for assignee/reporter fields)
+  searchUsers: (query: string, projectKey?: string) =>
+    fetchApi<{
+      success: boolean
+      data?: Array<{
+        accountId: string
+        displayName: string
+        emailAddress?: string
+        avatarUrl?: string
+      }>
+      error?: string
+    }>(`/plugins/jira/users/search?query=${encodeURIComponent(query)}${projectKey ? `&projectKey=${projectKey}` : ''}`),
+
+  // Get assignable users for a project
+  getAssignableUsers: (projectKey: string) =>
+    fetchApi<{
+      success: boolean
+      data?: Array<{
+        accountId: string
+        displayName: string
+        emailAddress?: string
+        avatarUrl?: string
+      }>
+      error?: string
+    }>(`/plugins/jira/projects/${projectKey}/users`),
 }
 
 // Extended Analytics API (Verified Feedback)

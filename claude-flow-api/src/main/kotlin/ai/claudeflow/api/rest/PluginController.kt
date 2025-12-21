@@ -269,6 +269,18 @@ class PluginController(
         )
         request.description?.let { args["description"] = it }
         request.issueType?.let { args["issue_type"] = it }
+        request.priority?.let { args["priority"] = it }
+        request.parentIssue?.let { args["parent"] = it }
+        request.epicLink?.let { args["epic_link"] = it }
+        request.assignee?.let { args["assignee"] = it }
+        request.reporter?.let { args["reporter"] = it }
+        request.labels?.let { if (it.isNotEmpty()) args["labels"] = it }
+        request.components?.let { if (it.isNotEmpty()) args["components"] = it }
+        request.storyPoints?.let { args["story_points"] = it }
+        request.originalEstimate?.let { args["original_estimate"] = it }
+        request.startDate?.let { args["start_date"] = it }
+        request.dueDate?.let { args["due_date"] = it }
+        request.sprintId?.let { args["sprint_id"] = it }
 
         val result = pluginManager.execute("jira", "create", args)
         ResponseEntity.ok(PluginExecuteResponse(
@@ -417,6 +429,46 @@ class PluginController(
             error = result.error
         ))
     }
+
+    /**
+     * Jira 사용자 검색
+     */
+    @GetMapping("/jira/users/search")
+    fun searchJiraUsers(
+        @RequestParam query: String,
+        @RequestParam(required = false) projectKey: String?
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val args = mutableMapOf<String, Any>("query" to query)
+        if (projectKey != null) {
+            args["project_key"] = projectKey
+        }
+        val result = pluginManager.execute("jira", "search_users", args)
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 프로젝트에 할당 가능한 사용자 목록
+     */
+    @GetMapping("/jira/projects/{projectKey}/users")
+    fun getJiraProjectUsers(
+        @PathVariable projectKey: String
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "search_users", mapOf(
+            "query" to "",
+            "project_key" to projectKey
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
 }
 
 // DTOs
@@ -469,7 +521,19 @@ data class JiraCreateIssueRequest(
     val project: String,
     val summary: String,
     val description: String? = null,
-    val issueType: String? = "Task"
+    val issueType: String? = "Task",
+    val priority: String? = null,
+    val parentIssue: String? = null,
+    val epicLink: String? = null,
+    val assignee: String? = null,
+    val reporter: String? = null,
+    val labels: List<String>? = null,
+    val components: List<String>? = null,
+    val storyPoints: Int? = null,
+    val originalEstimate: String? = null,
+    val startDate: String? = null,
+    val dueDate: String? = null,
+    val sprintId: Int? = null
 )
 
 data class JiraCommentRequest(

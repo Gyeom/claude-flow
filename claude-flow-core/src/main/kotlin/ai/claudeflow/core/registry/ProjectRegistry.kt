@@ -262,37 +262,33 @@ class ProjectRegistry(
 
     companion object {
         /**
-         * 샘플 프로젝트로 초기화된 레지스트리 생성 (인메모리 모드)
+         * 기본 프로젝트로 초기화된 레지스트리 생성 (인메모리 모드)
          *
-         * 실제 사용 시 WORKSPACE_PATH 환경변수를 설정하세요.
+         * WORKSPACE_PATH 환경변수로 워크스페이스 경로 설정 가능
+         * 기본값: $HOME/workspace 또는 /workspace
          */
-        fun withSampleProjects(): ProjectRegistry {
+        fun withDefaultProjects(): ProjectRegistry {
             val workspacePath = System.getenv("WORKSPACE_PATH")
-                ?: System.getenv("HOME")?.let { "$it/projects" }
+                ?: System.getenv("HOME")?.let { "$it/workspace" }
                 ?: "/workspace"
 
             return ProjectRegistry(
                 projectRepository = null,
                 initialProjects = listOf(
                     Project(
-                        id = "claude-flow",
-                        name = "Claude Flow",
-                        description = "Slack AI Assistant Platform",
-                        workingDirectory = "$workspacePath/claude-flow",
-                        gitRemote = "https://github.com/your-org/claude-flow",
+                        id = "default",
+                        name = "Default Project",
+                        description = "Default workspace project",
+                        workingDirectory = workspacePath,
+                        gitRemote = null,
                         defaultBranch = "main",
                         isDefault = true
-                    ),
-                    Project(
-                        id = "sample-project",
-                        name = "Sample Project",
-                        description = "Example project configuration",
-                        workingDirectory = "$workspacePath/sample-project",
-                        gitRemote = "https://github.com/your-org/sample-project",
-                        defaultBranch = "main"
                     )
                 )
             )
         }
+
+        @Deprecated("Use withDefaultProjects() instead", ReplaceWith("withDefaultProjects()"))
+        fun withSampleProjects() = withDefaultProjects()
     }
 }

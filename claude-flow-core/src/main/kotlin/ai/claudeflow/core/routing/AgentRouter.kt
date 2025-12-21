@@ -14,14 +14,11 @@ private val logger = KotlinLogging.logger {}
  * 1. 키워드 매칭 (0.95 confidence) - 가장 빠름
  * 2. 정규식 패턴 매칭 (0.85 confidence)
  * 3. 시맨틱 검색 (벡터 유사도) - 선택적
- * 4. LLM 분류 (0.80 confidence) - 선택적, 가장 느림
- * 5. 기본 에이전트 폴백 (0.5 confidence)
+ * 4. 기본 에이전트 폴백 (0.5 confidence)
  */
 class AgentRouter(
     initialAgents: List<Agent> = defaultAgents(),
-    private val semanticRouter: SemanticRouter? = null,
-    private val llmClassifier: LlmClassifier? = null,
-    private val useLlmFallback: Boolean = false  // LLM 폴백 사용 여부
+    private val semanticRouter: SemanticRouter? = null
 ) {
     private val agents = initialAgents.toMutableList()
 
@@ -59,15 +56,7 @@ class AgentRouter(
             return it
         }
 
-        // 4. LLM 분류 (가장 느림, 선택적)
-        if (useLlmFallback) {
-            llmClassifier?.classify(message, enabledAgents)?.let {
-                logger.debug { "LLM match: ${it.agent.id}" }
-                return it
-            }
-        }
-
-        // 5. 기본 에이전트로 폴백
+        // 4. 기본 에이전트로 폴백
         val defaultAgent = enabledAgents.find { it.id == "general" }
             ?: enabledAgents.firstOrNull()
             ?: Agent.GENERAL
@@ -141,11 +130,6 @@ class AgentRouter(
      * 시맨틱 라우터 설정 여부
      */
     fun hasSemanticRouter(): Boolean = semanticRouter != null
-
-    /**
-     * LLM 분류기 설정 여부
-     */
-    fun hasLlmClassifier(): Boolean = llmClassifier != null && useLlmFallback
 
     // ==================== 에이전트 CRUD ====================
 

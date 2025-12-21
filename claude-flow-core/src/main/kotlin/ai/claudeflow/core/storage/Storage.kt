@@ -1,8 +1,12 @@
 package ai.claudeflow.core.storage
 
 import ai.claudeflow.core.model.Agent
+import ai.claudeflow.core.model.Project
 import ai.claudeflow.core.storage.repository.*
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import mu.KotlinLogging
+import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
 import java.time.Instant
@@ -46,7 +50,103 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         projectRepository = ProjectRepository(this)
         projectAliasRepository = ProjectAliasRepository(this)
 
+        // 기본 프로젝트 및 Aliases 초기화
+        initDefaultProjectsAndAliases()
+
         logger.info { "Storage initialized: $dbPath" }
+    }
+
+    /**
+     * 프로젝트 초기화
+     *
+     * 1. config/projects.json 파일이 있으면 해당 설정으로 프로젝트 로드
+     * 2. 없으면 WORKSPACE_PATH 환경변수의 기본 프로젝트 생성
+     */
+    private fun initDefaultProjectsAndAliases() {
+        val workspacePath = System.getenv("WORKSPACE_PATH")
+            ?: System.getenv("HOME")?.let { "$it/workspace" }
+            ?: "/workspace"
+
+        // config/projects.json 파일 확인
+        val configFile = File("config/projects.json")
+        if (configFile.exists()) {
+            loadProjectsFromConfig(configFile, workspacePath)
+            return
+        }
+
+        // 설정 파일이 없으면 기본 프로젝트만 등록
+        if (projectRepository.findAll().isEmpty()) {
+            val defaultProject = Project(
+                id = "default",
+                name = "Default Project",
+                description = "Default workspace project",
+                workingDirectory = workspacePath,
+                gitRemote = null,
+                defaultBranch = "develop",
+                isDefault = true
+            )
+            try {
+                projectRepository.save(defaultProject)
+                logger.info { "Registered default project at: $workspacePath" }
+            } catch (e: Exception) {
+                logger.warn { "Failed to register default project: ${e.message}" }
+            }
+        }
+    }
+
+    /**
+     * config/projects.json에서 프로젝트 로드
+     */
+    private fun loadProjectsFromConfig(configFile: File, workspacePath: String) {
+        try {
+            val mapper = jacksonObjectMapper()
+            val config: ProjectsFileConfig = mapper.readValue(configFile)
+            val defaultBranch = config.defaultBranch ?: "develop"
+
+            val existingProjectIds = projectRepository.findAll().map { it.id }.toSet()
+            val existingAliasIds = projectAliasRepository.findAll().map { it.projectId }.toSet()
+
+            config.projects.forEach { entry ->
+                // 프로젝트 등록
+                if (entry.id !in existingProjectIds) {
+                    val project = Project(
+                        id = entry.id,
+                        name = entry.name,
+                        description = entry.description,
+                        workingDirectory = "$workspacePath/${entry.path}",
+                        gitRemote = entry.gitRemote,
+                        defaultBranch = entry.defaultBranch ?: defaultBranch,
+                        isDefault = entry.isDefault ?: false
+                    )
+                    try {
+                        projectRepository.save(project)
+                        logger.info { "Loaded project from config: ${project.id}" }
+                    } catch (e: Exception) {
+                        logger.warn { "Failed to load project ${entry.id}: ${e.message}" }
+                    }
+                }
+
+                // Aliases 등록
+                val aliases = entry.aliases
+                if (!aliases.isNullOrEmpty() && entry.id !in existingAliasIds) {
+                    val aliasEntity = ProjectAliasEntity(
+                        projectId = entry.id,
+                        patterns = aliases,
+                        description = entry.description
+                    )
+                    try {
+                        projectAliasRepository.save(aliasEntity)
+                        logger.info { "Loaded aliases for: ${entry.id}" }
+                    } catch (e: Exception) {
+                        logger.warn { "Failed to load aliases for ${entry.id}: ${e.message}" }
+                    }
+                }
+            }
+
+            logger.info { "Loaded ${config.projects.size} projects from config/projects.json" }
+        } catch (e: Exception) {
+            logger.error { "Failed to load projects from config: ${e.message}" }
+        }
     }
 
     override fun getConnection(): Connection = connection
@@ -639,3 +739,24 @@ typealias OverviewStats = ai.claudeflow.core.storage.repository.OverviewStats
 typealias ComparisonStats = ai.claudeflow.core.storage.repository.ComparisonStats
 typealias ModelStats = ai.claudeflow.core.storage.repository.ModelStats
 typealias TimeGranularity = ai.claudeflow.core.storage.repository.TimeGranularity
+
+// ==================== Projects Config ====================
+
+/**
+ * config/projects.json 설정 파일 구조
+ */
+data class ProjectsFileConfig(
+    val defaultBranch: String? = "develop",
+    val projects: List<ProjectFileEntry>
+)
+
+data class ProjectFileEntry(
+    val id: String,
+    val name: String,
+    val description: String? = null,
+    val path: String,
+    val gitRemote: String? = null,
+    val defaultBranch: String? = null,
+    val isDefault: Boolean? = false,
+    val aliases: List<String>? = null
+)

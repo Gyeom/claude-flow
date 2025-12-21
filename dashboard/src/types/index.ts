@@ -220,15 +220,27 @@ export interface Project {
   gitRemote: string | null
   defaultBranch: string
   isDefault: boolean
-  enableUserContext: boolean
-  classifyModel: string
-  classifyTimeout: number
-  rateLimitRpm: number
-  allowedTools: string[]
-  disallowedTools: string[]
-  fallbackAgentId: string
   createdAt: string | null
   updatedAt: string | null
+  // Optional fields (서버에서 기본값 처리)
+  enableUserContext?: boolean
+  classifyModel?: string
+  classifyTimeout?: number
+  rateLimitRpm?: number
+  allowedTools?: string[]
+  disallowedTools?: string[]
+  fallbackAgentId?: string
+}
+
+// 프로젝트 생성/수정 요청용 타입
+export interface ProjectInput {
+  id: string
+  name: string
+  description?: string
+  workingDirectory: string
+  gitRemote?: string
+  defaultBranch?: string
+  isDefault?: boolean
 }
 
 export interface ProjectStats {

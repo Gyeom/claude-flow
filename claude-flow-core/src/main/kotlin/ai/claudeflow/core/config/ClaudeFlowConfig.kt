@@ -35,7 +35,9 @@ data class WebhookEndpoints(
     val message: String = "/webhook/slack-message",
     val reaction: String = "/webhook/slack-reaction",
     val feedback: String = "/webhook/slack-feedback",
-    val actionTrigger: String = "/webhook/slack-action"
+    val actionTrigger: String = "/webhook/slack-action",
+    val alertBot: String = "/webhook/slack-alert-bot",      // 알람 봇 메시지
+    val issueCreation: String = "/webhook/slack-issue-creation"  // 이슈 생성 확인
 )
 
 /**
@@ -64,3 +66,36 @@ data class ActionTrigger(
     val action: String,
     val description: String
 )
+
+/**
+ * 이슈 자동 생성 설정
+ */
+data class IssueCreationConfig(
+    val reactions: IssueCreationReactions = IssueCreationReactions(),
+    val enabled: Boolean = true
+)
+
+/**
+ * 이슈 생성 확인용 리액션 이모지
+ */
+data class IssueCreationReactions(
+    val approve: String = "white_check_mark",   // ✅ 생성 승인
+    val reject: String = "x"                     // ❌ 생성 거절
+) {
+    fun isIssueCreationReaction(reaction: String): Boolean {
+        return reaction in setOf(approve, reject)
+    }
+
+    fun getAction(reaction: String): IssueCreationAction? {
+        return when (reaction) {
+            approve -> IssueCreationAction.APPROVE
+            reject -> IssueCreationAction.REJECT
+            else -> null
+        }
+    }
+}
+
+enum class IssueCreationAction {
+    APPROVE,  // 이슈 생성 승인
+    REJECT    // 이슈 생성 거절
+}

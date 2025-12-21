@@ -195,6 +195,31 @@ N8N_PASSWORD=your-password
 
 이 프로젝트는 Claude Code와 긴밀하게 통합됩니다:
 
+### 서브에이전트 활용
+
+복합 작업 처리 시 `.claude/agents/`에 정의된 전문 에이전트를 Task tool로 활용하세요:
+
+| 에이전트 | 역할 | 도구 | 트리거 키워드 |
+|---------|------|------|--------------|
+| bug-fixer | 버그 분석 및 수정 | Read, Edit, Bash | 버그, fix, 에러, 수정 |
+| code-reviewer | 코드 품질 리뷰 | Read, Grep, Glob | 리뷰, review, PR, MR |
+| refactor | 코드 리팩토링 | Read, Edit, Bash | 리팩토링, 개선, 정리 |
+| test-writer | 테스트 코드 작성 | Read, Write, Bash | 테스트, test |
+| security-reviewer | 보안 취약점 검토 | Read, Grep, Glob | 보안, security, OWASP |
+| jira-expert | Jira 이슈 관리 | Read, Bash | Jira, 이슈, JQL |
+| gitlab-expert | GitLab MR/파이프라인 | Read, Bash | GitLab, MR, 파이프라인 |
+
+**복합 요청 처리 예시**:
+```
+사용자: "버그 수정하고 리뷰해줘"
+
+1. Task tool로 bug-fixer 서브에이전트 호출
+2. 수정 결과를 code-reviewer 서브에이전트에 전달
+3. 통합 결과 응답
+```
+
+자세한 내용은 `AGENTS.md` 및 `.claude/agents/` 참조.
+
 ### Slash Commands
 - `/health` - 시스템 상태 확인
 - `/metrics [period]` - 분석 대시보드

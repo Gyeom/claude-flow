@@ -8,12 +8,14 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 enum class SlackEventType {
-    MENTION,        // @멘션
-    MESSAGE,        // 일반 메시지
-    REACTION_ADDED, // 리액션 추가
-    REACTION_REMOVED, // 리액션 제거
-    COMMAND,        // 슬래시 커맨드
-    ACTION_TRIGGER  // 액션 트리거 (특정 이모지)
+    MENTION,            // @멘션
+    MESSAGE,            // 일반 메시지
+    REACTION_ADDED,     // 리액션 추가
+    REACTION_REMOVED,   // 리액션 제거
+    COMMAND,            // 슬래시 커맨드
+    ACTION_TRIGGER,     // 액션 트리거 (특정 이모지)
+    ALERT_BOT_MESSAGE,  // 알람 봇 메시지 (Sentry, DataDog 등)
+    ISSUE_CREATION      // 이슈 생성 확인 리액션 (✅/❌/✏️)
 }
 
 /**
@@ -30,7 +32,10 @@ data class SlackEvent(
     val timestamp: String,
     val reaction: String? = null,
     val files: List<SlackFile> = emptyList(),
-    val receivedAt: Instant
+    val receivedAt: Instant,
+    // 봇 메시지 관련 필드
+    val botId: String? = null,      // 봇 ID (봇 메시지인 경우)
+    val appId: String? = null       // 앱 ID (Sentry, DataDog 등)
 )
 
 /**

@@ -1,5 +1,6 @@
 package ai.claudeflow.api.service
 
+import ai.claudeflow.core.storage.Storage
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -13,10 +14,14 @@ private val logger = KotlinLogging.logger {}
 /**
  * 프로젝트 컨텍스트 서비스
  * 프롬프트에서 프로젝트를 탐지하고 관련 컨텍스트를 주입합니다.
+ *
+ * DB에 저장된 project_aliases 테이블을 우선 사용하고,
+ * 없으면 config/project-aliases.json 파일을 폴백으로 사용합니다.
  */
 @Service
 class ProjectContextService(
     private val objectMapper: ObjectMapper,
+    private val storage: Storage,
     @Value("\${claude-flow.config-path:#{null}}") private val configPath: String?,
     @Value("\${claude-flow.workspace-root:#{null}}") private val workspaceRoot: String?
 ) {
@@ -269,7 +274,34 @@ class ProjectContextService(
         return File(resolved)
     }
 
+    /**
+     * Aliases 설정 로드 (우선순위)
+     * 1. DB project_aliases 테이블
+     * 2. config/project-aliases.json 파일
+     * 3. 빈 설정 반환
+     */
     private fun loadAliasesConfig(): ProjectAliasesConfig {
+        // 1. DB에서 먼저 조회
+        try {
+            val dbAliases = storage.projectAliasRepository.findAllAsMap()
+            if (dbAliases.isNotEmpty()) {
+                val aliases = dbAliases.mapValues { (_, dto) ->
+                    ProjectAlias(
+                        patterns = dto.patterns,
+                        description = dto.description
+                    )
+                }
+                logger.debug { "Loaded ${aliases.size} project aliases from DB" }
+                return ProjectAliasesConfig(
+                    workspaceRoot = workspaceRoot ?: "\${WORKSPACE_PATH:-\$HOME/workspace}",
+                    aliases = aliases
+                )
+            }
+        } catch (e: Exception) {
+            logger.warn(e) { "Failed to load aliases from DB, falling back to file" }
+        }
+
+        // 2. 파일에서 로드 (폴백)
         val file = when {
             aliasesFile.exists() -> aliasesFile
             exampleFile.exists() -> exampleFile

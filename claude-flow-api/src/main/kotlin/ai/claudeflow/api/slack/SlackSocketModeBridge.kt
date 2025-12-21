@@ -2,6 +2,8 @@ package ai.claudeflow.api.slack
 
 import ai.claudeflow.core.alert.AlertService
 import ai.claudeflow.core.config.ActionTriggerConfig
+import ai.claudeflow.core.config.IssueCreationConfig
+import ai.claudeflow.core.config.IssueCreationAction
 import ai.claudeflow.core.config.SlackConfig
 import ai.claudeflow.core.config.WebhookConfig
 import ai.claudeflow.core.event.ActionPayload
@@ -45,6 +47,7 @@ class SlackSocketModeBridge(
     private val webhookSender: WebhookSender,
     private val storage: Storage? = null,
     private val actionTriggerConfig: ActionTriggerConfig = ActionTriggerConfig(),
+    private val issueCreationConfig: IssueCreationConfig = IssueCreationConfig(),
     private val alertService: AlertService? = null,
     private val maxReconnectAttempts: Int = 10,
     private val initialReconnectDelayMs: Long = 1000,
@@ -74,6 +77,9 @@ class SlackSocketModeBridge(
     // Feedback emojis
     private val feedbackReactions = setOf("+1", "-1", "thumbsup", "thumbsdown")
     private val actionTriggerEmojis = actionTriggerConfig.triggers.keys
+
+    // Issue creation confirmation reactions (✅/❌/✏️)
+    private val issueCreationReactions = issueCreationConfig.reactions
 
     enum class ConnectionState {
         DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, FAILED
@@ -480,13 +486,29 @@ class SlackSocketModeBridge(
 
     /**
      * Message event handler
+     * - 봇 메시지 (Sentry, DataDog 등) → 자동 트리거
+     * - 사람 메시지 → 기존 로직 유지
      */
     private fun App.registerMessageHandler() {
         event(MessageEvent::class.java) { payload, ctx ->
             lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
 
-            if (event.user == botUserId || event.subtype != null) {
+            // 자기 자신(Claude Flow 봇)의 메시지는 무시
+            if (event.user == botUserId) {
+                return@event ctx.ack()
+            }
+
+            // 다른 봇/앱의 메시지 → 알람 트리거 처리
+            if (event.botId != null || event.subtype == "bot_message") {
+                scope.launch {
+                    handleAlertBotMessage(event)
+                }
+                return@event ctx.ack()
+            }
+
+            // 사람 메시지 (subtype 있는 특수 메시지는 무시)
+            if (event.subtype != null) {
                 return@event ctx.ack()
             }
 
@@ -520,6 +542,28 @@ class SlackSocketModeBridge(
     }
 
     /**
+     * 알람 봇 메시지 처리 (Sentry, DataDog, GitLab 등)
+     */
+    private suspend fun handleAlertBotMessage(event: MessageEvent) {
+        logger.info { "Alert bot message detected: botId=${event.botId}" }
+
+        val slackEvent = SlackEvent(
+            id = UUID.randomUUID().toString(),
+            type = SlackEventType.ALERT_BOT_MESSAGE,
+            channel = event.channel,
+            user = event.botId ?: event.user ?: "unknown",
+            text = event.text ?: "",
+            threadTs = event.ts,  // 원본 메시지의 ts를 threadTs로 저장 (나중에 스레드 답글용)
+            timestamp = event.ts,
+            receivedAt = Clock.System.now(),
+            botId = event.botId,
+            appId = null  // MessageEvent에서는 appId 직접 접근 불가
+        )
+
+        sendToWebhook(slackEvent, webhookConfig.endpoints.alertBot)
+    }
+
+    /**
      * Reaction event handlers
      */
     private fun App.registerReactionHandlers() {
@@ -530,23 +574,41 @@ class SlackSocketModeBridge(
 
             val isActionTrigger = actionTriggerEmojis.contains(reaction)
             val isFeedback = feedbackReactions.contains(reaction)
+            val isIssueCreation = issueCreationReactions.isIssueCreationReaction(reaction)
 
             val (eventType, endpoint) = when {
+                isIssueCreation -> SlackEventType.ISSUE_CREATION to webhookConfig.endpoints.issueCreation
                 isActionTrigger -> SlackEventType.ACTION_TRIGGER to webhookConfig.endpoints.actionTrigger
                 isFeedback -> SlackEventType.REACTION_ADDED to webhookConfig.endpoints.feedback
                 else -> SlackEventType.REACTION_ADDED to webhookConfig.endpoints.reaction
             }
 
-            val actionPayload = if (isActionTrigger) {
-                actionTriggerConfig.triggers[reaction]?.let { trigger ->
+            val actionPayload = when {
+                isIssueCreation -> {
+                    val action = issueCreationReactions.getAction(reaction)
                     ActionPayload(
-                        actionType = trigger.action,
-                        emoji = trigger.emoji,
-                        description = trigger.description,
+                        actionType = action?.name ?: "UNKNOWN",
+                        emoji = reaction,
+                        description = when (action) {
+                            IssueCreationAction.APPROVE -> "이슈 생성 승인"
+                            IssueCreationAction.REJECT -> "이슈 생성 거절"
+                            else -> "Unknown"
+                        },
                         targetMessageTs = event.item.ts
                     )
                 }
-            } else null
+                isActionTrigger -> {
+                    actionTriggerConfig.triggers[reaction]?.let { trigger ->
+                        ActionPayload(
+                            actionType = trigger.action,
+                            emoji = trigger.emoji,
+                            description = trigger.description,
+                            targetMessageTs = event.item.ts
+                        )
+                    }
+                }
+                else -> null
+            }
 
             val slackEvent = SlackEvent(
                 id = UUID.randomUUID().toString(),
@@ -563,8 +625,9 @@ class SlackSocketModeBridge(
                 sendToWebhook(slackEvent, endpoint, actionPayload)
             }
 
-            if (isActionTrigger) {
-                logger.info { "Action trigger detected: $reaction -> ${actionPayload?.actionType}" }
+            when {
+                isIssueCreation -> logger.info { "Issue creation reaction: $reaction -> ${actionPayload?.actionType}" }
+                isActionTrigger -> logger.info { "Action trigger detected: $reaction -> ${actionPayload?.actionType}" }
             }
 
             ctx.ack()

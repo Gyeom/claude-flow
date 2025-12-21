@@ -52,6 +52,7 @@ import {
 } from 'lucide-react'
 import { Card } from '@/components/Card'
 import { SmartSearch } from '@/components/jira/SmartSearch'
+import { SmartIssueCreator } from '@/components/jira/SmartIssueCreator'
 import { jiraApi, type JiraIssueListItem, type JiraIssue, type JiraComment, type JiraProject, type JiraBoard, type JiraSprint } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -1636,9 +1637,9 @@ export function Jira() {
         )}
       </div>
 
-      {/* Create Issue Modal */}
+      {/* Smart Issue Creator */}
       {showCreateModal && (
-        <CreateIssueModal
+        <SmartIssueCreator
           projects={projects}
           defaultProject={selectedProjects.length > 0 ? selectedProjects[0].key : ''}
           onClose={() => setShowCreateModal(false)}
@@ -2849,150 +2850,6 @@ function IssueDetailPanel({
         )}
       </div>
     </Card>
-  )
-}
-
-// Create Issue Modal
-function CreateIssueModal({
-  projects,
-  defaultProject,
-  onClose,
-  onCreated,
-}: {
-  projects: JiraProject[]
-  defaultProject?: string
-  onClose: () => void
-  onCreated: (issueKey: string) => void
-}) {
-  const [project, setProject] = useState(defaultProject || '')
-  const [summary, setSummary] = useState('')
-  const [description, setDescription] = useState('')
-  const [issueType, setIssueType] = useState('Task')
-
-  const createMutation = useMutation({
-    mutationFn: () => jiraApi.createIssue(project, summary, description || undefined, issueType),
-    onSuccess: (result) => {
-      if (result.success && result.data?.key) {
-        onCreated(result.data.key)
-      }
-    },
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-background rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
-              <Plus className="h-4 w-4 text-white" />
-            </div>
-            <h2 className="text-lg font-semibold">Create Issue</h2>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-muted rounded-lg transition-colors">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Form */}
-        <div className="p-6 space-y-5">
-          {/* Project */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Project <span className="text-red-500">*</span></label>
-            <select
-              value={project}
-              onChange={(e) => setProject(e.target.value)}
-              className="w-full px-3 py-2.5 border rounded-lg bg-background focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
-            >
-              <option value="">Select a project</option>
-              {projects.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.key} - {p.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Issue Type */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Issue Type</label>
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                { value: 'Task', icon: FileText, label: 'Task' },
-                { value: 'Bug', icon: Bug, label: 'Bug' },
-                { value: 'Story', icon: Bookmark, label: 'Story' },
-                { value: 'Epic', icon: Zap, label: 'Epic' },
-              ].map((type) => (
-                <button
-                  key={type.value}
-                  type="button"
-                  onClick={() => setIssueType(type.value)}
-                  className={cn(
-                    "flex flex-col items-center gap-1.5 px-3 py-3 rounded-lg border transition-all",
-                    issueType === type.value
-                      ? "bg-blue-50 dark:bg-blue-900/20 border-blue-500 text-blue-600"
-                      : "hover:bg-muted border-border"
-                  )}
-                >
-                  <type.icon className="h-5 w-5" />
-                  <span className="text-xs font-medium">{type.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Summary */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Summary <span className="text-red-500">*</span></label>
-            <input
-              type="text"
-              value={summary}
-              onChange={(e) => setSummary(e.target.value)}
-              className="w-full px-3 py-2.5 border rounded-lg bg-background focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
-              placeholder="What needs to be done?"
-            />
-          </div>
-
-          {/* Description */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2.5 border rounded-lg bg-background focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 h-28 resize-none"
-              placeholder="Add a description..."
-            />
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex justify-end gap-3 px-6 py-4 border-t bg-muted/30">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium hover:bg-muted rounded-lg transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => createMutation.mutate()}
-            disabled={!project || !summary || createMutation.isPending}
-            className="px-5 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center gap-2"
-          >
-            {createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            Create Issue
-          </button>
-        </div>
-
-        {createMutation.isError && (
-          <div className="px-6 pb-4">
-            <p className="text-sm text-red-500 flex items-center gap-2">
-              <AlertCircle className="h-4 w-4" />
-              Failed to create issue. Please try again.
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
   )
 }
 

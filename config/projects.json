@@ -1,0 +1,41 @@
+{
+  "defaultBranch": "develop",
+  "projects": [
+    {
+      "id": "claude-flow",
+      "name": "Claude Flow",
+      "description": "Slack AI Agent Platform",
+      "path": "claude-flow",
+      "gitRemote": "https://github.com/anthropics/claude-flow",
+      "isDefault": true
+    },
+    {
+      "id": "ccds-server",
+      "name": "CCDS Server",
+      "description": "Connected Car Data Service - 차량 데이터 수집 및 처리",
+      "path": "ccds-server",
+      "aliases": ["ccds", "CCDS", "차량 데이터", "connected car"]
+    },
+    {
+      "id": "authorization-server",
+      "name": "Authorization Server",
+      "description": "인가 서버 - OpenFGA 기반 권한 관리",
+      "path": "authorization-server",
+      "aliases": ["인가", "인가서버", "auth", "authorization", "openfga", "권한"]
+    },
+    {
+      "id": "ad-data-management-server",
+      "name": "AD Data Management Server",
+      "description": "자율주행 데이터 관리 서버",
+      "path": "ad-data-management-server",
+      "aliases": ["ad-data", "자율주행", "AD", "AD Data"]
+    },
+    {
+      "id": "vlc-gateway-server",
+      "name": "VLC Gateway Server",
+      "description": "VLC 게이트웨이 서버 - 차량 통신 게이트웨이",
+      "path": "vlc-gateway-server",
+      "aliases": ["vlc", "VLC", "게이트웨이", "gateway"]
+    }
+  ]
+}

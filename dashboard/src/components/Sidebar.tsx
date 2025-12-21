@@ -1,7 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
-  History,
   Bot,
   BarChart3,
   Settings,
@@ -9,7 +8,6 @@ import {
   ThumbsUp,
   Cpu,
   AlertTriangle,
-  Target,
   Clock,
   Puzzle,
   Users,
@@ -25,13 +23,11 @@ import { ThemeToggle } from './ThemeToggle'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
-  { name: 'Executions', href: '/executions', icon: History },
-  { name: 'Live Logs', href: '/logs', icon: ScrollText },
   { name: 'History', href: '/history', icon: Clock },
+  { name: 'Live Logs', href: '/logs', icon: ScrollText },
   { name: 'Projects', href: '/projects', icon: FolderOpen },
   { name: 'Jira', href: '/jira', icon: Ticket },
   { name: 'Agents', href: '/agents', icon: Bot },
-  { name: 'Classify', href: '/classify', icon: Target },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Feedback', href: '/feedback', icon: ThumbsUp },
   { name: 'Models', href: '/models', icon: Cpu },

@@ -420,6 +420,79 @@ class JiraAnalysisController(
         }
     }
 
+    /**
+     * 자연어 텍스트를 분석하여 이슈 필드 제안
+     * 예: "로그인 페이지에서 비밀번호 입력 후 Enter 키가 안 먹어요" → Bug, High, 제목, 설명 생성
+     */
+    @PostMapping("/analyze-text")
+    fun analyzeTextForIssue(
+        @RequestBody request: AnalyzeTextRequest
+    ): Mono<ResponseEntity<AnalyzeTextResponse>> = mono {
+        logger.info { "Analyzing text for issue creation: ${request.text.take(100)}..." }
+
+        val prompt = """
+            |당신은 Jira 이슈 생성을 도와주는 AI 어시스턴트입니다.
+            |사용자가 입력한 자연어 텍스트를 분석하여 적절한 Jira 이슈 필드를 제안해주세요.
+            |
+            |## 사용자 입력
+            |"${request.text}"
+            |
+            |## 분석 지침
+            |
+            |### 이슈 타입 판단 기준
+            |- **Bug**: 오류, 버그, 안됨, 동작하지 않음, 크래시, 에러, 문제 발생
+            |- **Story**: 기능 추가, 새 기능, ~하고 싶다, ~하면 좋겠다, 요청
+            |- **Task**: 작업, 구현, 개발, 수정, 변경, 업데이트, 리팩토링
+            |- **Epic**: 대규모 기능, 프로젝트, 전체 개편
+            |
+            |### 우선순위 판단 기준
+            |- **Highest**: 긴급, 장애, 서비스 불가, 즉시, critical, blocker
+            |- **High**: 중요, 심각, 빠른 대응 필요
+            |- **Medium**: 일반적인 요청, 개선 사항
+            |- **Low**: 낮은 우선순위, 나중에, 시간날 때
+            |- **Lowest**: 아이디어, 제안, 검토 필요
+            |
+            |## 응답 형식
+            |반드시 다음 JSON 형식으로만 응답하세요:
+            |```json
+            |{
+            |  "summary": "이슈 제목 (간결하고 명확하게, 50자 이내)",
+            |  "description": "이슈 상세 설명 (Markdown 형식, 문제/배경/예상결과 포함)",
+            |  "issueType": "Bug|Story|Task|Epic 중 하나",
+            |  "priority": "Highest|High|Medium|Low|Lowest 중 하나",
+            |  "labels": ["관련 라벨들", "최대 3개"]
+            |}
+            |```
+            |
+            |주의:
+            |- JSON 외의 다른 텍스트를 출력하지 마세요
+            |- summary는 명사형으로 간결하게 작성
+            |- description은 구조화된 형태로 작성 (## 섹션 사용)
+        """.trimMargin()
+
+        try {
+            val result = claudeExecutor.execute(ExecutionRequest(
+                prompt = prompt,
+                workingDirectory = System.getProperty("user.dir"),
+                model = "claude-sonnet-4-20250514"
+            ))
+
+            val response = parseIssueTextResponse(result.result ?: "")
+
+            ResponseEntity.ok(AnalyzeTextResponse(
+                success = response != null,
+                data = response,
+                error = if (response == null) "Failed to parse AI response" else null
+            ))
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to analyze text: ${request.text.take(100)}" }
+            ResponseEntity.ok(AnalyzeTextResponse(
+                success = false,
+                error = e.message
+            ))
+        }
+    }
+
     // ==================== Helper Functions ====================
 
     private fun buildAnalysisPrompt(issueData: Map<*, *>, additionalContext: String?): String {
@@ -530,6 +603,73 @@ class JiraAnalysisController(
         val warnings: List<String>?
     )
 
+    @Serializable
+    private data class IssueTextJsonResponse(
+        val summary: String,
+        val description: String = "",
+        val issueType: String = "Task",
+        val priority: String = "Medium",
+        val labels: List<String> = emptyList()
+    )
+
+    private fun parseIssueTextResponse(response: String): IssueFieldSuggestion? {
+        // JSON 블록에서 응답 추출
+        val jsonRegex = """```json\s*(\{[\s\S]*?})\s*```""".toRegex()
+        val match = jsonRegex.find(response)
+
+        val jsonStr = match?.groupValues?.get(1) ?: response.trim().let {
+            if (it.startsWith("{")) it else return null
+        }
+
+        return try {
+            val parsed = json.decodeFromString<IssueTextJsonResponse>(jsonStr)
+            IssueFieldSuggestion(
+                summary = parsed.summary,
+                description = parsed.description,
+                issueType = parsed.issueType,
+                priority = parsed.priority,
+                labels = parsed.labels.takeIf { it.isNotEmpty() }
+            )
+        } catch (e: Exception) {
+            logger.warn { "Failed to parse issue text response: ${e.message}" }
+            // Fallback to regex
+            parseIssueTextResponseWithRegex(jsonStr)
+        }
+    }
+
+    private fun parseIssueTextResponseWithRegex(jsonStr: String): IssueFieldSuggestion? {
+        return try {
+            val summaryMatch = """"summary"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex().find(jsonStr)
+            val descMatch = """"description"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex().find(jsonStr)
+            val typeMatch = """"issueType"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex().find(jsonStr)
+            val priorityMatch = """"priority"\s*:\s*"((?:[^"\\]|\\.)*)"""".toRegex().find(jsonStr)
+            val labelsMatch = """"labels"\s*:\s*\[(.*?)]""".toRegex().find(jsonStr)
+
+            val summary = summaryMatch?.groupValues?.get(1)
+                ?.replace("\\\"", "\"")
+                ?.replace("\\n", "\n")
+                ?: return null
+
+            val labels = labelsMatch?.groupValues?.get(1)
+                ?.split(",")
+                ?.map { it.trim().removeSurrounding("\"") }
+                ?.filter { it.isNotBlank() }
+
+            IssueFieldSuggestion(
+                summary = summary,
+                description = descMatch?.groupValues?.get(1)
+                    ?.replace("\\\"", "\"")
+                    ?.replace("\\n", "\n") ?: "",
+                issueType = typeMatch?.groupValues?.get(1) ?: "Task",
+                priority = priorityMatch?.groupValues?.get(1) ?: "Medium",
+                labels = labels
+            )
+        } catch (e: Exception) {
+            logger.warn { "Failed to parse issue text with regex: ${e.message}" }
+            null
+        }
+    }
+
     private fun extractLabelsFromResponse(response: String): List<String> {
         // JSON 블록에서 labels 배열 추출 시도
         val jsonRegex = """```json\s*(\{[\s\S]*?})\s*```""".toRegex()
@@ -615,5 +755,23 @@ data class NlToJqlResponse(
     val explanation: String? = null,
     val confidence: Double = 0.0,
     val warnings: List<String>? = null,
+    val error: String? = null
+)
+
+data class AnalyzeTextRequest(
+    val text: String
+)
+
+data class IssueFieldSuggestion(
+    val summary: String,
+    val description: String,
+    val issueType: String,
+    val priority: String,
+    val labels: List<String>? = null
+)
+
+data class AnalyzeTextResponse(
+    val success: Boolean,
+    val data: IssueFieldSuggestion? = null,
     val error: String? = null
 )

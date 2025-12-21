@@ -125,24 +125,15 @@ class ClaudeFlowConfiguration(
 
     @Bean
     fun projectRegistry(storage: Storage): ProjectRegistry {
-        // 단일 workspace로 설정 - Claude가 알아서 하위 프로젝트 탐색
-        val workspacePath = properties.workspace.path
-
+        // config/projects.json에서 프로젝트가 로드됨 (Storage에서 처리)
+        // 여기서는 빈 초기 프로젝트로 레지스트리만 생성
         val registry = ProjectRegistry(
             projectRepository = storage.projectRepository,
-            initialProjects = listOf(
-                Project(
-                    id = "workspace",
-                    name = "Workspace",
-                    description = "Multi-project workspace",
-                    workingDirectory = workspacePath,
-                    isDefault = true
-                )
-            )
+            initialProjects = emptyList()
         )
 
-        logger.info { "Workspace configured: $workspacePath" }
-        logger.info { "Claude will automatically explore subdirectories" }
+        val projectCount = storage.projectRepository.findAll().size
+        logger.info { "ProjectRegistry initialized with $projectCount projects from config" }
 
         return registry
     }
