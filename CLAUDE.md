@@ -93,6 +93,40 @@ claude-flow/
 | Workflow | n8n |
 | Dashboard | React, Vite, TailwindCSS |
 
+## 아키텍처 원칙
+
+### 자동화는 n8n 워크플로우로 구현
+
+**중요: 새로운 자동화 파이프라인은 Kotlin 코드가 아닌 n8n 워크플로우로 구현합니다.**
+
+| 구분 | Kotlin 코드 | n8n 워크플로우 |
+|------|------------|---------------|
+| 용도 | 핵심 비즈니스 로직, API, 플러그인 | 자동화 파이프라인, 이벤트 처리 |
+| 예시 | AgentRouter, Storage, Plugin | Slack→Jira, GitLab MR 리뷰 |
+| 수정 | 빌드/배포 필요 | UI에서 즉시 수정 가능 |
+
+### 현재 n8n 워크플로우 목록
+
+| 워크플로우 | 기능 |
+|-----------|------|
+| `slack-mention-handler` | Slack 멘션 → Claude 실행 |
+| `slack-reaction-handler` | Slack 리액션 → Jira/GitLab 연동 |
+| `gitlab-jira-sync` | GitLab MR ↔ Jira 이슈 동기화 |
+| `gitlab-mr-auto-review` | MR 자동 리뷰 요청 |
+| `jira-auto-fix-scheduler` | Jira 이슈 자동 분석 |
+| `daily-report` | 일일 리포트 생성 |
+| `slack-slash-command` | 슬래시 커맨드 처리 |
+| `user-context-handler` | 사용자 컨텍스트 관리 |
+
+### Kotlin 코드의 역할
+
+- **Plugin**: 외부 서비스 연동 인터페이스 (GitLabPlugin, JiraPlugin, N8nPlugin)
+- **Router**: 에이전트 라우팅 로직
+- **Storage**: 데이터 저장/조회
+- **API**: REST 엔드포인트
+
+n8n 워크플로우는 이 Plugin들을 HTTP로 호출하여 사용합니다.
+
 ## 개발 가이드라인
 
 ### 코드 스타일
