@@ -28,13 +28,17 @@ class Analytics(private val storage: Storage) {
 
     /**
      * 전체 대시보드 통계
+     * @param days 일 단위 기간
+     * @param hours 시간 단위 기간 (null이 아니면 days 대신 사용)
      */
-    fun getDashboard(days: Int = 30): DashboardStats {
-        val dateRange = DateRange.lastDays(days)
-        val stats = storage.getStats()
-        val userStats = getUserStats(days)
-        val agentStats = getAgentStats(days)
-        val hourlyTrend = getHourlyTrend(days)
+    fun getDashboard(days: Int = 30, hours: Int? = null): DashboardStats {
+        val dateRange = if (hours != null) DateRange.lastHours(hours) else DateRange.lastDays(days)
+        val effectiveDays = hours?.let { (it / 24).coerceAtLeast(1) } ?: days
+
+        val stats = storage.getStats(dateRange)
+        val userStats = getUserStats(effectiveDays, hours)
+        val agentStats = getAgentStats(effectiveDays, hours)
+        val hourlyTrend = getHourlyTrend(effectiveDays, hours)
 
         return DashboardStats(
             totalExecutions = stats.totalExecutions,
@@ -53,8 +57,8 @@ class Analytics(private val storage: Storage) {
     /**
      * 사용자별 사용량 통계 (실제 쿼리 구현)
      */
-    fun getUserStats(days: Int = 30): List<UserStat> {
-        val dateRange = DateRange.lastDays(days)
+    fun getUserStats(days: Int = 30, hours: Int? = null): List<UserStat> {
+        val dateRange = if (hours != null) DateRange.lastHours(hours) else DateRange.lastDays(days)
         val userStats = analyticsRepository.getUserStats(dateRange, 50)
 
         return userStats.map { stat ->
@@ -70,8 +74,8 @@ class Analytics(private val storage: Storage) {
     /**
      * 에이전트별 성능 통계 (실제 쿼리 구현)
      */
-    fun getAgentStats(days: Int = 30): List<AgentStat> {
-        val dateRange = DateRange.lastDays(days)
+    fun getAgentStats(days: Int = 30, hours: Int? = null): List<AgentStat> {
+        val dateRange = if (hours != null) DateRange.lastHours(hours) else DateRange.lastDays(days)
         val agentStats = analyticsRepository.getAgentStats(dateRange)
         val tokenStats = analyticsRepository.getTokenStats(dateRange)
 
@@ -98,8 +102,8 @@ class Analytics(private val storage: Storage) {
     /**
      * 시간대별 사용 트렌드 (실제 쿼리 구현)
      */
-    fun getHourlyTrend(days: Int = 7): List<HourlyTrend> {
-        val dateRange = DateRange.lastDays(days)
+    fun getHourlyTrend(days: Int = 7, hours: Int? = null): List<HourlyTrend> {
+        val dateRange = if (hours != null) DateRange.lastHours(hours) else DateRange.lastDays(days)
         val timeSeries = analyticsRepository.getTimeSeries(dateRange, TimeGranularity.HOUR)
 
         // 시간대별 집계

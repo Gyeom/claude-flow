@@ -601,13 +601,6 @@ export function Jira() {
     return { total, ...byCategory }
   }, [currentIssues])
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (searchJql) {
-      executeSearch()
-    }
-  }
-
   const handleProjectSelect = (project: JiraProject) => {
     const isSelected = selectedProjects.some(p => p.key === project.key)
     if (isSelected) {
@@ -1410,18 +1403,6 @@ export function Jira() {
               </button>
             </div>
 
-            {/* Search Input */}
-            <form onSubmit={handleSearch} className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                value={searchJql}
-                onChange={(e) => setSearchJql(e.target.value)}
-                placeholder="JQL or issue key..."
-                className="pl-9 pr-4 py-2 w-48 lg:w-64 rounded-lg border bg-background text-sm focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
-              />
-            </form>
-
             {/* Clear All Filters - Far right */}
             {(selectedProjects.length > 0 || selectedSprint || assigneeFilter !== 'me') && (
               <button
@@ -1457,7 +1438,7 @@ export function Jira() {
                 <h3 className="text-lg font-medium mb-1">No issues found</h3>
                 <p className="text-sm text-muted-foreground mb-4">
                   {searchJql
-                    ? 'Try a different JQL query'
+                    ? 'Try a different search in Quick Actions'
                     : 'No issues match the current filter'}
                 </p>
                 <button

@@ -1,6 +1,10 @@
 package ai.claudeflow.core.plugin
 
+import ai.claudeflow.core.rag.CodeChunk
+import ai.claudeflow.core.rag.CodeKnowledgeService
+import ai.claudeflow.core.rag.ReviewGuideline
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import mu.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
@@ -14,8 +18,11 @@ private val logger = KotlinLogging.logger {}
  * GitLab 플러그인
  *
  * GitLab API를 통한 MR, 이슈, 파이프라인 관리
+ * RAG 기반 컨텍스트 인식 코드 리뷰 지원
  */
-class GitLabPlugin : BasePlugin() {
+class GitLabPlugin(
+    private val codeKnowledgeService: CodeKnowledgeService? = null
+) : BasePlugin() {
     override val id = "gitlab"
     override val name = "GitLab"
     override val description = "GitLab MR, 이슈, 파이프라인 관리"
@@ -67,6 +74,25 @@ class GitLabPlugin : BasePlugin() {
             description = "Merge Request 생성",
             usage = "/gitlab create-mr <project> <source_branch> <target_branch> <title> [description]",
             examples = listOf("/gitlab create-mr my-project feature/AUTH-123 main \"feat: 로그인 기능 추가\"")
+        ),
+        // RAG 기반 리뷰 명령어
+        PluginCommand(
+            name = "mr-review",
+            description = "MR을 RAG 기반으로 컨텍스트 인식 리뷰",
+            usage = "/gitlab mr-review <project> <mr_id>",
+            examples = listOf("/gitlab mr-review my-project 123")
+        ),
+        PluginCommand(
+            name = "index-project",
+            description = "프로젝트 코드를 RAG 인덱싱",
+            usage = "/gitlab index-project <project> [branch]",
+            examples = listOf("/gitlab index-project my-project", "/gitlab index-project my-project develop")
+        ),
+        PluginCommand(
+            name = "knowledge-stats",
+            description = "프로젝트 RAG 인덱싱 통계 조회",
+            usage = "/gitlab knowledge-stats <project>",
+            examples = listOf("/gitlab knowledge-stats my-project")
         )
     )
 
@@ -127,6 +153,18 @@ class GitLabPlugin : BasePlugin() {
                 args["target_branch"] as? String ?: "main",
                 args["title"] as? String ?: return PluginResult(false, error = "Title required"),
                 args["description"] as? String
+            )
+            // RAG 기반 명령어
+            "mr-review" -> reviewMergeRequestWithRag(
+                args["project"] as? String ?: return PluginResult(false, error = "Project required"),
+                args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+            )
+            "index-project" -> indexProjectToKnowledgeBase(
+                args["project"] as? String ?: return PluginResult(false, error = "Project required"),
+                args["branch"] as? String ?: "main"
+            )
+            "knowledge-stats" -> getKnowledgeStats(
+                args["project"] as? String ?: return PluginResult(false, error = "Project required")
             )
             else -> PluginResult(false, error = "Unknown command: $command")
         }
@@ -398,6 +436,339 @@ class GitLabPlugin : BasePlugin() {
         } catch (e: Exception) {
             logger.error(e) { "Failed to create MR: $title" }
             PluginResult(false, error = "MR 생성 실패: ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // RAG 기반 코드 리뷰
+    // ============================================================
+
+    /**
+     * MR을 RAG 기반으로 컨텍스트 인식 리뷰
+     *
+     * 1. MR 변경사항(diff) 가져오기
+     * 2. 관련 코드베이스 검색 (벡터 유사도)
+     * 3. 리뷰 가이드라인 생성
+     * 4. 컨텍스트 기반 리뷰 포인트 반환
+     */
+    private fun reviewMergeRequestWithRag(project: String, mrId: Int): PluginResult {
+        if (codeKnowledgeService == null) {
+            return PluginResult(
+                success = false,
+                error = "RAG 서비스가 비활성화되어 있습니다. Qdrant/Ollama가 실행 중인지 확인하세요."
+            )
+        }
+
+        return try {
+            // 1. MR 정보 및 변경사항 가져오기
+            val mrInfo = getMergeRequestDetails(project, mrId)
+            val changes = getMergeRequestChanges(project, mrId)
+
+            if (changes.isEmpty()) {
+                return PluginResult(
+                    success = true,
+                    data = mapOf("review" to "변경사항이 없습니다."),
+                    message = "MR에 변경사항이 없습니다."
+                )
+            }
+
+            // 2. 변경된 파일들의 diff 분석
+            val allDiffs = changes.map { change ->
+                "${change["old_path"]} -> ${change["new_path"]}\n${change["diff"]}"
+            }.joinToString("\n\n")
+
+            // 3. 관련 코드베이스 검색 (RAG)
+            val relatedCode = mutableListOf<CodeChunk>()
+            for (change in changes.take(5)) {  // 최대 5개 파일만 분석
+                val filePath = change["new_path"] as? String ?: continue
+                val fileContext = codeKnowledgeService.findRelevantCode(
+                    query = "file: $filePath code changes",
+                    projectId = project,
+                    topK = 3,
+                    minScore = 0.5f
+                )
+                relatedCode.addAll(fileContext)
+            }
+
+            // 4. 리뷰 가이드라인 생성
+            val guidelines = codeKnowledgeService.findReviewGuidelines(allDiffs, project)
+
+            // 5. 리뷰 결과 구성
+            val reviewResult = buildReviewResult(mrInfo, changes, relatedCode, guidelines)
+
+            PluginResult(
+                success = true,
+                data = reviewResult,
+                message = "MR !$mrId 리뷰가 완료되었습니다. ${guidelines.size}개의 가이드라인, ${relatedCode.size}개의 관련 코드 발견."
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to review MR !$mrId with RAG" }
+            PluginResult(false, error = "MR 리뷰 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * MR 상세 정보 (description 포함)
+     */
+    private fun getMergeRequestDetails(project: String, mrId: Int): Map<String, Any> {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId"
+        val response = apiGet(url)
+        return mapper.readValue(response)
+    }
+
+    /**
+     * MR 변경사항 (diff) 가져오기
+     */
+    private fun getMergeRequestChanges(project: String, mrId: Int): List<Map<String, Any>> {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId/changes"
+        val response = apiGet(url)
+        val result: Map<String, Any> = mapper.readValue(response)
+        @Suppress("UNCHECKED_CAST")
+        return result["changes"] as? List<Map<String, Any>> ?: emptyList()
+    }
+
+    /**
+     * 리뷰 결과 구성
+     */
+    private fun buildReviewResult(
+        mrInfo: Map<String, Any>,
+        changes: List<Map<String, Any>>,
+        relatedCode: List<CodeChunk>,
+        guidelines: List<ReviewGuideline>
+    ): Map<String, Any> {
+        return mapOf(
+            "mr" to mapOf(
+                "iid" to mrInfo["iid"],
+                "title" to mrInfo["title"],
+                "author" to (mrInfo["author"] as? Map<*, *>)?.get("name"),
+                "source_branch" to mrInfo["source_branch"],
+                "target_branch" to mrInfo["target_branch"],
+                "web_url" to mrInfo["web_url"]
+            ),
+            "summary" to mapOf(
+                "files_changed" to changes.size,
+                "additions" to changes.sumOf { (it["diff"] as? String)?.count { c -> c == '+' } ?: 0 },
+                "deletions" to changes.sumOf { (it["diff"] as? String)?.count { c -> c == '-' } ?: 0 }
+            ),
+            "files" to changes.map { change ->
+                mapOf(
+                    "path" to change["new_path"],
+                    "old_path" to change["old_path"],
+                    "renamed" to change["renamed_file"],
+                    "deleted" to change["deleted_file"],
+                    "new_file" to change["new_file"]
+                )
+            },
+            "guidelines" to guidelines.map { g ->
+                mapOf(
+                    "rule" to g.rule,
+                    "category" to g.category,
+                    "severity" to g.severity
+                )
+            },
+            "related_code" to relatedCode.take(5).map { chunk ->
+                mapOf(
+                    "file" to chunk.filePath,
+                    "lines" to "${chunk.startLine}-${chunk.endLine}",
+                    "type" to chunk.chunkType,
+                    "relevance" to "%.2f".format(chunk.score),
+                    "preview" to chunk.contentPreview.take(100)
+                )
+            },
+            "review_prompt" to generateReviewPrompt(mrInfo, changes, guidelines, relatedCode)
+        )
+    }
+
+    /**
+     * Claude에게 전달할 리뷰 프롬프트 생성
+     */
+    private fun generateReviewPrompt(
+        mrInfo: Map<String, Any>,
+        changes: List<Map<String, Any>>,
+        guidelines: List<ReviewGuideline>,
+        relatedCode: List<CodeChunk>
+    ): String {
+        val sb = StringBuilder()
+
+        sb.appendLine("## MR 리뷰 요청")
+        sb.appendLine("- 제목: ${mrInfo["title"]}")
+        sb.appendLine("- 브랜치: ${mrInfo["source_branch"]} → ${mrInfo["target_branch"]}")
+        sb.appendLine("- 변경 파일: ${changes.size}개")
+        sb.appendLine()
+
+        if (guidelines.isNotEmpty()) {
+            sb.appendLine("## 자동 검출된 리뷰 포인트")
+            for (g in guidelines) {
+                val icon = when (g.severity) {
+                    "error" -> "🚨"
+                    "warning" -> "⚠️"
+                    else -> "ℹ️"
+                }
+                sb.appendLine("$icon [${g.category}] ${g.rule}")
+            }
+            sb.appendLine()
+        }
+
+        if (relatedCode.isNotEmpty()) {
+            sb.appendLine("## 관련 코드베이스 (RAG)")
+            for (chunk in relatedCode.take(3)) {
+                sb.appendLine("- ${chunk.filePath}:${chunk.startLine}-${chunk.endLine}")
+                sb.appendLine("  ${chunk.contentPreview.take(80)}...")
+            }
+            sb.appendLine()
+        }
+
+        sb.appendLine("## 변경된 파일 목록")
+        for (change in changes) {
+            val status = when {
+                change["new_file"] == true -> "[신규]"
+                change["deleted_file"] == true -> "[삭제]"
+                change["renamed_file"] == true -> "[이름변경]"
+                else -> "[수정]"
+            }
+            sb.appendLine("$status ${change["new_path"]}")
+        }
+
+        return sb.toString()
+    }
+
+    /**
+     * 프로젝트 코드를 RAG 지식 베이스에 인덱싱
+     *
+     * GitLab API로 프로젝트 파일 목록을 가져와 인덱싱
+     */
+    private fun indexProjectToKnowledgeBase(project: String, branch: String): PluginResult {
+        if (codeKnowledgeService == null) {
+            return PluginResult(
+                success = false,
+                error = "RAG 서비스가 비활성화되어 있습니다."
+            )
+        }
+
+        return try {
+            // 컬렉션 초기화
+            codeKnowledgeService.initCollection()
+
+            // 프로젝트 파일 트리 가져오기
+            val files = getProjectFileTree(project, branch)
+
+            if (files.isEmpty()) {
+                return PluginResult(
+                    success = true,
+                    data = mapOf("indexed" to 0),
+                    message = "인덱싱할 파일이 없습니다."
+                )
+            }
+
+            var filesProcessed = 0
+            var chunksIndexed = 0
+            var errorCount = 0
+
+            // 각 파일 내용 가져와서 인덱싱
+            for (file in files.take(100)) {  // 최대 100개 파일
+                val path = file["path"] as? String ?: continue
+                val type = file["type"] as? String
+
+                // blob (파일)만 처리
+                if (type != "blob") continue
+
+                // 지원하는 확장자만
+                val ext = path.substringAfterLast(".", "")
+                if (ext !in CodeKnowledgeService.SUPPORTED_EXTENSIONS) continue
+
+                try {
+                    val content = getFileContent(project, path, branch)
+                    if (content.isNotBlank()) {
+                        val chunks = indexFileContent(project, path, content)
+                        if (chunks > 0) {
+                            filesProcessed++
+                            chunksIndexed += chunks
+                        }
+                    }
+                } catch (e: Exception) {
+                    logger.debug { "Failed to index file $path: ${e.message}" }
+                    errorCount++
+                }
+
+                if (filesProcessed % 20 == 0 && filesProcessed > 0) {
+                    logger.info { "Indexed $filesProcessed files ($chunksIndexed chunks) for $project..." }
+                }
+            }
+
+            logger.info { "Project indexing complete: $filesProcessed files, $chunksIndexed chunks, $errorCount errors" }
+
+            PluginResult(
+                success = true,
+                data = mapOf(
+                    "project" to project,
+                    "branch" to branch,
+                    "files_indexed" to filesProcessed,
+                    "chunks_created" to chunksIndexed,
+                    "errors" to errorCount
+                ),
+                message = "프로젝트 '$project' 인덱싱 완료: ${filesProcessed}개 파일, ${chunksIndexed}개 청크"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to index project $project" }
+            PluginResult(false, error = "프로젝트 인덱싱 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * 프로젝트 파일 트리 조회
+     */
+    private fun getProjectFileTree(project: String, branch: String): List<Map<String, Any>> {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/repository/tree" +
+                "?ref=$branch&recursive=true&per_page=100"
+        val response = apiGet(url)
+        return mapper.readValue(response)
+    }
+
+    /**
+     * 파일 내용 조회
+     */
+    private fun getFileContent(project: String, filePath: String, branch: String): String {
+        val encodedPath = java.net.URLEncoder.encode(filePath, "UTF-8")
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/repository/files/$encodedPath/raw?ref=$branch"
+        return apiGet(url)
+    }
+
+    /**
+     * 파일 내용 직접 인덱싱
+     *
+     * @return 인덱싱된 청크 수
+     */
+    private fun indexFileContent(projectId: String, filePath: String, content: String): Int {
+        return codeKnowledgeService?.indexRemoteFile(projectId, filePath, content) ?: 0
+    }
+
+    /**
+     * 프로젝트 RAG 인덱싱 통계 조회
+     */
+    private fun getKnowledgeStats(project: String): PluginResult {
+        if (codeKnowledgeService == null) {
+            return PluginResult(
+                success = false,
+                error = "RAG 서비스가 비활성화되어 있습니다."
+            )
+        }
+
+        return try {
+            val stats = codeKnowledgeService.getProjectStats(project)
+
+            PluginResult(
+                success = true,
+                data = mapOf(
+                    "project" to stats.projectId,
+                    "total_chunks" to stats.totalChunks,
+                    "last_updated" to stats.lastUpdated,
+                    "rag_enabled" to true
+                ),
+                message = "프로젝트 '$project': ${stats.totalChunks}개 청크 인덱싱됨"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get knowledge stats for $project" }
+            PluginResult(false, error = "통계 조회 실패: ${e.message}")
         }
     }
 

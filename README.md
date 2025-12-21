@@ -14,7 +14,11 @@ Slack에서 Claude를 호출하고, GitLab MR 리뷰를 자동화하는 AI 에�
 - **사용자 컨텍스트**: 대화 기록 요약, 개인별 선호도/규칙 저장
 - **실시간 분석**: P50/P90/P95/P99 통계, 시계열 차트, 피드백 분석
 - **n8n 워크플로우**: 자연어로 워크플로우 자동 생성, 유연한 이벤트 처리
-- **RAG (선택)**: Qdrant + Ollama 기반 대화 검색 및 컨텍스트 증강
+- **RAG 시스템**: Qdrant + Ollama 기반 지능형 컨텍스트 증강
+  - 대화 기반 학습 및 유사 쿼리 검색
+  - 피드백 학습 기반 에이전트 라우팅
+  - 코드베이스 인덱싱 및 MR 리뷰 컨텍스트 제공
+  - 자동 요약 생성 및 세션 관리
 
 ### Dashboard 기능
 
@@ -106,10 +110,11 @@ JIRA_URL=https://your-org.atlassian.net
 JIRA_EMAIL=your-email@example.com
 JIRA_API_TOKEN=xxx                  # API 토큰
 
-# 선택 - RAG (벡터 검색)
+# 선택 - RAG (벡터 검색, 컨텍스트 증강)
 RAG_ENABLED=true
 QDRANT_URL=http://qdrant:6333
 OLLAMA_URL=http://ollama:11434
+OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b  # MTEB #1 모델 (1024차원)
 ```
 
 ### 4. 실행
@@ -333,6 +338,102 @@ claude-flow/
 | POST | `/api/v1/n8n/workflows/{id}/run` | 워크플로우 실행 |
 | PATCH | `/api/v1/n8n/workflows/{id}/active` | 활성화/비활성화 |
 
+### GitLab RAG (MR 리뷰)
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| POST | `/api/v1/plugins/gitlab/execute` | GitLab 명령 실행 |
+| - | `command: mr-review` | RAG 기반 MR 리뷰 |
+| - | `command: index-project` | 프로젝트 코드 인덱싱 |
+| - | `command: knowledge-stats` | 인덱싱 통계 조회 |
+
+## RAG 시스템
+
+### 개요
+
+Claude Flow의 RAG(Retrieval-Augmented Generation) 시스템은 세 가지 핵심 기능을 제공합니다:
+
+1. **피드백 학습 기반 라우팅**: 사용자 피드백을 분석하여 유사한 쿼리에 최적의 에이전트 자동 선택
+2. **컨텍스트 증강**: 과거 대화와 사용자 규칙을 벡터 검색하여 프롬프트에 자동 주입
+3. **코드 지식 베이스**: 프로젝트 코드를 인덱싱하여 MR 리뷰 시 관련 코드 컨텍스트 제공
+
+### 구성 요소
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAG 아키텍처                              │
+├─────────────────────────────────────────────────────────────┤
+│  Embedding: Ollama (qwen3-embedding:0.6b, 1024차원)         │
+│  Vector DB: Qdrant                                          │
+│  Collections: conversations, knowledge                       │
+├─────────────────────────────────────────────────────────────┤
+│  Services:                                                   │
+│  • EmbeddingService      - 텍스트 → 벡터 변환               │
+│  • ConversationVectorService - 대화 인덱싱/검색             │
+│  • CodeKnowledgeService  - 코드 인덱싱/검색                 │
+│  • ContextAugmentationService - 프롬프트 증강               │
+│  • FeedbackLearningService - 피드백 학습                    │
+│  • AutoSummaryService    - 자동 요약 생성                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 라우팅 파이프라인
+
+```
+사용자 메시지
+    │
+    ▼
+┌───────────────────┐
+│ 피드백 학습 검색   │ ← 유사 쿼리 분석 (confidence 0.9)
+└─────────┬─────────┘
+          │ 매칭 실패
+          ▼
+┌───────────────────┐
+│ 키워드 매칭       │ ← 정확한 키워드 (confidence 0.95)
+└─────────┬─────────┘
+          │ 매칭 실패
+          ▼
+┌───────────────────┐
+│ 정규식 패턴 매칭   │ ← 패턴 분석 (confidence 0.85)
+└─────────┬─────────┘
+          │ 매칭 실패
+          ▼
+┌───────────────────┐
+│ 시맨틱 검색       │ ← 벡터 유사도 (선택적)
+└─────────┬─────────┘
+          │ 매칭 실패
+          ▼
+┌───────────────────┐
+│ 기본 에이전트     │ ← 폴백 (confidence 0.5)
+└───────────────────┘
+```
+
+### MR 리뷰 with RAG
+
+```bash
+# 1. 프로젝트 코드 인덱싱 (최초 1회)
+curl -X POST http://localhost:8080/api/v1/plugins/gitlab/execute \
+  -H "Content-Type: application/json" \
+  -d '{"command": "index-project", "args": {"project": "my-org/my-project", "branch": "main"}}'
+
+# 2. RAG 기반 MR 리뷰
+curl -X POST http://localhost:8080/api/v1/plugins/gitlab/execute \
+  -H "Content-Type: application/json" \
+  -d '{"command": "mr-review", "args": {"project": "my-org/my-project", "mr_id": 123}}'
+```
+
+리뷰 결과에는 다음이 포함됩니다:
+- 자동 검출된 보안/성능/스타일 이슈
+- 관련 코드베이스 참조 (벡터 유사도 기반)
+- Claude용 컨텍스트 프롬프트
+
+### 임베딩 모델
+
+| 모델 | 차원 | 특징 |
+|------|------|------|
+| qwen3-embedding:0.6b | 1024 | MTEB Multilingual 1위, Code 1위 (권장) |
+| nomic-embed-text | 768 | 경량, 빠름 |
+| bge-m3 | 1024 | 다국어 우수 |
+
 ## 문제 해결
 
 ### Slack 연결 실패
@@ -393,8 +494,10 @@ kill -9 <PID>
 - **Workflow**: n8n (자동 생성 지원)
 - **Storage**: SQLite (WAL mode)
 - **Cache**: Caffeine
-- **Vector DB**: Qdrant (선택)
-- **Embedding**: Ollama (선택)
+- **RAG**:
+  - Vector DB: Qdrant
+  - Embedding: Ollama (qwen3-embedding:0.6b)
+  - 피드백 학습, 컨텍스트 증강, 코드 지식 베이스
 - **Dashboard**: React, Vite, TailwindCSS
 
 ## 라이선스

@@ -474,8 +474,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
 
     // ==================== Stats ====================
 
-    fun getStats(): StorageStats {
-        val dateRange = DateRange.lastDays(30)
+    fun getStats(): StorageStats = getStats(DateRange.lastDays(30))
+
+    fun getStats(dateRange: DateRange): StorageStats {
         val stats = executionRepository.getAggregatedStats(dateRange)
         val feedback = feedbackRepository.getFeedbackStats(dateRange)
 

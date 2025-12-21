@@ -69,8 +69,17 @@ claude-flow/
 │   │   └── SessionManager.kt       # 세션 매니저
 │   ├── cache/              # 캐싱
 │   │   └── ClassificationCache.kt  # 분류 캐시
-│   └── analytics/          # 분석
-│       └── Analytics.kt            # 통계 수집
+│   ├── analytics/          # 분석
+│   │   └── Analytics.kt            # 통계 수집
+│   └── rag/                # RAG 시스템 (벡터 검색, 컨텍스트 증강)
+│       ├── EmbeddingService.kt     # 텍스트 → 벡터 변환 (Ollama)
+│       ├── ConversationVectorService.kt # 대화 인덱싱/검색 (Qdrant)
+│       ├── CodeKnowledgeService.kt # 코드베이스 인덱싱/검색
+│       ├── ContextAugmentationService.kt # 프롬프트 컨텍스트 증강
+│       ├── FeedbackLearningService.kt # 피드백 기반 학습
+│       ├── AutoSummaryService.kt   # 자동 요약 생성
+│       ├── CodeChunker.kt          # 코드 청킹 (AST 기반)
+│       └── RagConfig.kt            # RAG 설정
 │
 ├── claude-flow-executor/   # Claude CLI 래퍼
 ├── claude-flow-api/        # REST API (Spring WebFlux)
@@ -89,6 +98,7 @@ claude-flow/
 | Database | SQLite (WAL mode) |
 | Cache | Caffeine |
 | AI | Claude CLI |
+| RAG | Qdrant (Vector DB), Ollama (qwen3-embedding:0.6b) |
 | Slack | Bolt for Java (Socket Mode) |
 | Workflow | n8n |
 | Dashboard | React, Vite, TailwindCSS |
@@ -218,6 +228,40 @@ interface Plugin {
 - 리소스 기반: 토큰, 비용
 - 범위 기반: 사용자, 프로젝트, 에이전트, 모델별
 
+### RAG 시스템
+벡터 검색 기반 지능형 컨텍스트 증강:
+
+```kotlin
+// 피드백 학습 기반 라우팅 (AgentRouter)
+fun route(message: String, userId: String?): AgentMatch {
+    // 1. 피드백 학습 검색 (유사 쿼리 분석, confidence 0.9)
+    feedbackLearningMatch(message, userId)?.let { return it }
+
+    // 2. 키워드 매칭 (confidence 0.95)
+    // 3. 정규식 패턴 (confidence 0.85)
+    // 4. 시맨틱 검색 (벡터 유사도)
+    // 5. 기본 폴백 (confidence 0.5)
+}
+
+// 컨텍스트 증강 (ClaudeFlowController)
+val augmented = contextAugmentationService.buildAugmentedContext(
+    userId = userId,
+    message = prompt,
+    options = AugmentationOptions(
+        includeHistory = true,
+        includeSimilar = true,
+        includeRules = true
+    )
+)
+```
+
+**주요 서비스:**
+- `EmbeddingService`: Ollama로 텍스트 → 벡터 변환 (qwen3-embedding, 1024차원)
+- `ConversationVectorService`: 대화 기록 인덱싱/검색 (Qdrant)
+- `CodeKnowledgeService`: 코드베이스 인덱싱, MR 리뷰 컨텍스트
+- `FeedbackLearningService`: 사용자 피드백으로 에이전트 선택 개선
+- `AutoSummaryService`: 대화 자동 요약 생성
+
 ## 자주 수정하는 파일
 
 | 작업 | 파일 |
@@ -225,6 +269,7 @@ interface Plugin {
 | 에이전트 추가 | `claude-flow-core/routing/AgentRouter.kt` |
 | API 엔드포인트 | `claude-flow-api/rest/*Controller.kt` |
 | 플러그인 추가 | `claude-flow-core/plugin/` |
+| RAG 설정/서비스 | `claude-flow-core/rag/` |
 | 대시보드 페이지 | `dashboard/src/pages/` |
 | n8n 워크플로우 | `docker-compose/n8n-workflows/` |
 
@@ -249,6 +294,12 @@ JIRA_API_TOKEN=xxx
 N8N_URL=http://localhost:5678
 N8N_EMAIL=admin@local.dev
 N8N_PASSWORD=your-password
+
+# 선택 (RAG - 벡터 검색, 컨텍스트 증강)
+RAG_ENABLED=true
+QDRANT_URL=http://localhost:6333
+OLLAMA_URL=http://localhost:11434
+OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
 ```
 
 ## Claude Code 통합

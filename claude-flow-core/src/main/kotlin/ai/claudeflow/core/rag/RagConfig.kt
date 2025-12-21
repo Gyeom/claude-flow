@@ -14,7 +14,7 @@ data class RagConfig(
 
     // Ollama 설정
     val ollamaUrl: String = "http://localhost:11434",
-    val embeddingModel: String = "nomic-embed-text",
+    val embeddingModel: String = "qwen3-embedding:0.6b",  // MTEB 1위, 1024차원
 
     // 검색 설정
     val minSimilarityScore: Float = 0.65f,
@@ -50,7 +50,7 @@ data class RagConfig(
                 enabled = System.getenv("RAG_ENABLED")?.toBoolean() ?: true,
                 qdrantUrl = System.getenv("QDRANT_URL") ?: "http://localhost:6333",
                 ollamaUrl = System.getenv("OLLAMA_URL") ?: "http://localhost:11434",
-                embeddingModel = System.getenv("OLLAMA_EMBEDDING_MODEL") ?: "nomic-embed-text",
+                embeddingModel = System.getenv("OLLAMA_EMBEDDING_MODEL") ?: "qwen3-embedding:0.6b",
                 minSimilarityScore = System.getenv("RAG_MIN_SIMILARITY_SCORE")?.toFloatOrNull() ?: 0.65f,
                 maxSimilarConversations = System.getenv("RAG_MAX_SIMILAR_CONVERSATIONS")?.toIntOrNull() ?: 3,
                 autoIndexEnabled = System.getenv("RAG_AUTO_INDEX")?.toBoolean() ?: true,

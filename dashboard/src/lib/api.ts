@@ -23,6 +23,30 @@ import type {
 const API_BASE_V1 = '/api/v1'
 const API_BASE_V2 = '/api/v2'
 
+/**
+ * Period를 API 파라미터로 변환
+ * - 1h → hours=1
+ * - 24h → hours=24
+ * - 7d → days=7
+ * - 30d → days=30
+ */
+function periodToParams(period: string): { days?: number; hours?: number } {
+  if (period.endsWith('h')) {
+    const hours = parseInt(period.replace('h', ''), 10)
+    return { hours }
+  }
+  const days = parseInt(period.replace('d', ''), 10) || 7
+  return { days }
+}
+
+function buildPeriodQuery(period: string): string {
+  const params = periodToParams(period)
+  if (params.hours) {
+    return `hours=${params.hours}`
+  }
+  return `days=${params.days}`
+}
+
 // ============================================================================
 // ESTIMATION CONSTANTS (Used when actual data is unavailable from API)
 // These values are approximations and should be replaced with real data
@@ -203,19 +227,19 @@ function transformDashboardStats(
 // Dashboard
 export const dashboardApi = {
   getStats: async (period = '7d'): Promise<DashboardStats> => {
-    const days = period.replace('d', '').replace('h', '')
+    const query = buildPeriodQuery(period)
     // Dashboard API, Overview API, Sources API 병렬 호출
     const [dashboardData, overviewData, sourcesData] = await Promise.all([
-      fetchApi<DashboardApiResponse>(`/analytics/dashboard?days=${days}`),
-      fetchApi<OverviewApiResponse>(`/analytics/overview?days=${days}`).catch(() => null),
-      fetchApi<SourceStatsApiResponse[]>(`/analytics/sources?days=${days}`).catch(() => null),
+      fetchApi<DashboardApiResponse>(`/analytics/dashboard?${query}`),
+      fetchApi<OverviewApiResponse>(`/analytics/overview?${query}`).catch(() => null),
+      fetchApi<SourceStatsApiResponse[]>(`/analytics/sources?${query}`).catch(() => null),
     ])
     return transformDashboardStats(dashboardData, overviewData, sourcesData)
   },
 
   getOverview: (period = '7d') => {
-    const days = period.replace('d', '').replace('h', '')
-    return fetchApi<OverviewApiResponse>(`/analytics/overview?days=${days}`)
+    const query = buildPeriodQuery(period)
+    return fetchApi<OverviewApiResponse>(`/analytics/overview?${query}`)
   },
 
   getTimeseries: (granularity = 'daily', days = 7) =>
@@ -313,13 +337,13 @@ export const agentsApi = {
 // Analytics
 export const analyticsApi = {
   getFeedback: (period = '7d') => {
-    const days = period.replace('d', '').replace('h', '')
-    return fetchApi<FeedbackAnalysis>(`/analytics/feedback?days=${days}`)
+    const query = buildPeriodQuery(period)
+    return fetchApi<FeedbackAnalysis>(`/analytics/feedback?${query}`)
   },
 
   getTokenUsage: (period = '7d') => {
-    const days = period.replace('d', '').replace('h', '')
-    return fetchApi<TokenUsage>(`/analytics/tokens?days=${days}`)
+    const query = buildPeriodQuery(period)
+    return fetchApi<TokenUsage>(`/analytics/tokens?${query}`)
   },
 
   getRoutingEfficiency: (_period = '7d') =>
@@ -329,43 +353,43 @@ export const analyticsApi = {
     fetchApi<ProjectStat[]>('/analytics/projects'),
 
   getModels: async (period = '7d') => {
-    const days = period.replace('d', '')
-    const models = await fetchApi<ModelStats[]>(`/analytics/models?days=${days}`)
+    const query = buildPeriodQuery(period)
+    const models = await fetchApi<ModelStats[]>(`/analytics/models?${query}`)
     return { period, models }
   },
 
   getErrors: async (period = '7d') => {
-    const days = period.replace('d', '')
-    const errors = await fetchApi<ErrorStats[]>(`/analytics/errors?days=${days}`)
+    const query = buildPeriodQuery(period)
+    const errors = await fetchApi<ErrorStats[]>(`/analytics/errors?${query}`)
     return { period, errors }
   },
 
   getSources: async (period = '7d') => {
-    const days = period.replace('d', '')
-    const sources = await fetchApi<SourceStats[]>(`/analytics/sources?days=${days}`)
+    const query = buildPeriodQuery(period)
+    const sources = await fetchApi<SourceStats[]>(`/analytics/sources?${query}`)
     return { period, sources }
   },
 
   getRequesters: async (period = '7d') => {
-    const days = period.replace('d', '')
-    const requesters = await fetchApi<RequesterStats[]>(`/analytics/requesters?days=${days}`)
+    const query = buildPeriodQuery(period)
+    const requesters = await fetchApi<RequesterStats[]>(`/analytics/requesters?${query}`)
     return { period, requesters }
   },
 
   // Time Series APIs
   getTokensTrend: async (period = '7d') => {
-    const days = period.replace('d', '').replace('h', '')
-    return fetchApi<TokenTrendPoint[]>(`/analytics/tokens/trend?days=${days}`)
+    const query = buildPeriodQuery(period)
+    return fetchApi<TokenTrendPoint[]>(`/analytics/tokens/trend?${query}`)
   },
 
   getErrorsTrend: async (period = '7d') => {
-    const days = period.replace('d', '').replace('h', '')
-    return fetchApi<ErrorTrendPoint[]>(`/analytics/errors/trend?days=${days}`)
+    const query = buildPeriodQuery(period)
+    return fetchApi<ErrorTrendPoint[]>(`/analytics/errors/trend?${query}`)
   },
 
   getFeedbackTrend: async (period = '7d') => {
-    const days = period.replace('d', '').replace('h', '')
-    return fetchApi<FeedbackTrendPoint[]>(`/analytics/feedback/trend?days=${days}`)
+    const query = buildPeriodQuery(period)
+    return fetchApi<FeedbackTrendPoint[]>(`/analytics/feedback/trend?${query}`)
   },
 }
 

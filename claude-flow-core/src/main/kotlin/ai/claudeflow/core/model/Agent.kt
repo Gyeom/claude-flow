@@ -310,18 +310,20 @@ data class AgentMatch(
  */
 @Serializable
 enum class RoutingMethod {
-    KEYWORD,    // 키워드 매칭 (정확도 0.95)
-    PATTERN,    // 정규식 패턴 매칭 (정확도 0.90)
-    SEMANTIC,   // 시맨틱 검색 (정확도: similarity score)
-    LLM,        // LLM 분류 (정확도 0.80)
-    CACHE,      // 캐시 히트
-    DEFAULT     // 기본 폴백 (정확도 0.50)
+    FEEDBACK_LEARNING,  // 피드백 학습 기반 (정확도 0.90)
+    KEYWORD,            // 키워드 매칭 (정확도 0.95)
+    PATTERN,            // 정규식 패턴 매칭 (정확도 0.90)
+    SEMANTIC,           // 시맨틱 검색 (정확도: similarity score)
+    LLM,                // LLM 분류 (정확도 0.80)
+    CACHE,              // 캐시 히트
+    DEFAULT             // 기본 폴백 (정확도 0.50)
 }
 
 /**
  * 라우팅 신뢰도 상수
  */
 object RoutingConfidence {
+    const val FEEDBACK_LEARNING = 0.90
     const val KEYWORD = 0.95
     const val PATTERN = 0.90
     const val LLM = 0.80

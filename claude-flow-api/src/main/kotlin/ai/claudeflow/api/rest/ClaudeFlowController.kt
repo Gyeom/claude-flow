@@ -12,6 +12,9 @@ import ai.claudeflow.core.routing.AgentUpdate
 import ai.claudeflow.core.storage.ExecutionRecord
 import ai.claudeflow.core.storage.FeedbackRecord
 import ai.claudeflow.core.storage.Storage
+import ai.claudeflow.core.rag.ContextAugmentationService
+import ai.claudeflow.core.rag.AugmentationOptions
+import ai.claudeflow.core.rag.ConversationVectorService
 import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
 import ai.claudeflow.executor.ExecutionResult
@@ -43,7 +46,9 @@ class ClaudeFlowController(
     private val projectRegistry: ProjectRegistry,
     private val projectContextService: ProjectContextService,
     private val storage: Storage? = null,
-    private val rateLimiter: RateLimiter? = null
+    private val rateLimiter: RateLimiter? = null,
+    private val contextAugmentationService: ContextAugmentationService? = null,
+    private val conversationVectorService: ConversationVectorService? = null
 ) {
     private val agentRouter = AgentRouter()
     private val commandHandler = CommandHandler(projectRegistry)
@@ -449,20 +454,57 @@ class ClaudeFlowController(
                 logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
             }
 
-            // 4. 대화 히스토리 포함 프롬프트 생성
+            // 4. RAG 컨텍스트 증강 (userId가 있으면)
+            var ragSystemPrompt: String? = null
+            if (request.userId != null && contextAugmentationService != null) {
+                try {
+                    val augmented = contextAugmentationService.buildAugmentedContext(
+                        userId = request.userId,
+                        message = request.prompt,
+                        options = AugmentationOptions(
+                            includeSimilarConversations = true,
+                            includeUserRules = true,
+                            includeUserSummary = true,
+                            maxSimilarConversations = 3,
+                            minSimilarityScore = 0.65f
+                        )
+                    )
+                    if (augmented.systemPrompt.isNotBlank()) {
+                        ragSystemPrompt = augmented.systemPrompt
+                        logger.info { "RAG context augmented: ${augmented.relevantConversations.size} similar conversations, ${augmented.userRules.size} rules (${augmented.metadata.totalTimeMs}ms)" }
+                    }
+                } catch (e: Exception) {
+                    logger.warn { "RAG augmentation failed (continuing without): ${e.message}" }
+                }
+            }
+
+            // 5. 대화 히스토리 포함 프롬프트 생성
             val contextualPrompt = buildContextualPrompt(enrichedResult.enrichedPrompt, request.conversationHistory)
 
-            // 5. 작업 디렉토리 결정 (우선순위: 요청 > 탐지된 프로젝트 > 채널 프로젝트 > 에이전트)
+            // 6. 작업 디렉토리 결정 (우선순위: 요청 > 탐지된 프로젝트 > 채널 프로젝트 > 에이전트)
             val detectedProjectPath = enrichedResult.detectedProjects.firstOrNull()?.path
             val workingDir = request.workingDirectory
                 ?: detectedProjectPath
                 ?: project?.workingDirectory
                 ?: match.agent.workingDirectory
 
-            // 5. 라우팅된 에이전트의 설정으로 실행
+            // 7. 시스템 프롬프트 구성 (우선순위: 요청 > RAG증강 + 에이전트)
+            val finalSystemPrompt = request.systemPrompt ?: buildString {
+                // RAG 컨텍스트가 있으면 먼저 추가
+                ragSystemPrompt?.let { ragPrompt ->
+                    append(ragPrompt)
+                    append("\n\n")
+                }
+                // 에이전트 시스템 프롬프트 추가
+                if (match.agent.systemPrompt.isNotBlank()) {
+                    append(match.agent.systemPrompt)
+                }
+            }.takeIf { it.isNotBlank() }
+
+            // 8. 라우팅된 에이전트의 설정으로 실행
             val executionRequest = ExecutionRequest(
                 prompt = contextualPrompt,
-                systemPrompt = request.systemPrompt ?: match.agent.systemPrompt,
+                systemPrompt = finalSystemPrompt,
                 workingDirectory = workingDir,
                 model = request.model ?: match.agent.model,
                 maxTurns = request.maxTurns ?: DEFAULT_MAX_TURNS,
@@ -473,28 +515,42 @@ class ClaudeFlowController(
 
             val result = claudeExecutor.execute(executionRequest)
 
-            // 6. 실행 결과 저장
+            // 9. 실행 결과 저장
+            val executionRecord = ExecutionRecord(
+                id = result.requestId,
+                prompt = request.prompt.take(1000),
+                result = result.result?.take(5000),
+                status = result.status.name,
+                agentId = match.agent.id,
+                projectId = project?.id,
+                userId = request.userId,
+                channel = request.channel,
+                threadTs = request.threadTs,
+                replyTs = null,
+                durationMs = result.durationMs,
+                inputTokens = result.usage?.inputTokens ?: 0,
+                outputTokens = result.usage?.outputTokens ?: 0,
+                error = result.error
+            )
+
             storage?.let { store ->
                 try {
-                    store.saveExecution(ExecutionRecord(
-                        id = result.requestId,
-                        prompt = request.prompt.take(1000),
-                        result = result.result?.take(5000),
-                        status = result.status.name,
-                        agentId = match.agent.id,
-                        projectId = project?.id,
-                        userId = request.userId,
-                        channel = request.channel,
-                        threadTs = request.threadTs,
-                        replyTs = null,
-                        durationMs = result.durationMs,
-                        inputTokens = result.usage?.inputTokens ?: 0,
-                        outputTokens = result.usage?.outputTokens ?: 0,
-                        error = result.error
-                    ))
+                    store.saveExecution(executionRecord)
                     logger.debug { "Saved execution record: ${result.requestId}" }
 
-                    // 7. 라우팅 메트릭 저장
+                    // 10. RAG 자동 인덱싱 (성공한 실행만)
+                    if (result.status == ExecutionStatus.SUCCESS && conversationVectorService != null) {
+                        try {
+                            val indexed = conversationVectorService.indexExecution(executionRecord)
+                            if (indexed) {
+                                logger.debug { "RAG indexed execution: ${result.requestId}" }
+                            }
+                        } catch (e: Exception) {
+                            logger.warn { "RAG indexing failed (non-critical): ${e.message}" }
+                        }
+                    }
+
+                    // 11. 라우팅 메트릭 저장
                     store.saveRoutingMetric(
                         executionId = result.requestId,
                         routingMethod = match.method.name.lowercase(),
@@ -504,7 +560,7 @@ class ClaudeFlowController(
                     )
                     logger.debug { "Saved routing metric: method=${match.method.name}, latency=${routingLatencyMs}ms" }
 
-                    // 8. 사용자 컨텍스트 업데이트 (User Management용)
+                    // 12. 사용자 컨텍스트 업데이트 (User Management용)
                     request.userId?.let { userId ->
                         store.updateUserInteraction(
                             userId = userId,

@@ -24,14 +24,18 @@ services:
       - JIRA_URL=${JIRA_URL:-}
       - JIRA_EMAIL=${JIRA_EMAIL:-}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
-      # Qdrant/Ollama (optional - SemanticRouter용)
-      - QDRANT_URL=${QDRANT_URL:-}
-      - OLLAMA_URL=${OLLAMA_URL:-}
+      # RAG 설정 (Qdrant + Ollama)
+      - RAG_ENABLED=${RAG_ENABLED:-true}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
     volumes:
       - ${HOST_WORKSPACE:-~/projects}:/workspace:rw
       - claude_flow_data:/app/data
     depends_on:
       - n8n
+      - qdrant
+      - ollama
     networks:
       - claude-flow-network
     restart: unless-stopped
@@ -73,36 +77,55 @@ services:
     restart: unless-stopped
 
   # ============================================
-  # Optional Services (uncomment if needed)
+  # RAG Services (Vector DB + Embedding)
   # ============================================
 
-  # Qdrant 벡터 데이터베이스 (SemanticRouter용)
-  # qdrant:
-  #   image: qdrant/qdrant:latest
-  #   container_name: claude-flow-qdrant
-  #   ports:
-  #     - "6333:6333"
-  #   volumes:
-  #     - qdrant_data:/qdrant/storage
-  #   networks:
-  #     - claude-flow-network
+  # Qdrant 벡터 데이터베이스
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: claude-flow-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # Ollama 임베딩 서비스 (SemanticRouter용)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: claude-flow-ollama
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   networks:
-  #     - claude-flow-network
+  # Ollama 임베딩 서비스 (qwen3-embedding 자동 설치)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: claude-flow-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ./scripts/ollama-entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    environment:
+      - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   n8n_data:
   claude_flow_data:
-  # qdrant_data:
-  # ollama_data:
+  qdrant_data:
+  ollama_data:
 
 networks:
   claude-flow-network:

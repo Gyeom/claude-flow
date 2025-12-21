@@ -28,8 +28,13 @@ class ConversationVectorService(
         .build()
     private val objectMapper = jacksonObjectMapper()
 
+    /**
+     * 임베딩 서비스에서 동적으로 차원 가져옴
+     */
+    val vectorDimension: Int
+        get() = embeddingService.dimension
+
     companion object {
-        const val VECTOR_DIMENSION = 768
         const val DEFAULT_MIN_SCORE = 0.6f
         const val DEFAULT_TOP_K = 5
     }
@@ -62,9 +67,10 @@ class ConversationVectorService(
 
     private fun createCollection(): Boolean {
         return try {
+            logger.info { "Creating collection $collectionName with dimension $vectorDimension" }
             val requestBody = mapOf(
                 "vectors" to mapOf(
-                    "size" to VECTOR_DIMENSION,
+                    "size" to vectorDimension,
                     "distance" to "Cosine"
                 ),
                 "optimizers_config" to mapOf(

@@ -30,11 +30,17 @@ class AnalyticsController(
 
     /**
      * 대시보드 통계
+     * @param days 일 단위 기간 (기본값: 30)
+     * @param hours 시간 단위 기간 (days보다 우선)
      */
     @GetMapping("/dashboard")
-    fun getDashboard(@RequestParam(defaultValue = "30") days: Int): Mono<ResponseEntity<DashboardStats>> = mono {
-        logger.info { "Get dashboard stats for $days days" }
-        val stats = analytics.getDashboard(days)
+    fun getDashboard(
+        @RequestParam(defaultValue = "30") days: Int,
+        @RequestParam(required = false) hours: Int?
+    ): Mono<ResponseEntity<DashboardStats>> = mono {
+        val effectiveDays = hours?.let { it / 24.0 }?.toInt()?.coerceAtLeast(1) ?: days
+        logger.info { "Get dashboard stats for ${hours?.let { "$it hours" } ?: "$days days"}" }
+        val stats = analytics.getDashboard(effectiveDays, hours)
         ResponseEntity.ok(stats)
     }
 
@@ -102,10 +108,12 @@ class AnalyticsController(
      */
     @GetMapping("/overview")
     fun getOverview(
-        @RequestParam(defaultValue = "7") days: Int
+        @RequestParam(defaultValue = "7") days: Int,
+        @RequestParam(required = false) hours: Int?
     ): Mono<ResponseEntity<OverviewStats>> = mono {
-        logger.info { "Get overview stats for $days days" }
-        val stats = storage.getOverviewStats(days)
+        logger.info { "Get overview stats for ${hours?.let { "$it hours" } ?: "$days days"}" }
+        val dateRange = if (hours != null) DateRange.lastHours(hours) else DateRange.lastDays(days)
+        val stats = storage.analyticsRepository.getOverviewStats(dateRange)
         ResponseEntity.ok(stats)
     }
 
@@ -254,10 +262,11 @@ class AnalyticsController(
      */
     @GetMapping("/tokens/trend")
     fun getTokensTrend(
-        @RequestParam(defaultValue = "7") days: Int
+        @RequestParam(defaultValue = "7") days: Int,
+        @RequestParam(required = false) hours: Int?
     ): Mono<ResponseEntity<List<TokenTrendPointDto>>> = mono {
-        logger.info { "Get tokens trend for $days days" }
-        val dateRange = DateRange.lastDays(days)
+        logger.info { "Get tokens trend for ${hours?.let { "$it hours" } ?: "$days days"}" }
+        val dateRange = if (hours != null) DateRange.lastHours(hours) else DateRange.lastDays(days)
         val trend = storage.analyticsRepository.getTokensTrend(dateRange)
         ResponseEntity.ok(trend.map { TokenTrendPointDto(it.date, it.inputTokens, it.outputTokens) })
     }

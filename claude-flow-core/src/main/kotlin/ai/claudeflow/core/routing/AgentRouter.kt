@@ -3,6 +3,8 @@ package ai.claudeflow.core.routing
 import ai.claudeflow.core.model.Agent
 import ai.claudeflow.core.model.AgentMatch
 import ai.claudeflow.core.model.RoutingMethod
+import ai.claudeflow.core.rag.FeedbackLearningService
+import ai.claudeflow.core.rag.AgentRecommendation
 import mu.KotlinLogging
 
 private val logger = KotlinLogging.logger {}
@@ -11,14 +13,16 @@ private val logger = KotlinLogging.logger {}
  * 에이전트 라우터
  *
  * 다단계 분류 파이프라인:
- * 1. 키워드 매칭 (0.95 confidence) - 가장 빠름
- * 2. 정규식 패턴 매칭 (0.85 confidence)
- * 3. 시맨틱 검색 (벡터 유사도) - 선택적
- * 4. 기본 에이전트 폴백 (0.5 confidence)
+ * 1. 피드백 학습 기반 추천 (0.9 confidence) - 유사 쿼리 분석
+ * 2. 키워드 매칭 (0.95 confidence) - 가장 빠름
+ * 3. 정규식 패턴 매칭 (0.85 confidence)
+ * 4. 시맨틱 검색 (벡터 유사도) - 선택적
+ * 5. 기본 에이전트 폴백 (0.5 confidence)
  */
 class AgentRouter(
     initialAgents: List<Agent> = defaultAgents(),
-    private val semanticRouter: SemanticRouter? = null
+    private val semanticRouter: SemanticRouter? = null,
+    private val feedbackLearningService: FeedbackLearningService? = null
 ) {
     private val agents = initialAgents.toMutableList()
 
@@ -33,27 +37,42 @@ class AgentRouter(
 
     /**
      * 메시지를 분석하여 가장 적합한 에이전트 선택
+     *
+     * @param message 사용자 메시지
+     * @param userId 사용자 ID (피드백 학습용, 선택적)
      */
-    fun route(message: String): AgentMatch {
+    fun route(message: String, userId: String? = null): AgentMatch {
         val normalizedMessage = message.lowercase()
         val enabledAgents = agents.filter { it.enabled }
 
+        // 0. 피드백 학습 기반 추천 (유사 쿼리 분석)
+        if (userId != null && feedbackLearningService != null) {
+            feedbackLearningMatch(message, userId, enabledAgents)?.let {
+                logger.debug { "Feedback learning match: ${it.agent.id} (confidence: ${it.confidence})" }
+                return it
+            }
+        }
+
         // 1. 키워드 매칭 (가장 빠름, 0.95 confidence)
-        keywordMatch(normalizedMessage, enabledAgents)?.let {
-            logger.debug { "Keyword match: ${it.agent.id}" }
-            return it
+        keywordMatch(normalizedMessage, enabledAgents)?.let { match ->
+            // 피드백으로 점수 조정
+            val adjustedMatch = adjustMatchWithFeedback(match, userId)
+            logger.debug { "Keyword match: ${adjustedMatch.agent.id}" }
+            return adjustedMatch
         }
 
         // 2. 정규식 패턴 매칭 (0.85 confidence)
-        patternMatch(normalizedMessage, enabledAgents)?.let {
-            logger.debug { "Pattern match: ${it.agent.id}" }
-            return it
+        patternMatch(normalizedMessage, enabledAgents)?.let { match ->
+            val adjustedMatch = adjustMatchWithFeedback(match, userId)
+            logger.debug { "Pattern match: ${adjustedMatch.agent.id}" }
+            return adjustedMatch
         }
 
         // 3. 시맨틱 검색 (벡터 유사도, 선택적)
-        semanticRouter?.classify(message, enabledAgents)?.let {
-            logger.debug { "Semantic match: ${it.agent.id}" }
-            return it
+        semanticRouter?.classify(message, enabledAgents)?.let { match ->
+            val adjustedMatch = adjustMatchWithFeedback(match, userId)
+            logger.debug { "Semantic match: ${adjustedMatch.agent.id}" }
+            return adjustedMatch
         }
 
         // 4. 기본 에이전트로 폴백
@@ -67,6 +86,48 @@ class AgentRouter(
             confidence = 0.5,
             matchedKeyword = null
         )
+    }
+
+    /**
+     * 피드백 학습 기반 에이전트 매칭
+     */
+    private fun feedbackLearningMatch(
+        message: String,
+        userId: String,
+        agents: List<Agent>
+    ): AgentMatch? {
+        val recommendation = feedbackLearningService?.recommendAgentFromSimilar(
+            query = message,
+            userId = userId,
+            topK = 5
+        ) ?: return null
+
+        // 높은 신뢰도 (0.8 이상)만 사용
+        if (recommendation.confidence < 0.8f) return null
+
+        val agent = agents.find { it.id == recommendation.agentId } ?: return null
+
+        return AgentMatch(
+            agent = agent,
+            confidence = recommendation.confidence.toDouble().coerceAtMost(0.9),
+            matchedKeyword = recommendation.reason,
+            method = RoutingMethod.FEEDBACK_LEARNING
+        )
+    }
+
+    /**
+     * 피드백 기반 점수 조정
+     */
+    private fun adjustMatchWithFeedback(match: AgentMatch, userId: String?): AgentMatch {
+        if (userId == null || feedbackLearningService == null) return match
+
+        val adjustedScore = feedbackLearningService.adjustRoutingScore(
+            userId = userId,
+            agentId = match.agent.id,
+            baseScore = match.confidence.toFloat()
+        )
+
+        return match.copy(confidence = adjustedScore.toDouble())
     }
 
     /**
@@ -130,6 +191,11 @@ class AgentRouter(
      * 시맨틱 라우터 설정 여부
      */
     fun hasSemanticRouter(): Boolean = semanticRouter != null
+
+    /**
+     * 피드백 학습 서비스 설정 여부
+     */
+    fun hasFeedbackLearning(): Boolean = feedbackLearningService != null
 
     // ==================== 에이전트 CRUD ====================
 

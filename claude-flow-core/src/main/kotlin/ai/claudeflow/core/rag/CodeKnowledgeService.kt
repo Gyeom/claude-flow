@@ -32,8 +32,13 @@ class CodeKnowledgeService(
         .build()
     private val objectMapper = jacksonObjectMapper()
 
+    /**
+     * 임베딩 서비스에서 동적으로 차원 가져옴
+     */
+    val vectorDimension: Int
+        get() = embeddingService.dimension
+
     companion object {
-        const val VECTOR_DIMENSION = 768
         val SUPPORTED_EXTENSIONS = setOf(
             "kt", "kts", "java", "ts", "tsx", "js", "jsx", "mjs",
             "py", "go", "rs", "rb", "php", "cs", "cpp", "c", "h",
@@ -74,9 +79,10 @@ class CodeKnowledgeService(
 
     private fun createCollection(): Boolean {
         return try {
+            logger.info { "Creating knowledge collection $collectionName with dimension $vectorDimension" }
             val requestBody = mapOf(
                 "vectors" to mapOf(
-                    "size" to VECTOR_DIMENSION,
+                    "size" to vectorDimension,
                     "distance" to "Cosine"
                 ),
                 "optimizers_config" to mapOf(
@@ -349,6 +355,48 @@ class CodeKnowledgeService(
         } catch (e: Exception) {
             KnowledgeStats(projectId, 0, null)
         }
+    }
+
+    /**
+     * 원격 파일 내용 직접 인덱싱 (GitLab/GitHub API용)
+     *
+     * @param projectId 프로젝트 ID
+     * @param filePath 파일 경로
+     * @param content 파일 내용
+     * @return 생성된 청크 수
+     */
+    fun indexRemoteFile(projectId: String, filePath: String, content: String): Int {
+        if (content.isBlank()) return 0
+
+        try {
+            val chunks = codeChunker.chunkFile(content, filePath)
+            var indexed = 0
+            var pointId = generateBasePointId("$projectId:$filePath")
+
+            for (chunk in chunks) {
+                if (indexChunk(projectId, chunk, pointId++)) {
+                    indexed++
+                }
+            }
+
+            logger.debug { "Indexed remote file $filePath: $indexed chunks" }
+            return indexed
+        } catch (e: Exception) {
+            logger.warn { "Failed to index remote file $filePath: ${e.message}" }
+            return 0
+        }
+    }
+
+    /**
+     * 배치 인덱싱 (여러 파일 한번에)
+     */
+    fun indexRemoteFiles(projectId: String, files: Map<String, String>): Int {
+        var totalChunks = 0
+        for ((path, content) in files) {
+            totalChunks += indexRemoteFile(projectId, path, content)
+        }
+        logger.info { "Batch indexed ${files.size} files, $totalChunks total chunks for $projectId" }
+        return totalChunks
     }
 
     /**
