@@ -1,0 +1,319 @@
+{
+  "name": "Alert to MR Pipeline",
+  "description": "Jira 생성 → develop pull → 브랜치 생성 → Claude Code 수정 → MR 생성",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert-pipeline",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "alert-pipeline"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 파이프라인 요청 파싱\nconst body = $input.item.json.body || $input.item.json;\n\nconst project = body.project; // ccds-server, authorization-server 등\nconst summary = body.summary;\nconst description = body.description;\nconst severity = body.severity || 'HIGH';\nconst suggestedFix = body.suggestedFix;\nconst channel = body.channel;\nconst threadTs = body.threadTs;\nconst userId = body.userId;\n\n// 프로젝트 → Jira 키 매핑\nconst PROJECT_JIRA_MAP = {\n  'ccds-server': 'CCDC',\n  'authorization-server': 'CCDC',\n  'vlc-gateway-server': 'CCDC',\n  'ad-data-management-server': 'DC'\n};\n\nconst jiraProject = PROJECT_JIRA_MAP[project] || 'CCDC';\n\n// 프로젝트 → 워크스페이스 경로 매핑\nconst workspacePath = process.env.WORKSPACE_PATH || '/Users/a13801/42dot';\n\nreturn {\n  json: {\n    project,\n    projectPath: `${workspacePath}/${project}`,\n    jiraProject,\n    summary,\n    description,\n    severity,\n    suggestedFix,\n    channel,\n    threadTs,\n    userId,\n    baseBranch: 'develop'\n  }\n};"
+      },
+      "id": "parse-request",
+      "name": "Parse Pipeline Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "thread_ts",
+              "value": "={{ $json.threadTs }}"
+            },
+            {
+              "name": "text",
+              "value": ":hourglass_flowing_sand: *자동 수정 파이프라인 시작*\n\n1. :ticket: Jira 이슈 생성 중..."
+            }
+          ]
+        }
+      },
+      "id": "notify-start",
+      "name": "Notify Pipeline Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/execute",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "command",
+              "value": "create"
+            },
+            {
+              "name": "args",
+              "value": "={{ JSON.stringify({ project: $('Parse Pipeline Request').item.json.jiraProject, summary: $('Parse Pipeline Request').item.json.summary, description: $('Parse Pipeline Request').item.json.description, issue_type: 'Bug', labels: ['auto-created', 'alert-trigger'] }) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "create-jira",
+      "name": "Create Jira Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const jiraResponse = $input.item.json;\nconst pipelineData = $('Parse Pipeline Request').item.json;\n\n// Jira 응답에서 이슈 키 추출\nconst issueKey = jiraResponse.data?.key || jiraResponse.key || 'UNKNOWN';\nconst issueUrl = jiraResponse.data?.url || jiraResponse.url || '';\n\n// 브랜치 이름 생성\nconst branchName = `fix/${issueKey.toLowerCase()}`;\n\nreturn {\n  json: {\n    ...pipelineData,\n    issueKey,\n    issueUrl,\n    branchName\n  }\n};"
+      },
+      "id": "extract-jira-key",
+      "name": "Extract Jira Key",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "thread_ts",
+              "value": "={{ $json.threadTs }}"
+            },
+            {
+              "name": "text",
+              "value": "=:white_check_mark: Jira 이슈 생성: *{{ $json.issueKey }}*\n{{ $json.issueUrl }}\n\n2. :computer: Claude Code 실행 중... (develop pull → 브랜치 생성 → 코드 수정)"
+            }
+          ]
+        }
+      },
+      "id": "notify-jira-created",
+      "name": "Notify Jira Created",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "=장애 수정 작업을 진행해주세요.\n\n## 작업 정보\n- 프로젝트: {{ $json.project }}\n- 프로젝트 경로: {{ $json.projectPath }}\n- Jira 이슈: {{ $json.issueKey }}\n- 브랜치: {{ $json.branchName }}\n\n## 장애 내용\n{{ $json.summary }}\n\n{{ $json.description }}\n\n## 수정 제안\n{{ $json.suggestedFix || '분석 후 수정 진행' }}\n\n## 작업 단계\n1. `cd {{ $json.projectPath }}`\n2. `git checkout {{ $json.baseBranch }}`\n3. `git pull origin {{ $json.baseBranch }}`\n4. `git checkout -b {{ $json.branchName }}`\n5. 코드 분석 및 수정\n6. `git add .`\n7. `git commit -m \"fix({{ $json.issueKey }}): {{ $json.summary }}\"`\n8. `git push origin {{ $json.branchName }}`\n9. GitLab MR 생성 ({{ $json.branchName }} → {{ $json.baseBranch }})\n\n모든 작업이 완료되면 MR URL을 알려주세요."
+            },
+            {
+              "name": "projectId",
+              "value": "={{ $json.project }}"
+            },
+            {
+              "name": "model",
+              "value": "sonnet"
+            },
+            {
+              "name": "timeout",
+              "value": 300
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "execute-claude-code",
+      "name": "Execute Claude Code",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const claudeResponse = $input.item.json;\nconst pipelineData = $('Extract Jira Key').item.json;\n\n// Claude 응답에서 MR URL 추출\nconst response = claudeResponse.response || claudeResponse.output || '';\nconst mrUrlMatch = response.match(/https:\\/\\/gitlab[^\\s)]+merge_requests\\/\\d+/);\nconst mrUrl = mrUrlMatch ? mrUrlMatch[0] : null;\n\nconst success = !!mrUrl || response.includes('MR') || response.includes('merge request');\n\nreturn {\n  json: {\n    ...pipelineData,\n    success,\n    mrUrl,\n    claudeResponse: response.substring(0, 1000) // 로그용 일부만\n  }\n};"
+      },
+      "id": "parse-claude-response",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "is-success",
+      "name": "Pipeline Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1800, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "thread_ts",
+              "value": "={{ $json.threadTs }}"
+            },
+            {
+              "name": "text",
+              "value": "=:tada: *자동 수정 파이프라인 완료!*\n\n:ticket: Jira: *{{ $json.issueKey }}*\n:seedling: Branch: `{{ $json.branchName }}`\n:twisted_rightwards_arrows: MR: {{ $json.mrUrl || '생성됨' }}\n\n_리뷰 후 머지해주세요._"
+            }
+          ]
+        }
+      },
+      "id": "notify-success",
+      "name": "Notify Success",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "thread_ts",
+              "value": "={{ $json.threadTs }}"
+            },
+            {
+              "name": "text",
+              "value": "=:x: *파이프라인 실패*\n\n:ticket: Jira: *{{ $json.issueKey }}* (생성됨)\n\n수동으로 확인이 필요합니다.\n```\n{{ $json.claudeResponse }}\n```"
+            }
+          ]
+        }
+      },
+      "id": "notify-failure",
+      "name": "Notify Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2000, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: $json.success, issueKey: $json.issueKey, branchName: $json.branchName, mrUrl: $json.mrUrl }) }}"
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2200, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Parse Pipeline Request", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Pipeline Request": {
+      "main": [
+        [{ "node": "Notify Pipeline Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Pipeline Start": {
+      "main": [
+        [{ "node": "Create Jira Issue", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Jira Issue": {
+      "main": [
+        [{ "node": "Extract Jira Key", "type": "main", "index": 0 }]
+      ]
+    },
+    "Extract Jira Key": {
+      "main": [
+        [{ "node": "Notify Jira Created", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Jira Created": {
+      "main": [
+        [{ "node": "Execute Claude Code", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Claude Code": {
+      "main": [
+        [{ "node": "Parse Claude Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [{ "node": "Pipeline Success?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Pipeline Success?": {
+      "main": [
+        [{ "node": "Notify Success", "type": "main", "index": 0 }],
+        [{ "node": "Notify Failure", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Success": {
+      "main": [
+        [{ "node": "Respond", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Failure": {
+      "main": [
+        [{ "node": "Respond", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-21T10:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,225 @@
+{
+  "name": "Alert Channel Monitor",
+  "description": "장애 알람 채널 모니터링 → Claude 분석 → Jira 생성 → MR 파이프라인",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert-monitor",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "alert-monitor"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 알람 채널 설정 (환경변수 또는 하드코딩)\nconst ALERT_CHANNELS = [\n  'C_ALERT_CHANNEL_ID',  // 실제 채널 ID로 변경\n  'C_MONITORING_CHANNEL_ID'\n];\n\n// 알람 봇 ID (Sentry, DataDog, GitLab 등)\nconst ALERT_BOT_IDS = [\n  'B_SENTRY_BOT',\n  'B_DATADOG_BOT', \n  'B_GITLAB_BOT'\n];\n\nconst body = $input.item.json.body || $input.item.json;\nconst event = body.event || body;\nconst channel = event.channel;\nconst botId = event.bot_id;\nconst text = event.text || '';\nconst ts = event.ts;\nconst threadTs = event.thread_ts;\n\n// 알람 채널이 아니면 스킵\n// const isAlertChannel = ALERT_CHANNELS.includes(channel);\n// 임시: 모든 채널에서 알람 봇 메시지 처리\nconst isAlertChannel = true;\n\n// 봇 메시지가 아니면 스킵 (사람이 보낸 메시지는 무시)\nconst isAlertBot = !!botId; // ALERT_BOT_IDS.includes(botId);\n\n// 에러/장애 키워드 확인\nconst errorKeywords = ['error', 'exception', 'failed', 'failure', 'critical', 'alert', '장애', '오류', '에러', '실패'];\nconst hasErrorKeyword = errorKeywords.some(kw => text.toLowerCase().includes(kw));\n\nconst shouldProcess = isAlertChannel && isAlertBot && hasErrorKeyword;\n\nreturn {\n  json: {\n    shouldProcess,\n    channel,\n    botId,\n    text,\n    messageTs: ts,\n    threadTs: threadTs || ts,\n    reason: !shouldProcess ? \n      (!isAlertChannel ? 'Not alert channel' : \n       !isAlertBot ? 'Not from alert bot' : \n       !hasErrorKeyword ? 'No error keywords' : 'Unknown') : null\n  }\n};"
+      },
+      "id": "filter-alert",
+      "name": "Filter Alert Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.shouldProcess }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "should-process",
+      "name": "Should Process?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "=다음 장애 알람 메시지를 분석해주세요:\n\n```\n{{ $json.text }}\n```\n\n다음 JSON 형식으로만 응답해주세요:\n```json\n{\n  \"isActionable\": true/false,\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\n  \"project\": \"프로젝트 추정 (ccds-server, authorization-server, ad-data-management-server, vlc-gateway-server 중 하나 또는 null)\",\n  \"summary\": \"Jira 이슈 제목\",\n  \"description\": \"상세 설명\",\n  \"suggestedFix\": \"수정 제안 (있으면)\"\n}\n```"
+            },
+            {
+              "name": "model",
+              "value": "haiku"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "analyze-alert",
+      "name": "Claude Analyze Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst text = response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 정보 가져오기\nconst prevData = $('Filter Alert Message').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: prevData.channel,\n    messageTs: prevData.messageTs,\n    threadTs: prevData.threadTs,\n    originalText: prevData.text\n  }\n};"
+      },
+      "id": "parse-analysis",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isActionable }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "is-actionable",
+      "name": "Is Actionable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1200, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "thread_ts",
+              "value": "={{ $json.threadTs }}"
+            },
+            {
+              "name": "text",
+              "value": "=:rotating_light: *장애 알람 분석 완료*\n\n*심각도:* {{ $json.severity }}\n*프로젝트:* {{ $json.project || '판단 불가' }}\n*제목:* {{ $json.summary }}\n\n*설명:*\n{{ $json.description }}\n\n{{ $json.suggestedFix ? '*수정 제안:*\\n' + $json.suggestedFix : '' }}\n\n---\n:ticket: Jira 이슈 생성 → 리액션 추가\n:rocket: 자동 수정 시작 → :hammer_and_wrench: 리액션 추가"
+            }
+          ]
+        }
+      },
+      "id": "send-analysis",
+      "name": "Send Analysis to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1400, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 분석 결과를 임시 저장 (reaction-handler에서 사용)\nconst data = $input.item.json;\nconst slackResponse = $('Send Analysis to Slack').item.json;\n\n// 메시지 ts를 키로 저장\nconst analysisData = {\n  messageTs: slackResponse.ts || data.messageTs,\n  channel: data.channel,\n  project: data.project,\n  summary: data.summary,\n  description: data.description,\n  severity: data.severity,\n  suggestedFix: data.suggestedFix,\n  originalText: data.originalText,\n  timestamp: new Date().toISOString()\n};\n\n// 실제 구현에서는 Redis나 DB에 저장\n// 여기서는 로그만 출력\nconsole.log('Alert analysis saved:', JSON.stringify(analysisData));\n\nreturn { json: { success: true, analysisData } };"
+      },
+      "id": "save-analysis",
+      "name": "Save Analysis for Reaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 스킵된 이유 로깅\nconst data = $input.item.json;\nconsole.log('Alert skipped:', data.reason);\nreturn { json: { skipped: true, reason: data.reason } };"
+      },
+      "id": "skip",
+      "name": "Skip (Not Alert)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 액션 불필요 로깅\nconst data = $input.item.json;\nconsole.log('Alert not actionable:', data);\nreturn { json: { skipped: true, reason: 'Not actionable' } };"
+      },
+      "id": "not-actionable",
+      "name": "Skip (Not Actionable)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Filter Alert Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Alert Message": {
+      "main": [
+        [{ "node": "Should Process?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Should Process?": {
+      "main": [
+        [{ "node": "Claude Analyze Alert", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Not Alert)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Analyze Alert": {
+      "main": [
+        [{ "node": "Parse Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [{ "node": "Is Actionable?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Actionable?": {
+      "main": [
+        [{ "node": "Send Analysis to Slack", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Not Actionable)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Analysis to Slack": {
+      "main": [
+        [{ "node": "Save Analysis for Reaction", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2024-12-21T10:00:00.000Z",
+  "versionId": "1"
+}

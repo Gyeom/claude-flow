@@ -107,16 +107,42 @@ claude-flow/
 
 ### 현재 n8n 워크플로우 목록
 
-| 워크플로우 | 기능 |
-|-----------|------|
-| `slack-mention-handler` | Slack 멘션 → Claude 실행 |
-| `slack-reaction-handler` | Slack 리액션 → Jira/GitLab 연동 |
-| `gitlab-jira-sync` | GitLab MR ↔ Jira 이슈 동기화 |
-| `gitlab-mr-auto-review` | MR 자동 리뷰 요청 |
-| `jira-auto-fix-scheduler` | Jira 이슈 자동 분석 |
-| `daily-report` | 일일 리포트 생성 |
-| `slack-slash-command` | 슬래시 커맨드 처리 |
-| `user-context-handler` | 사용자 컨텍스트 관리 |
+| 워크플로우 | 기능 | 상태 |
+|-----------|------|------|
+| `slack-mention-handler` | Slack 멘션 → Claude 실행 | ✅ 활성 |
+| `slack-mr-review` | MR 리뷰 요청 처리 | ✅ 활성 |
+| `slack-action-handler` | Slack 버튼 액션 처리 | ✅ 활성 |
+| `slack-feedback-handler` | 피드백 수집 (👍/👎) | ✅ 활성 |
+| `slack-reaction-handler` | 리액션 → Jira/GitLab 연동 | ⏸️ 비활성 |
+| `user-context-handler` | 사용자 컨텍스트 관리 | ⏸️ 비활성 |
+| `alert-channel-monitor` | 장애 알람 채널 자동 모니터링 | ⏸️ 비활성 |
+| `alert-to-mr-pipeline` | 알람 → Jira → 브랜치 → MR 파이프라인 | ⏸️ 비활성 |
+
+### 장애 알람 자동화 파이프라인
+
+장애 알람 채널의 메시지를 자동으로 분석하고 MR까지 생성하는 파이프라인:
+
+```
+📢 장애 알람 메시지 (Sentry, DataDog 등)
+    ↓ alert-channel-monitor
+🤖 Claude가 알람 분석 (프로젝트, 심각도, 수정 제안)
+    ↓
+💬 Slack에 분석 결과 + 액션 버튼 전송
+    ↓ 🔨 리액션 또는 버튼 클릭
+🎫 Jira 이슈 자동 생성 (CCDC-xxx)
+    ↓ alert-to-mr-pipeline
+📂 git checkout develop && git pull
+    ↓
+🌿 git checkout -b fix/ccdc-xxx
+    ↓
+🔧 Claude Code가 코드 분석 및 수정
+    ↓
+💾 git commit && git push
+    ↓
+🔀 MR 생성 (fix/ccdc-xxx → develop)
+    ↓
+📢 Slack에 완료 알림 + MR 링크
+```
 
 ### Kotlin 코드의 역할
 
