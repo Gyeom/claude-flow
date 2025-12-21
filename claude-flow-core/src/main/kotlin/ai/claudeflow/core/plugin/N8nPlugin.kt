@@ -104,8 +104,12 @@ class N8nPlugin : BasePlugin() {
     override suspend fun initialize(config: Map<String, String>) {
         super.initialize(config)
         baseUrl = getConfig("N8N_URL", "http://localhost:5678").trimEnd('/')
-        n8nEmail = getConfig("N8N_EMAIL", "admin@local.dev")
+        n8nEmail = getConfig("N8N_EMAIL", "")
         n8nPassword = getConfig("N8N_PASSWORD", "")
+
+        if (n8nEmail.isEmpty()) {
+            logger.warn { "N8N_EMAIL not configured - n8n authentication will be skipped" }
+        }
 
         logger.info { "n8n plugin initialized: $baseUrl" }
     }
@@ -494,8 +498,8 @@ class N8nPlugin : BasePlugin() {
             return
         }
 
-        if (n8nPassword.isEmpty()) {
-            logger.warn { "n8n password not configured, skipping authentication" }
+        if (n8nEmail.isEmpty() || n8nPassword.isEmpty()) {
+            logger.debug { "n8n credentials not configured, skipping authentication" }
             return
         }
 

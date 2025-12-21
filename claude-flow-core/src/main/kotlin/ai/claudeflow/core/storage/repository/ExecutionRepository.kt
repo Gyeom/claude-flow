@@ -155,7 +155,11 @@ class ExecutionRepository(
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
-                COALESCE(SUM(cost), 0) as total_cost,
+                -- cost: DB 값 우선, 없으면 토큰 기반 계산 (Sonnet 4: Input $3/1M, Output $15/1M)
+                COALESCE(
+                    SUM(cost),
+                    SUM(COALESCE(input_tokens, 0)) * 0.000003 + SUM(COALESCE(output_tokens, 0)) * 0.000015
+                ) as total_cost,
                 COALESCE(SUM(input_tokens), 0) as input_tokens,
                 COALESCE(SUM(output_tokens), 0) as output_tokens,
                 COALESCE(AVG(duration_ms), 0) as avg_duration

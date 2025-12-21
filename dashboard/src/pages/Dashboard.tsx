@@ -21,7 +21,7 @@ import {
   FeedbackChart,
   TokenUsageChart,
 } from '@/components/Chart'
-import { dashboardApi } from '@/lib/api'
+import { dashboardApi, analyticsApi, type TokenTrendPoint } from '@/lib/api'
 import { formatNumber, formatDuration, formatPercent, formatCost, getSatisfactionColor, cn } from '@/lib/utils'
 
 type Period = '1h' | '24h' | '7d' | '30d'
@@ -29,11 +29,18 @@ type Period = '1h' | '24h' | '7d' | '30d'
 export function Dashboard() {
   const [period, setPeriod] = useState<Period>('7d')
 
-  const { data: stats, isLoading, error } = useQuery({
+  const { data: stats, isLoading: statsLoading, error } = useQuery({
     queryKey: ['dashboard', period],
     queryFn: () => dashboardApi.getStats(period),
     refetchInterval: 30000,
   })
+
+  const { data: tokenTrend, isLoading: tokenTrendLoading } = useQuery({
+    queryKey: ['dashboard', 'tokens', 'trend', period],
+    queryFn: () => analyticsApi.getTokensTrend(period),
+  })
+
+  const isLoading = statsLoading || tokenTrendLoading
 
   if (isLoading) {
     return (
@@ -54,7 +61,7 @@ export function Dashboard() {
     )
   }
 
-  // Default empty stats
+  // Default empty stats used when API returns partial data
   const emptyStats = {
     period: period,
     overview: {
@@ -98,11 +105,11 @@ export function Dashboard() {
 
   const totalTokens = dashboardStats.overview.totalInputTokens + dashboardStats.overview.totalOutputTokens
 
-  // Transform timeseries for charts
-  const timeseriesChartData = dashboardStats.timeseries.map(t => ({
-    date: new Date(t.timestamp).toLocaleDateString('en-US', { weekday: 'short' }),
-    input: Math.floor(t.totalTokens * 0.4),
-    output: Math.floor(t.totalTokens * 0.6),
+  // Transform timeseries for charts using actual token trend data
+  const timeseriesChartData = (tokenTrend || []).map((point: TokenTrendPoint) => ({
+    date: new Date(point.date).toLocaleDateString('en-US', { weekday: 'short' }),
+    input: point.inputTokens,
+    output: point.outputTokens,
   }))
 
   const routingChartData = dashboardStats.routing.map(r => ({
@@ -299,22 +306,30 @@ export function Dashboard() {
         <Card>
           <CardHeader title="Request Sources" description="Where requests come from" />
           <div className="grid grid-cols-2 gap-4">
-            {dashboardStats.sources.map((source) => (
-              <div key={source.source} className="p-4 rounded-lg bg-muted/50">
-                <div className="flex items-center gap-2 mb-2">
-                  {source.source === 'slack' ? (
-                    <Zap className="h-4 w-4 text-purple-500" />
-                  ) : (
-                    <Activity className="h-4 w-4 text-blue-500" />
-                  )}
-                  <span className="font-medium capitalize">{source.source}</span>
+            {dashboardStats.sources.length > 0 ? (
+              dashboardStats.sources.map((source) => (
+                <div key={source.source} className="p-4 rounded-lg bg-muted/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    {source.source === 'slack' ? (
+                      <Zap className="h-4 w-4 text-purple-500" />
+                    ) : (
+                      <Activity className="h-4 w-4 text-blue-500" />
+                    )}
+                    <span className="font-medium capitalize">{source.source}</span>
+                  </div>
+                  <p className="text-2xl font-bold">{formatNumber(source.requests)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatPercent(source.successRate)} success rate
+                  </p>
                 </div>
-                <p className="text-2xl font-bold">{formatNumber(source.requests)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatPercent(source.successRate)} success rate
-                </p>
+              ))
+            ) : (
+              <div className="col-span-2 p-4 rounded-lg bg-muted/50 text-center text-muted-foreground">
+                <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-sm">No source data available</p>
+                <p className="text-xs mt-1">Source tracking will appear here once enabled</p>
               </div>
-            ))}
+            )}
           </div>
         </Card>
 

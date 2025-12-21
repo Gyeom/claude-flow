@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { ChartContainer } from '@/components/Chart'
-import { analyticsApi, verifiedFeedbackApi } from '@/lib/api'
+import { analyticsApi, verifiedFeedbackApi, type FeedbackTrendPoint } from '@/lib/api'
 import { formatNumber, formatPercent, cn } from '@/lib/utils'
 import {
   XAxis,
@@ -59,7 +59,12 @@ export function Feedback() {
     queryFn: () => verifiedFeedbackApi.getByCategory(parseInt(period.replace('d', ''))),
   })
 
-  const isLoading = feedbackLoading || verifiedLoading || categoryLoading
+  const { data: feedbackTrend, isLoading: trendLoading } = useQuery({
+    queryKey: ['analytics', 'feedback', 'trend', period],
+    queryFn: () => analyticsApi.getFeedbackTrend(period),
+  })
+
+  const isLoading = feedbackLoading || verifiedLoading || categoryLoading || trendLoading
 
   // Use API data directly with default values
   const feedbackData = feedback || {
@@ -76,15 +81,12 @@ export function Feedback() {
     { name: 'Negative', value: feedbackData.negativeCount, color: COLORS.negative },
   ]
 
-  // Trend data placeholder - will be populated when API provides time-series feedback data
-  const trendData = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(Date.now() - (6 - i) * 86400000)
-    return {
-      date: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      positive: 0,
-      negative: 0,
-    }
-  })
+  // Trend data from backend API
+  const trendData = (feedbackTrend || []).map((point: FeedbackTrendPoint) => ({
+    date: new Date(point.date).toLocaleDateString('en-US', { weekday: 'short' }),
+    positive: point.positive,
+    negative: point.negative,
+  }))
 
   const getSatisfactionIcon = (score: number) => {
     if (score >= 70) return <Smile className="h-8 w-8 text-green-500" />

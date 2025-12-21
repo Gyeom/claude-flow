@@ -73,6 +73,13 @@ class Analytics(private val storage: Storage) {
     fun getAgentStats(days: Int = 30): List<AgentStat> {
         val dateRange = DateRange.lastDays(days)
         val agentStats = analyticsRepository.getAgentStats(dateRange)
+        val tokenStats = analyticsRepository.getTokenStats(dateRange)
+
+        // 전체 평균 토큰 수 계산
+        val totalRequests = agentStats.sumOf { it.requests }
+        val avgTokensPerRequest = if (totalRequests > 0)
+            (tokenStats.totalTokens / totalRequests).toInt()
+        else 0
 
         return agentStats.map { stat ->
             val agent = agentRepository.findByIdAndProject(stat.agentId, null)
@@ -82,7 +89,7 @@ class Analytics(private val storage: Storage) {
                 totalExecutions = stat.requests.toInt(),
                 successRate = stat.successRate,
                 avgDurationMs = stat.avgDurationMs.toDouble(),
-                avgTokens = 0,  // 별도 계산 필요시 추가
+                avgTokens = avgTokensPerRequest,
                 priority = agent?.priority ?: 0
             )
         }.sortedByDescending { it.totalExecutions }

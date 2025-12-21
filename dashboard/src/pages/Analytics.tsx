@@ -14,7 +14,7 @@ import {
   TokenUsageChart,
   AgentPerformanceChart,
 } from '@/components/Chart'
-import { analyticsApi } from '@/lib/api'
+import { analyticsApi, type TokenTrendPoint } from '@/lib/api'
 import { formatNumber, formatCost, formatPercent, cn } from '@/lib/utils'
 import type { RoutingEfficiency } from '@/types'
 
@@ -37,6 +37,11 @@ export function Analytics() {
   const { data: projects, isLoading: projectsLoading } = useQuery({
     queryKey: ['analytics', 'projects'],
     queryFn: () => analyticsApi.getProjectStats(),
+  })
+
+  const { data: tokenTrend, isLoading: tokenTrendLoading } = useQuery({
+    queryKey: ['analytics', 'tokens', 'trend'],
+    queryFn: () => analyticsApi.getTokensTrend('30d'),
   })
 
   // Use actual data with empty defaults
@@ -67,7 +72,12 @@ export function Analytics() {
 
   const projectData = projects || []
 
-  const tokenTrendData: { date: string; input: number; output: number }[] = []
+  // Token trend data from backend API
+  const tokenTrendData = (tokenTrend || []).map((point: TokenTrendPoint) => ({
+    date: new Date(point.date).toLocaleDateString('en-US', { weekday: 'short' }),
+    input: point.inputTokens,
+    output: point.outputTokens,
+  }))
 
   const routingChartData = [
     { name: 'Keyword', executions: Math.round(routingData.keywordMatchRate * 1000), successRate: 0.98 },
@@ -76,7 +86,7 @@ export function Analytics() {
     { name: 'Default', executions: Math.round(routingData.defaultFallbackRate * 1000), successRate: 0.88 },
   ]
 
-  const isLoading = feedbackLoading || tokenLoading || routingLoading || projectsLoading
+  const isLoading = feedbackLoading || tokenLoading || routingLoading || projectsLoading || tokenTrendLoading
 
   if (isLoading) {
     return (

@@ -233,6 +233,60 @@ class AnalyticsController(
         }
         ResponseEntity.ok(result)
     }
+
+    // ==================== Time Series APIs ====================
+
+    /**
+     * 요청 소스별 통계 (Slack, API 등)
+     */
+    @GetMapping("/sources")
+    fun getSourceStats(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<List<SourceStatsDto>>> = mono {
+        logger.info { "Get source stats for $days days" }
+        val dateRange = DateRange.lastDays(days)
+        val stats = storage.analyticsRepository.getSourceStats(dateRange)
+        ResponseEntity.ok(stats.map { SourceStatsDto(it.source, it.requests, it.successRate) })
+    }
+
+    /**
+     * 토큰 사용량 시계열
+     */
+    @GetMapping("/tokens/trend")
+    fun getTokensTrend(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<List<TokenTrendPointDto>>> = mono {
+        logger.info { "Get tokens trend for $days days" }
+        val dateRange = DateRange.lastDays(days)
+        val trend = storage.analyticsRepository.getTokensTrend(dateRange)
+        ResponseEntity.ok(trend.map { TokenTrendPointDto(it.date, it.inputTokens, it.outputTokens) })
+    }
+
+    /**
+     * 에러 시계열
+     */
+    @GetMapping("/errors/trend")
+    fun getErrorsTrend(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<List<ErrorTrendPointDto>>> = mono {
+        logger.info { "Get errors trend for $days days" }
+        val dateRange = DateRange.lastDays(days)
+        val trend = storage.analyticsRepository.getErrorsTrend(dateRange)
+        ResponseEntity.ok(trend.map { ErrorTrendPointDto(it.date, it.errorCount) })
+    }
+
+    /**
+     * 피드백 시계열
+     */
+    @GetMapping("/feedback/trend")
+    fun getFeedbackTrend(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<List<FeedbackTrendPointDto>>> = mono {
+        logger.info { "Get feedback trend for $days days" }
+        val dateRange = DateRange.lastDays(days)
+        val trend = storage.analyticsRepository.getFeedbackTrend(dateRange)
+        ResponseEntity.ok(trend.map { FeedbackTrendPointDto(it.date, it.positive, it.negative) })
+    }
 }
 
 data class StorageStatsDto(
@@ -257,4 +311,28 @@ data class FeedbackByCategoryDto(
     val category: String,
     val count: Long,
     val verifiedCount: Long
+)
+
+// Time Series DTOs
+data class SourceStatsDto(
+    val source: String,
+    val requests: Long,
+    val successRate: Double
+)
+
+data class TokenTrendPointDto(
+    val date: String,
+    val inputTokens: Long,
+    val outputTokens: Long
+)
+
+data class ErrorTrendPointDto(
+    val date: String,
+    val errorCount: Long
+)
+
+data class FeedbackTrendPointDto(
+    val date: String,
+    val positive: Long,
+    val negative: Long
 )

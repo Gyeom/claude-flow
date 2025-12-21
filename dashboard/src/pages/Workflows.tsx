@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { Card, StatCard } from '@/components/Card'
 import { cn } from '@/lib/utils'
-import { n8nApi, type N8nWorkflow, type N8nExecution } from '@/lib/api'
+import { n8nApi, type N8nWorkflow, type N8nExecution, DEFAULT_N8N_URL } from '@/lib/api'
 
 interface WorkflowWithStats extends N8nWorkflow {
   executions: N8nExecution[]
@@ -155,7 +155,7 @@ export function Workflows() {
             </p>
           </div>
           <a
-            href={import.meta.env.VITE_N8N_URL || 'http://localhost:5678'}
+            href={import.meta.env.VITE_N8N_URL || DEFAULT_N8N_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
@@ -179,7 +179,7 @@ export function Workflows() {
     )
   }
 
-  const n8nDirectUrl = import.meta.env.VITE_N8N_URL || 'http://localhost:5678'
+  const n8nDirectUrl = import.meta.env.VITE_N8N_URL || DEFAULT_N8N_URL
 
   // Open n8n directly
   const openN8nWithAuth = (path = '') => {

@@ -347,6 +347,113 @@ class AnalyticsRepository(
         if (previous == 0.0) return if (current > 0) 100.0 else 0.0
         return ((current - previous) / previous) * 100
     }
+
+    // ==================== Time Series APIs ====================
+
+    /**
+     * Get request source statistics (Slack, API, etc.)
+     * Uses channel field to determine source type
+     */
+    fun getSourceStats(dateRange: DateRange): List<SourceStats> {
+        return executeQuery(
+            """
+            SELECT
+                CASE
+                    WHEN channel IS NOT NULL AND channel != '' THEN 'slack'
+                    ELSE 'api'
+                END as source,
+                COUNT(*) as requests,
+                SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful
+            FROM executions
+            WHERE created_at BETWEEN ? AND ?
+            GROUP BY source
+            ORDER BY requests DESC
+            """.trimIndent(),
+            dateRange.from.toString(), dateRange.to.toString()
+        ) {
+            val requests = it.getLong("requests")
+            val successful = it.getLong("successful")
+            SourceStats(
+                source = it.getString("source"),
+                requests = requests,
+                successRate = if (requests > 0) successful.toDouble() / requests else 0.0
+            )
+        }
+    }
+
+    /**
+     * Get token usage trend by day
+     */
+    fun getTokensTrend(dateRange: DateRange): List<TokenTrendPoint> {
+        return executeQuery(
+            """
+            SELECT
+                date(created_at) as date,
+                COALESCE(SUM(input_tokens), 0) as input_tokens,
+                COALESCE(SUM(output_tokens), 0) as output_tokens
+            FROM executions
+            WHERE created_at BETWEEN ? AND ?
+            GROUP BY date(created_at)
+            ORDER BY date ASC
+            """.trimIndent(),
+            dateRange.from.toString(), dateRange.to.toString()
+        ) {
+            TokenTrendPoint(
+                date = it.getString("date"),
+                inputTokens = it.getLong("input_tokens"),
+                outputTokens = it.getLong("output_tokens")
+            )
+        }
+    }
+
+    /**
+     * Get error trend by day
+     */
+    fun getErrorsTrend(dateRange: DateRange): List<ErrorTrendPoint> {
+        return executeQuery(
+            """
+            SELECT
+                date(created_at) as date,
+                COUNT(*) as error_count
+            FROM executions
+            WHERE created_at BETWEEN ? AND ?
+              AND status != 'SUCCESS'
+            GROUP BY date(created_at)
+            ORDER BY date ASC
+            """.trimIndent(),
+            dateRange.from.toString(), dateRange.to.toString()
+        ) {
+            ErrorTrendPoint(
+                date = it.getString("date"),
+                errorCount = it.getLong("error_count")
+            )
+        }
+    }
+
+    /**
+     * Get feedback trend by day
+     */
+    fun getFeedbackTrend(dateRange: DateRange): List<FeedbackTrendPoint> {
+        return executeQuery(
+            """
+            SELECT
+                date(created_at) as date,
+                SUM(CASE WHEN reaction IN ('+1', 'thumbsup', 'thumbs_up', 'white_check_mark') THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN reaction IN ('-1', 'thumbsdown', 'thumbs_down', 'x') THEN 1 ELSE 0 END) as negative
+            FROM feedback
+            WHERE created_at BETWEEN ? AND ?
+            GROUP BY date(created_at)
+            ORDER BY date ASC
+            """.trimIndent(),
+            dateRange.from.toString(), dateRange.to.toString()
+        ) {
+            FeedbackTrendPoint(
+                date = it.getString("date"),
+                positive = it.getLong("positive"),
+                negative = it.getLong("negative")
+            )
+        }
+    }
 }
 
 // Analytics DTOs
@@ -426,4 +533,28 @@ data class DashboardStats(
     val weekCost: Double,
     val satisfactionRate: Double,
     val pendingFeedback: Long
+)
+
+// Time Series DTOs
+data class SourceStats(
+    val source: String,
+    val requests: Long,
+    val successRate: Double
+)
+
+data class TokenTrendPoint(
+    val date: String,
+    val inputTokens: Long,
+    val outputTokens: Long
+)
+
+data class ErrorTrendPoint(
+    val date: String,
+    val errorCount: Long
+)
+
+data class FeedbackTrendPoint(
+    val date: String,
+    val positive: Long,
+    val negative: Long
 )

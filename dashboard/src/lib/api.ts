@@ -10,7 +10,6 @@ import type {
   TimeSeriesData,
   ModelStats,
   SourceStats,
-  RoutingStats,
   RequesterStats,
   ErrorStats,
   Project,
@@ -18,10 +17,52 @@ import type {
   ProjectStats,
   VerifiedFeedbackStats,
   FeedbackByCategory,
+  RoutingEfficiency,
 } from '@/types'
 
 const API_BASE_V1 = '/api/v1'
 const API_BASE_V2 = '/api/v2'
+
+// ============================================================================
+// ESTIMATION CONSTANTS (Used when actual data is unavailable from API)
+// These values are approximations and should be replaced with real data
+// from the backend when available.
+// ============================================================================
+
+// Percentile estimation multipliers (relative to avgDurationMs)
+// TODO: Backend should provide actual percentile data via /analytics/overview
+const PERCENTILE_ESTIMATES = {
+  P50_MULTIPLIER: 0.8,  // Estimate: 80% of average
+  P90_MULTIPLIER: 1.2,  // Estimate: 120% of average
+  P95_MULTIPLIER: 1.5,  // Estimate: 150% of average
+  P99_MULTIPLIER: 2.0,  // Estimate: 200% of average
+} as const
+
+// Token cost estimation (USD per token)
+// Based on Claude Sonnet 4 API pricing:
+// - Input: $3/1M tokens = $0.000003/token
+// - Output: $15/1M tokens = $0.000015/token
+// Using weighted average based on typical 40:60 input:output ratio
+const TOKEN_COST = {
+  INPUT_PER_TOKEN: 0.000003,   // $3/1M tokens
+  OUTPUT_PER_TOKEN: 0.000015,  // $15/1M tokens
+  // Weighted average: (0.4 * 0.000003) + (0.6 * 0.000015) = 0.0000102
+  AVERAGE_PER_TOKEN: 0.0000102,
+} as const
+
+// Token distribution estimation (when only totalTokens is available)
+// TODO: Backend should provide actual input/output token counts
+const TOKEN_DISTRIBUTION = {
+  INPUT_RATIO: 0.4,   // Estimate: 40% input tokens
+  OUTPUT_RATIO: 0.6,  // Estimate: 60% output tokens
+} as const
+
+// Default confidence score (when routing confidence is unavailable)
+// TODO: Backend should include confidence in routing response
+const DEFAULT_ROUTING_CONFIDENCE = 0.85
+
+// Default n8n URL (when environment variable is not set)
+export const DEFAULT_N8N_URL = 'http://localhost:5678'
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit, base = API_BASE_V1): Promise<T> {
   const response = await fetch(`${base}${endpoint}`, {
@@ -68,17 +109,25 @@ interface OverviewApiResponse {
   comparison: { requestsChange: number; successRateChange: number } | null
 }
 
+// Source stats type from backend
+interface SourceStatsApiResponse {
+  source: string
+  requests: number
+  successRate: number
+}
+
 // Transform backend response to frontend expected format
 function transformDashboardStats(
   data: DashboardApiResponse,
-  overview: OverviewApiResponse | null
+  overview: OverviewApiResponse | null,
+  sources: SourceStatsApiResponse[] | null
 ): DashboardStats {
   // 실제 백분위수 사용 (없으면 avgDurationMs 기반 추정)
   const percentiles = overview?.percentiles || {
-    p50: data.avgDurationMs * 0.8,
-    p90: data.avgDurationMs * 1.2,
-    p95: data.avgDurationMs * 1.5,
-    p99: data.avgDurationMs * 2,
+    p50: data.avgDurationMs * PERCENTILE_ESTIMATES.P50_MULTIPLIER,
+    p90: data.avgDurationMs * PERCENTILE_ESTIMATES.P90_MULTIPLIER,
+    p95: data.avgDurationMs * PERCENTILE_ESTIMATES.P95_MULTIPLIER,
+    p99: data.avgDurationMs * PERCENTILE_ESTIMATES.P99_MULTIPLIER,
   }
 
   return {
@@ -93,40 +142,56 @@ function transformDashboardStats(
       p90DurationMs: percentiles.p90,
       p95DurationMs: percentiles.p95,
       p99DurationMs: percentiles.p99,
-      totalCostUsd: overview?.totalCostUsd ?? data.totalTokens * 0.00001,
-      totalInputTokens: overview?.totalInputTokens ?? Math.round(data.totalTokens * 0.4),
-      totalOutputTokens: overview?.totalOutputTokens ?? Math.round(data.totalTokens * 0.6),
+      totalCostUsd: overview?.totalCostUsd ?? data.totalTokens * TOKEN_COST.AVERAGE_PER_TOKEN,
+      totalInputTokens: overview?.totalInputTokens ?? Math.round(data.totalTokens * TOKEN_DISTRIBUTION.INPUT_RATIO),
+      totalOutputTokens: overview?.totalOutputTokens ?? Math.round(data.totalTokens * TOKEN_DISTRIBUTION.OUTPUT_RATIO),
     },
-    timeseries: data.hourlyTrend.map((t, idx) => ({
-      timestamp: new Date(Date.now() - (23 - idx) * 3600000).toISOString(),
-      requests: t.count,
-      successful: Math.round(t.count * data.successRate),
-      failed: Math.round(t.count * (1 - data.successRate)),
-      avgDurationMs: data.avgDurationMs,
-      totalTokens: 0,
-    })),
+    timeseries: (() => {
+      // Calculate average tokens per request for distribution
+      const totalRequests = data.hourlyTrend.reduce((sum, t) => sum + t.count, 0)
+      const avgTokensPerRequest = totalRequests > 0 ? Math.round(data.totalTokens / totalRequests) : 0
+
+      return data.hourlyTrend.map((t, idx) => ({
+        timestamp: new Date(Date.now() - (23 - idx) * 3600000).toISOString(),
+        requests: t.count,
+        successful: Math.round(t.count * data.successRate),
+        failed: Math.round(t.count * (1 - data.successRate)),
+        avgDurationMs: data.avgDurationMs,
+        totalTokens: t.count * avgTokensPerRequest,  // Estimated tokens per hour
+      }))
+    })(),
     models: data.topAgents.map(a => ({
       model: a.agentName,
       requests: a.totalExecutions,
       successRate: a.successRate,
       avgDurationMs: a.avgDurationMs,
       totalTokens: a.avgTokens * a.totalExecutions,
-      costUsd: a.avgTokens * 0.00001,
+      costUsd: a.avgTokens * a.totalExecutions * TOKEN_COST.AVERAGE_PER_TOKEN,  // Estimated total cost per agent
     })),
-    sources: [],
+    sources: (sources || []).map(s => ({
+      source: s.source,
+      requests: s.requests,
+      successRate: s.successRate,
+    })),
     routing: data.topAgents.map(a => ({
       method: a.agentId,
       requests: a.totalExecutions,
-      avgConfidence: 0.85,
+      avgConfidence: DEFAULT_ROUTING_CONFIDENCE,  // TODO: Get from routing API
       successRate: a.successRate,
     })),
-    topRequesters: data.topUsers.map(u => ({
-      userId: u.userId,
-      displayName: u.displayName ?? null,
-      requests: u.totalInteractions ?? 0,
-      successRate: u.successRate ?? 1.0,
-      totalTokens: 0,
-    })),
+    topRequesters: (() => {
+      // Calculate average tokens per request for user token estimation
+      const totalRequests = data.totalExecutions || 1
+      const avgTokensPerRequest = data.totalTokens / totalRequests
+
+      return data.topUsers.map(u => ({
+        userId: u.userId,
+        displayName: u.displayName ?? null,
+        requests: u.totalInteractions ?? 0,
+        successRate: u.successRate ?? 1.0,
+        totalTokens: Math.round((u.totalInteractions ?? 0) * avgTokensPerRequest),  // Estimated tokens
+      }))
+    })(),
     feedback: {
       thumbsUp: overview?.feedback.positive ?? data.thumbsUp,
       thumbsDown: overview?.feedback.negative ?? data.thumbsDown,
@@ -139,12 +204,13 @@ function transformDashboardStats(
 export const dashboardApi = {
   getStats: async (period = '7d'): Promise<DashboardStats> => {
     const days = period.replace('d', '').replace('h', '')
-    // Dashboard API와 Overview API 병렬 호출
-    const [dashboardData, overviewData] = await Promise.all([
+    // Dashboard API, Overview API, Sources API 병렬 호출
+    const [dashboardData, overviewData, sourcesData] = await Promise.all([
       fetchApi<DashboardApiResponse>(`/analytics/dashboard?days=${days}`),
       fetchApi<OverviewApiResponse>(`/analytics/overview?days=${days}`).catch(() => null),
+      fetchApi<SourceStatsApiResponse[]>(`/analytics/sources?days=${days}`).catch(() => null),
     ])
-    return transformDashboardStats(dashboardData, overviewData)
+    return transformDashboardStats(dashboardData, overviewData, sourcesData)
   },
 
   getOverview: (period = '7d') => {
@@ -246,14 +312,18 @@ export const agentsApi = {
 
 // Analytics
 export const analyticsApi = {
-  getFeedback: (period = '7d') =>
-    fetchApi<FeedbackAnalysis>(`/analytics/feedback?period=${period}`),
+  getFeedback: (period = '7d') => {
+    const days = period.replace('d', '').replace('h', '')
+    return fetchApi<FeedbackAnalysis>(`/analytics/feedback?days=${days}`)
+  },
 
-  getTokenUsage: (period = '7d') =>
-    fetchApi<TokenUsage>(`/analytics/tokens?period=${period}`),
+  getTokenUsage: (period = '7d') => {
+    const days = period.replace('d', '').replace('h', '')
+    return fetchApi<TokenUsage>(`/analytics/tokens?days=${days}`)
+  },
 
-  getRoutingEfficiency: (period = '7d') =>
-    fetchApi<{ period: string; routing: RoutingStats[] }>(`/analytics/routing?period=${period}`),
+  getRoutingEfficiency: (_period = '7d') =>
+    fetchApi<RoutingEfficiency>(`/analytics/routing`),
 
   getProjectStats: () =>
     fetchApi<ProjectStat[]>('/analytics/projects'),
@@ -281,6 +351,40 @@ export const analyticsApi = {
     const requesters = await fetchApi<RequesterStats[]>(`/analytics/requesters?days=${days}`)
     return { period, requesters }
   },
+
+  // Time Series APIs
+  getTokensTrend: async (period = '7d') => {
+    const days = period.replace('d', '').replace('h', '')
+    return fetchApi<TokenTrendPoint[]>(`/analytics/tokens/trend?days=${days}`)
+  },
+
+  getErrorsTrend: async (period = '7d') => {
+    const days = period.replace('d', '').replace('h', '')
+    return fetchApi<ErrorTrendPoint[]>(`/analytics/errors/trend?days=${days}`)
+  },
+
+  getFeedbackTrend: async (period = '7d') => {
+    const days = period.replace('d', '').replace('h', '')
+    return fetchApi<FeedbackTrendPoint[]>(`/analytics/feedback/trend?days=${days}`)
+  },
+}
+
+// Time Series Types
+export interface TokenTrendPoint {
+  date: string
+  inputTokens: number
+  outputTokens: number
+}
+
+export interface ErrorTrendPoint {
+  date: string
+  errorCount: number
+}
+
+export interface FeedbackTrendPoint {
+  date: string
+  positive: number
+  negative: number
 }
 
 // Users API response type (from backend)
@@ -640,7 +744,7 @@ export const n8nApi = {
     try {
       return await fetchApi<{ authCookie: string | null; n8nUrl: string; success: boolean }>('/n8n/auth')
     } catch {
-      return { authCookie: null, n8nUrl: 'http://localhost:5678', success: false }
+      return { authCookie: null, n8nUrl: DEFAULT_N8N_URL, success: false }
     }
   },
 }

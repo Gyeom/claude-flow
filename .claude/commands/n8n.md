@@ -15,6 +15,7 @@ n8n 워크플로우 관리 및 자동 생성을 위한 명령입니다.
 | Command | Description | Example |
 |---------|-------------|---------|
 | `list` | 모든 워크플로우 목록 조회 | `/n8n list` |
+| `sync` | JSON 파일과 n8n DB 동기화 | `/n8n sync` |
 | `get <id>` | 특정 워크플로우 상세 조회 | `/n8n get 1` |
 | `run <id>` | 워크플로우 수동 실행 | `/n8n run 1` |
 | `activate <id>` | 워크플로우 활성화 | `/n8n activate 1` |
@@ -91,6 +92,51 @@ N8N_URL=http://localhost:5678
 N8N_EMAIL=admin@local.dev
 N8N_PASSWORD=your-password
 ```
+
+---
+
+## Instructions
+
+### sync 명령 실행 방법
+
+`/n8n sync` 명령이 실행되면 다음 작업을 수행합니다:
+
+1. **n8n 로그인**: admin@local.dev / Localdev123 (기본값)
+2. **JSON 파일 스캔**: `docker-compose/n8n-workflows/*.json` 파일 목록 조회
+3. **n8n DB 조회**: 현재 n8n에 등록된 워크플로우 목록 조회
+4. **동기화 실행**:
+   - JSON에 있고 n8n에 없는 워크플로우 → **생성**
+   - JSON에 있고 n8n에 있는 워크플로우 → **업데이트** (nodes, connections 동기화)
+   - n8n에만 있는 워크플로우 → 유지 (삭제하지 않음)
+
+```bash
+# n8n 로그인
+curl -s -X POST http://localhost:5678/rest/login \
+  -H "Content-Type: application/json" \
+  -d '{"emailOrLdapLoginId":"admin@local.dev","password":"Localdev123"}' \
+  -c /tmp/n8n-cookie.txt
+
+# JSON 파일 목록
+ls docker-compose/n8n-workflows/*.json
+
+# 각 파일에 대해 동기화
+for file in docker-compose/n8n-workflows/*.json; do
+  # 워크플로우 이름으로 기존 ID 조회
+  # 있으면 PATCH, 없으면 POST
+done
+```
+
+### 파일명 ↔ 워크플로우 이름 매핑
+
+| JSON 파일 | 워크플로우 이름 |
+|-----------|----------------|
+| slack-mention-handler.json | Slack Mention Handler |
+| slack-mr-review.json | Slack MR Review Handler |
+| slack-action-handler.json | Slack Action Handler |
+| slack-feedback-handler.json | Slack Feedback Handler |
+| user-context-handler.json | User Context Handler |
+| alert-channel-monitor.json | Alert Channel Monitor |
+| alert-to-mr-pipeline.json | Alert to MR Pipeline |
 
 ---
 

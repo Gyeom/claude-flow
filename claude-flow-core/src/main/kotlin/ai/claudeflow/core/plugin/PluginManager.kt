@@ -17,12 +17,6 @@ class PluginManager(
     val registry = PluginRegistry()
     val loader = PluginLoader(registry, configManager)
 
-    // 레거시 호환을 위한 내부 저장소
-    @Deprecated("Use registry instead")
-    private val plugins = mutableMapOf<String, Plugin>()
-    @Deprecated("Use configManager instead")
-    private val pluginConfigs = mutableMapOf<String, Map<String, String>>()
-
     /**
      * 설정 파일에서 모든 플러그인 로드
      */
@@ -31,7 +25,7 @@ class PluginManager(
     }
 
     /**
-     * 플러그인 등록 (레거시 호환)
+     * 플러그인 등록
      */
     fun register(plugin: Plugin, config: Map<String, String> = emptyMap()) {
         val metadata = PluginMetadata(
@@ -41,10 +35,6 @@ class PluginManager(
             version = "1.0.0"
         )
         registry.register(plugin, metadata, config)
-
-        // 레거시 호환
-        plugins[plugin.id] = plugin
-        pluginConfigs[plugin.id] = config
     }
 
     /**
@@ -52,8 +42,6 @@ class PluginManager(
      */
     suspend fun unregister(pluginId: String) {
         loader.unload(pluginId)
-        plugins.remove(pluginId)
-        pluginConfigs.remove(pluginId)
     }
 
     /**

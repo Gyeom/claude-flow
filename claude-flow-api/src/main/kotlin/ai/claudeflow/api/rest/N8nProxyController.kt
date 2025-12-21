@@ -30,11 +30,16 @@ private val mapper = jacksonObjectMapper()
 class N8nProxyController(
     @Value("\${claude-flow.webhook.base-url:http://localhost:5678}")
     private val n8nBaseUrl: String,
-    @Value("\${claude-flow.n8n.email:\${N8N_DEFAULT_EMAIL:admin@local.dev}}")
+    @Value("\${claude-flow.n8n.email:\${N8N_EMAIL:}}")
     private val n8nEmail: String,
-    @Value("\${claude-flow.n8n.password:\${N8N_DEFAULT_PASSWORD:}}")
+    @Value("\${claude-flow.n8n.password:\${N8N_PASSWORD:}}")
     private val n8nPassword: String
 ) {
+    init {
+        if (n8nEmail.isEmpty()) {
+            logger.warn { "N8N_EMAIL not configured - n8n authentication will be skipped" }
+        }
+    }
     private var sessionCookie: String? = null
     private var sessionExpiry: Instant = Instant.MIN
     private val loginMutex = Mutex()
@@ -47,6 +52,12 @@ class N8nProxyController(
      * Login to n8n and get session cookie
      */
     private suspend fun ensureAuthenticated(): String? {
+        // Skip authentication if credentials are not configured
+        if (n8nEmail.isEmpty() || n8nPassword.isEmpty()) {
+            logger.debug { "n8n credentials not configured, skipping authentication" }
+            return null
+        }
+
         // Return cached cookie if still valid (with 5 min buffer)
         if (sessionCookie != null && Instant.now().plusSeconds(300).isBefore(sessionExpiry)) {
             return sessionCookie
@@ -170,15 +181,29 @@ class N8nProxyController(
     ): Mono<ResponseEntity<Map<String, Any>>> = mono {
         try {
             val cookie = ensureAuthenticated()
-            webClient.patch()
-                .uri("/rest/workflows/$id")
-                .header("Cookie", cookie ?: "")
-                .bodyValue(mapOf("active" to request.active))
-                .retrieve()
-                .awaitBodyOrNull<Any>()
+            if (cookie == null) {
+                logger.warn { "n8n authentication failed - no cookie" }
+                return@mono ResponseEntity.ok(mapOf("success" to false, "error" to "n8n authentication failed"))
+            }
 
-            logger.info { "Set workflow $id active=${request.active}" }
-            ResponseEntity.ok(mapOf("success" to true, "id" to id, "active" to request.active))
+            val response = webClient.patch()
+                .uri("/rest/workflows/$id")
+                .header("Cookie", cookie)
+                .header("Content-Type", "application/json")
+                .bodyValue(mapOf("active" to request.active))
+                .awaitExchange { clientResponse ->
+                    if (clientResponse.statusCode().is2xxSuccessful) {
+                        logger.info { "Set workflow $id active=${request.active}" }
+                        mapOf("success" to true, "id" to id, "active" to request.active)
+                    } else {
+                        val body = clientResponse.awaitBodyOrNull<Map<String, Any>>()
+                        val errorMsg = body?.get("message")?.toString() ?: "HTTP ${clientResponse.statusCode()}"
+                        logger.warn { "Failed to update workflow $id: $errorMsg" }
+                        mapOf("success" to false, "error" to errorMsg)
+                    }
+                }
+
+            ResponseEntity.ok(response)
         } catch (e: Exception) {
             logger.warn { "Failed to update workflow $id: ${e.message}" }
             ResponseEntity.ok(mapOf("success" to false, "error" to (e.message ?: "Unknown error")))

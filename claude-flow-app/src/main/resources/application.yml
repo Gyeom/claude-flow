@@ -18,6 +18,11 @@ claude-flow:
     reaction-endpoint: /webhook/slack-reaction
     feedback-endpoint: /webhook/slack-feedback
 
+  # n8n API 인증 (대시보드 프록시용)
+  n8n:
+    email: ${N8N_EMAIL:admin@local.dev}
+    password: ${N8N_PASSWORD:Localdev123}
+
   claude:
     model: ${CLAUDE_MODEL:claude-sonnet-4-20250514}
     max-tokens: ${CLAUDE_MAX_TOKENS:4096}

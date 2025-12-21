@@ -2,9 +2,6 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
-  Plus,
-  Edit,
-  Trash2,
   Power,
   PowerOff,
   ChevronDown,
@@ -13,14 +10,13 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Card, CardHeader } from '@/components/Card'
+import { Card } from '@/components/Card'
 import { PriorityBadge, KeywordBadge } from '@/components/DataTable'
 import { agentsApi } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export function Agents() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [showCreateModal, setShowCreateModal] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: agents, isLoading, error } = useQuery({
@@ -37,17 +33,6 @@ export function Agents() {
     },
     onError: () => {
       toast.error('Failed to update agent status')
-    },
-  })
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => agentsApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agents'] })
-      toast.success('Agent deleted')
-    },
-    onError: () => {
-      toast.error('Failed to delete agent')
     },
   })
 
@@ -75,20 +60,11 @@ export function Agents() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Agents</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage AI agents and their configurations
-          </p>
-        </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Create Agent
-        </button>
+      <div>
+        <h1 className="text-3xl font-bold">Agents</h1>
+        <p className="text-muted-foreground mt-1">
+          Built-in AI agents for message routing
+        </p>
       </div>
 
       {/* Agent List */}
@@ -103,15 +79,9 @@ export function Agents() {
               <Bot className="h-8 w-8 text-muted-foreground" />
             </div>
             <h3 className="font-semibold mb-1">No Agents Found</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Create your first agent to get started
+            <p className="text-sm text-muted-foreground">
+              Check server connection
             </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
-            >
-              Create Agent
-            </button>
           </div>
         </Card>
       ) : (
@@ -164,34 +134,6 @@ export function Agents() {
                   >
                     {agent.enabled ? <Power className="h-5 w-5" /> : <PowerOff className="h-5 w-5" />}
                   </button>
-
-                  {/* Edit */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      toast.info('Edit modal coming soon')
-                    }}
-                    className="p-2 rounded-lg hover:bg-muted text-muted-foreground"
-                    title="Edit"
-                  >
-                    <Edit className="h-5 w-5" />
-                  </button>
-
-                  {/* Delete */}
-                  {!isBuiltIn(agent.id) && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (confirm('Are you sure you want to delete this agent?')) {
-                          deleteMutation.mutate(agent.id)
-                        }
-                      }}
-                      className="p-2 rounded-lg hover:bg-destructive/10 text-destructive"
-                      title="Delete"
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </button>
-                  )}
 
                   {/* Expand */}
                   {expandedId === agent.id ? (
@@ -276,31 +218,6 @@ export function Agents() {
         </div>
       )}
 
-      {/* Create Agent Modal Placeholder */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card className="w-full max-w-lg">
-            <CardHeader title="Create New Agent" />
-            <div className="p-4">
-              <div className="flex items-center gap-3 p-4 rounded-lg bg-yellow-500/10 text-yellow-600 border border-yellow-500/20">
-                <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                <p className="text-sm">
-                  Agent creation modal is coming soon. For now, you can configure agents
-                  via the API or configuration files.
-                </p>
-              </div>
-              <div className="flex justify-end mt-4">
-                <button
-                  onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 rounded-lg border border-border hover:bg-muted transition-colors"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </Card>
-        </div>
-      )}
     </div>
   )
 }

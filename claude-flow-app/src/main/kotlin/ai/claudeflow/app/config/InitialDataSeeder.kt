@@ -58,7 +58,13 @@ class InitialDataSeeder(
 
         val sourceFile = when {
             aliasesFile.exists() -> aliasesFile
-            exampleFile.exists() -> exampleFile
+            exampleFile.exists() -> {
+                logger.warn {
+                    "Using example file for project aliases (project-aliases.example.json). " +
+                    "For production, create project-aliases.json with your actual project configurations."
+                }
+                exampleFile
+            }
             else -> {
                 logger.info { "No project-aliases file found, skipping seed" }
                 return

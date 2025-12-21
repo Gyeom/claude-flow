@@ -336,10 +336,14 @@ class ClaudeFlowController(
     )
 
     // ==================== 프로젝트 관리 API (레거시 - ProjectsController로 마이그레이션됨) ====================
+    // NOTE: 아래 API들은 하위 호환성을 위해 유지됩니다.
+    // 새로운 코드에서는 /api/v1/projects/* 엔드포인트를 사용하세요.
 
     /**
      * 채널에 프로젝트 설정
+     * @deprecated Use POST /api/v1/projects/{projectId}/channels instead
      */
+    @Deprecated("Use POST /api/v1/projects/{projectId}/channels instead")
     @PostMapping("/projects/channel")
     fun setChannelProject(@RequestBody request: SetChannelProjectRequest): Mono<ResponseEntity<Map<String, Any>>> = mono {
         val success = projectRegistry.setChannelProject(request.channel, request.projectId)
@@ -359,7 +363,9 @@ class ClaudeFlowController(
 
     /**
      * 채널의 프로젝트 조회
+     * @deprecated Use GET /api/v1/projects/{projectId}/channels instead
      */
+    @Deprecated("Use GET /api/v1/projects/{projectId}/channels instead")
     @GetMapping("/projects/channel/{channel}")
     fun getChannelProject(@PathVariable channel: String): Mono<ResponseEntity<Map<String, Any?>>> = mono {
         val project = projectRegistry.getChannelProject(channel)
@@ -376,7 +382,9 @@ class ClaudeFlowController(
 
     /**
      * 채널-프로젝트 매핑 목록
+     * @deprecated Use GET /api/v1/projects to get all projects with their channels
      */
+    @Deprecated("Use GET /api/v1/projects to get all projects with their channels")
     @GetMapping("/projects/channels")
     fun getChannelMappings(): Mono<ResponseEntity<Map<String, String>>> = mono {
         ResponseEntity.ok(projectRegistry.getChannelMappings())
@@ -384,7 +392,9 @@ class ClaudeFlowController(
 
     /**
      * 기본 프로젝트 설정
+     * @deprecated Use POST /api/v1/projects/{projectId}/default instead
      */
+    @Deprecated("Use POST /api/v1/projects/{projectId}/default instead")
     @PostMapping("/projects/default")
     fun setDefaultProject(@RequestBody request: SetDefaultProjectRequest): Mono<ResponseEntity<Map<String, Any>>> = mono {
         val success = projectRegistry.setDefaultProject(request.projectId)

@@ -188,9 +188,14 @@ class AgentRepository(
                     'claude-sonnet-4-20250514'
                 ) as model,
                 COUNT(*) as requests,
-                COALESCE(SUM(cost), 0) as cost,
+                -- cost: DB 값 우선, 없으면 토큰 기반 계산 (Sonnet 4: Input $3/1M, Output $15/1M)
+                COALESCE(
+                    SUM(cost),
+                    SUM(COALESCE(input_tokens, 0)) * 0.000003 + SUM(COALESCE(output_tokens, 0)) * 0.000015
+                ) as cost,
                 SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
-                COALESCE(AVG(duration_ms), 0) as avg_duration
+                COALESCE(AVG(duration_ms), 0) as avg_duration,
+                COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) as total_tokens
             FROM executions e
             WHERE created_at BETWEEN ? AND ?
             GROUP BY model
@@ -204,9 +209,10 @@ class AgentRepository(
                 model = it.getString("model"),
                 requests = requests,
                 percentage = if (total > 0) (requests.toDouble() / total) * 100 else 0.0,
-                cost = it.getDouble("cost"),
+                costUsd = it.getDouble("cost"),
                 successRate = if (requests > 0) successful.toDouble() / requests else 0.0,
-                avgDurationMs = it.getLong("avg_duration")
+                avgDurationMs = it.getLong("avg_duration"),
+                totalTokens = it.getLong("total_tokens")
             )
         }
     }
@@ -244,7 +250,8 @@ data class ModelStats(
     val model: String,
     val requests: Long,
     val percentage: Double,
-    val cost: Double,
+    val costUsd: Double,
     val successRate: Double,
-    val avgDurationMs: Long
+    val avgDurationMs: Long,
+    val totalTokens: Long
 )

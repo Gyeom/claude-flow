@@ -6,12 +6,15 @@ Slack에서 Claude를 호출하고, GitLab MR 리뷰를 자동화하는 AI 에�
 
 - **Slack 연동**: `@claude` 멘션으로 Claude와 대화
 - **GitLab MR 리뷰**: `@claude project-name !123 리뷰해줘`로 자동 코드 리뷰
+- **Jira 연동**: AI 기반 이슈 분석, 자연어 JQL 변환, 스프린트 리포트 자동 생성
 - **실시간 스트리밍 채팅**: SSE 기반 실시간 응답 스트리밍
 - **지능형 라우팅**: 키워드 → 시맨틱 → LLM 폴백 3단계 라우팅
+- **플러그인 시스템**: GitLab, Jira, GitHub, n8n 플러그인 확장
 - **프로젝트 관리**: 프로젝트별 에이전트, 채널 매핑, Rate Limiting
 - **사용자 컨텍스트**: 대화 기록 요약, 개인별 선호도/규칙 저장
 - **실시간 분석**: P50/P90/P95/P99 통계, 시계열 차트, 피드백 분석
-- **n8n 워크플로우**: 유연한 이벤트 처리 및 확장
+- **n8n 워크플로우**: 자연어로 워크플로우 자동 생성, 유연한 이벤트 처리
+- **RAG (선택)**: Qdrant + Ollama 기반 대화 검색 및 컨텍스트 증강
 
 ### Dashboard 기능
 
@@ -19,17 +22,17 @@ Slack에서 Claude를 호출하고, GitLab MR 리뷰를 자동화하는 AI 에�
 |--------|------|
 | Dashboard | 실시간 통계, 요약 차트 |
 | Chat | 웹 기반 채팅 인터페이스 |
-| Projects | 프로젝트/에이전트 관리 |
+| History | 실행 이력 조회 |
+| Live Logs | 실시간 로그 스트리밍 |
+| Projects | 프로젝트 관리 |
+| Jira | Jira 이슈 관리, AI 분석, 자연어 JQL |
 | Agents | 글로벌 에이전트 설정 |
-| Classify | 라우팅 테스트 도구 |
 | Analytics | 상세 통계 (백분위수, 시계열) |
-| Executions | 실행 이력 조회 |
-| Users | 사용자 컨텍스트 관리 |
 | Feedback | 피드백 분석 |
-| Errors | 에러 통계 |
 | Models | 모델별 사용량 |
-| Logs | 실시간 로그 스트리밍 |
-| Workflows | n8n 워크플로우 관리 |
+| Errors | 에러 통계 |
+| Plugins | 플러그인 관리 (GitLab, Jira, n8n) |
+| Workflows | n8n 워크플로우 관리/생성 |
 | Settings | 시스템 설정 |
 
 ## 빠른 시작
@@ -89,9 +92,24 @@ SLACK_APP_TOKEN=xapp-1-xxx          # Socket Mode 토큰
 SLACK_BOT_TOKEN=xoxb-xxx            # Bot 토큰
 SLACK_SIGNING_SECRET=xxx            # Signing Secret
 
+# Claude 설정
+CLAUDE_MODEL=claude-sonnet-4-20250514  # 사용할 모델
+CLAUDE_TIMEOUT=300                      # 타임아웃 (초)
+
 # 선택 - GitLab (MR 리뷰 기능)
 GITLAB_URL=https://gitlab.example.com
 GITLAB_TOKEN=glpat-xxx              # api scope 권한 필요
+GITLAB_GROUP=my-org/my-group        # 그룹 경로 (멀티 프로젝트 쿼리용)
+
+# 선택 - Jira
+JIRA_URL=https://your-org.atlassian.net
+JIRA_EMAIL=your-email@example.com
+JIRA_API_TOKEN=xxx                  # API 토큰
+
+# 선택 - RAG (벡터 검색)
+RAG_ENABLED=true
+QDRANT_URL=http://qdrant:6333
+OLLAMA_URL=http://ollama:11434
 ```
 
 ### 4. 실행
@@ -180,20 +198,27 @@ npm run dev
 Slack (@멘션)
     │ Socket Mode
     ▼
-┌─────────────────────────────────────────┐
-│           Claude Flow (Kotlin)          │
-│  SlackBridge → AgentRouter → Executor   │
-│         │                               │
-│   Storage │ UserContext │ Analytics     │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│             Claude Flow (Kotlin)                │
+│  SlackBridge → AgentRouter → Executor           │
+│         │                                       │
+│   Storage │ UserContext │ Analytics │ Plugins   │
+│                                                 │
+│   ┌─────────────────────────────────────────┐   │
+│   │ Plugins: GitLab │ Jira │ GitHub │ n8n   │   │
+│   └─────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────┘
     │ Webhook
     ▼
-┌─────────────────────────────────────────┐
-│              n8n Workflows              │
-│  • slack-mention-handler                │
-│  • gitlab-mr-review                     │
-│  • user-context-handler                 │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│                n8n Workflows                    │
+│  • slack-mention-handler    (멘션 처리)         │
+│  • slack-mr-review          (MR 리뷰)           │
+│  • slack-action-handler     (버튼 액션)         │
+│  • slack-feedback-handler   (피드백 수집)       │
+│  • alert-channel-monitor    (장애 알람 분석)    │
+│  • alert-to-mr-pipeline     (알람→MR 자동화)    │
+└─────────────────────────────────────────────────┘
 ```
 
 ## 프로젝트 구조
@@ -275,6 +300,39 @@ claude-flow/
 | GET | `/api/v1/system/slack/status` | Slack 연결 상태 |
 | POST | `/api/v1/system/slack/reconnect` | Slack 재연결 |
 
+### Jira Analysis (AI 기반)
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| POST | `/api/v1/jira/analyze/{issueKey}` | 이슈 분석 및 구현 방향 제안 |
+| POST | `/api/v1/jira/analyze/{issueKey}/code-context` | 관련 코드 분석 |
+| POST | `/api/v1/jira/sprint-report` | 스프린트 리포트 생성 |
+| POST | `/api/v1/jira/nl-to-jql` | 자연어 → JQL 변환 |
+| POST | `/api/v1/jira/auto-label/{issueKey}` | 자동 라벨링 |
+| POST | `/api/v1/jira/analyze-text` | 텍스트 → 이슈 필드 제안 |
+
+### Plugins
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/plugins` | 플러그인 목록 |
+| GET | `/api/v1/plugins/{id}` | 플러그인 상세 |
+| POST | `/api/v1/plugins/{id}/execute` | 플러그인 명령 실행 |
+| PATCH | `/api/v1/plugins/{id}/enabled` | 활성화/비활성화 |
+| GET | `/api/v1/plugins/gitlab/mrs` | GitLab MR 목록 |
+| GET | `/api/v1/plugins/jira/issues/{key}` | Jira 이슈 조회 |
+| POST | `/api/v1/plugins/jira/issues` | Jira 이슈 생성 |
+| GET | `/api/v1/plugins/jira/search` | Jira JQL 검색 |
+
+### n8n Workflows
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/n8n/workflows` | 워크플로우 목록 |
+| GET | `/api/v1/n8n/workflows/{id}` | 워크플로우 상세 |
+| POST | `/api/v1/n8n/workflows/generate` | 자연어로 워크플로우 생성 |
+| POST | `/api/v1/n8n/workflows/template/{id}` | 템플릿 기반 생성 |
+| GET | `/api/v1/n8n/templates` | 사용 가능한 템플릿 목록 |
+| POST | `/api/v1/n8n/workflows/{id}/run` | 워크플로우 실행 |
+| PATCH | `/api/v1/n8n/workflows/{id}/active` | 활성화/비활성화 |
+
 ## 문제 해결
 
 ### Slack 연결 실패
@@ -329,11 +387,14 @@ kill -9 <PID>
 
 ## 기술 스택
 
-- **Backend**: Kotlin 2.1, Spring Boot 3.4
+- **Backend**: Kotlin 2.1, Spring Boot 3.4, Spring WebFlux
 - **AI**: Claude CLI
 - **Slack**: Bolt for Java (Socket Mode)
-- **Workflow**: n8n
-- **Storage**: SQLite
+- **Workflow**: n8n (자동 생성 지원)
+- **Storage**: SQLite (WAL mode)
+- **Cache**: Caffeine
+- **Vector DB**: Qdrant (선택)
+- **Embedding**: Ollama (선택)
 - **Dashboard**: React, Vite, TailwindCSS
 
 ## 라이선스

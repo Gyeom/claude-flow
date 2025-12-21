@@ -20,6 +20,11 @@ import reactor.core.publisher.Mono
 
 private val logger = KotlinLogging.logger {}
 
+// Default agent configuration values
+// TODO: Consider moving to application configuration for easier customization
+private const val DEFAULT_AGENT_MODEL = "claude-sonnet-4-20250514"
+private const val DEFAULT_AGENT_MAX_TOKENS = 4096
+
 /**
  * Agents REST API
  */
@@ -63,8 +68,8 @@ class AgentsController(
             description = request.description,
             keywords = request.keywords,
             systemPrompt = request.systemPrompt,
-            model = request.model ?: "claude-sonnet-4-20250514",
-            maxTokens = request.maxTokens ?: 4096,
+            model = request.model ?: DEFAULT_AGENT_MODEL,
+            maxTokens = request.maxTokens ?: DEFAULT_AGENT_MAX_TOKENS,
             allowedTools = request.allowedTools ?: emptyList(),
             workingDirectory = request.workingDirectory,
             enabled = request.enabled ?: true,

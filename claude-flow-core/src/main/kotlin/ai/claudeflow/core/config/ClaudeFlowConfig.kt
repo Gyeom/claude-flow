@@ -24,11 +24,19 @@ data class SlackConfig(
 
 /**
  * n8n Webhook 설정
+ *
+ * NOTE: baseUrl 기본값은 개발 환경용입니다.
+ * 프로덕션에서는 환경변수로 설정하세요:
+ * - N8N_URL 또는 claude-flow.webhook.base-url
  */
 data class WebhookConfig(
-    val baseUrl: String = "http://localhost:5678",
+    val baseUrl: String = DEFAULT_N8N_URL,
     val endpoints: WebhookEndpoints = WebhookEndpoints()
-)
+) {
+    companion object {
+        const val DEFAULT_N8N_URL = "http://localhost:5678"
+    }
+}
 
 data class WebhookEndpoints(
     val mention: String = "/webhook/slack-mention",

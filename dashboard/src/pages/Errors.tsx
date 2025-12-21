@@ -13,7 +13,7 @@ import {
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { ChartContainer } from '@/components/Chart'
 import { DataTable } from '@/components/DataTable'
-import { analyticsApi } from '@/lib/api'
+import { analyticsApi, type ErrorTrendPoint } from '@/lib/api'
 import { formatNumber, cn } from '@/lib/utils'
 import {
   BarChart,
@@ -59,10 +59,17 @@ const ERROR_ICONS: Record<string, typeof AlertTriangle> = {
 export function Errors() {
   const [period, setPeriod] = useState('7d')
 
-  const { data: errorsData, isLoading } = useQuery({
+  const { data: errorsData, isLoading: errorsLoading } = useQuery({
     queryKey: ['analytics', 'errors', period],
     queryFn: () => analyticsApi.getErrors(period),
   })
+
+  const { data: errorsTrend, isLoading: trendLoading } = useQuery({
+    queryKey: ['analytics', 'errors', 'trend', period],
+    queryFn: () => analyticsApi.getErrorsTrend(period),
+  })
+
+  const isLoading = errorsLoading || trendLoading
 
   // Use actual data with empty defaults
   const errorList = errorsData?.errors || []
@@ -84,15 +91,11 @@ export function Errors() {
     color: ERROR_COLORS[e.errorType] || ERROR_COLORS.default,
   }))
 
-  // Derive trend data from error list (aggregate by day if available)
-  // For now, show empty trend if no time-series data available from API
-  const trendData = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(Date.now() - (6 - i) * 86400000)
-    return {
-      date: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      errors: 0, // Will be populated when API provides time-series data
-    }
-  })
+  // Trend data from backend API
+  const trendData = (errorsTrend || []).map((point: ErrorTrendPoint) => ({
+    date: new Date(point.date).toLocaleDateString('en-US', { weekday: 'short' }),
+    errors: point.errorCount,
+  }))
 
   const formatTimeAgo = (isoString: string | undefined | null) => {
     if (!isoString) return 'N/A'

@@ -12,7 +12,6 @@ const Models = lazy(() => import('@/pages/Models').then(m => ({ default: m.Model
 const Errors = lazy(() => import('@/pages/Errors').then(m => ({ default: m.Errors })))
 const History = lazy(() => import('@/pages/History').then(m => ({ default: m.History })))
 const Plugins = lazy(() => import('@/pages/Plugins').then(m => ({ default: m.Plugins })))
-const Users = lazy(() => import('@/pages/Users').then(m => ({ default: m.Users })))
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
 const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
 const Jira = lazy(() => import('@/pages/Jira').then(m => ({ default: m.Jira })))
@@ -75,11 +74,6 @@ function App() {
         <Route path="/plugins" element={
           <Suspense fallback={<PageLoader />}>
             <Plugins />
-          </Suspense>
-        } />
-        <Route path="/users" element={
-          <Suspense fallback={<PageLoader />}>
-            <Users />
           </Suspense>
         } />
         <Route path="/workflows" element={
