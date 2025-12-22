@@ -360,14 +360,14 @@ class ClaudeFlowConfiguration(
         claudeExecutor: ClaudeExecutor,
         slackMessageSender: SlackMessageSender,
         projectRegistry: ProjectRegistry,
-        projectContextService: ai.claudeflow.api.service.ProjectContextService,
+        enrichmentPipeline: ai.claudeflow.core.enrichment.ContextEnrichmentPipeline,
         storage: Storage,
         rateLimiter: RateLimiter
     ): ClaudeFlowController = ClaudeFlowController(
         claudeExecutor,
         slackMessageSender,
         projectRegistry,
-        projectContextService,
+        enrichmentPipeline,
         storage,
         rateLimiter
     )

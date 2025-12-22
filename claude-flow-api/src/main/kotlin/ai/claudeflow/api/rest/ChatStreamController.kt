@@ -1,7 +1,8 @@
 package ai.claudeflow.api.rest
 
 import ai.claudeflow.api.dto.*
-import ai.claudeflow.api.service.ProjectContextService
+import ai.claudeflow.core.enrichment.ContextEnrichmentPipeline
+import ai.claudeflow.core.enrichment.EnrichmentContext
 import ai.claudeflow.core.model.AgentMatch
 import ai.claudeflow.core.model.RoutingMethod
 import ai.claudeflow.core.ratelimit.RateLimiter
@@ -28,6 +29,7 @@ private val logger = KotlinLogging.logger {}
  * 채팅 스트리밍 API
  *
  * SSE 스트리밍을 통한 실시간 채팅 지원
+ * ContextEnrichmentPipeline을 통해 컨텍스트를 주입합니다.
  */
 @RestController
 @RequestMapping("/api/v1/chat")
@@ -35,7 +37,7 @@ private val logger = KotlinLogging.logger {}
 class ChatStreamController(
     private val claudeExecutor: ClaudeExecutor,
     private val projectRegistry: ProjectRegistry,
-    private val projectContextService: ProjectContextService,
+    private val enrichmentPipeline: ContextEnrichmentPipeline,  // Pipeline 사용
     private val storage: Storage? = null,
     private val rateLimiter: RateLimiter? = null
 ) {
@@ -91,7 +93,6 @@ class ChatStreamController(
 
                     // 에이전트 라우팅
                     val agentMatch: AgentMatch = if (request.agentId != null) {
-                        // 지정된 에이전트 사용
                         val agent = agentRouter.getAgent(request.agentId)
                         if (agent != null) {
                             AgentMatch(
@@ -105,7 +106,6 @@ class ChatStreamController(
                             return@mono
                         }
                     } else {
-                        // 자동 라우팅
                         agentRouter.route(lastUserMessage)
                     }
 
@@ -120,20 +120,30 @@ class ChatStreamController(
                     // 대화 히스토리 구성
                     val conversationContext = buildConversationContext(request.messages)
 
-                    // RAG 기반 프로젝트 컨텍스트 주입
-                    val enrichedResult = projectContextService.enrichPromptWithProjectContext(lastUserMessage)
-                    val finalPrompt = if (enrichedResult.contextInjected) {
-                        logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
-                        "${enrichedResult.enrichedPrompt}\n\n$conversationContext"
+                    // ✅ Pipeline을 통한 컨텍스트 Enrichment
+                    val enrichedContext = enrichmentPipeline.enrich(
+                        prompt = lastUserMessage,
+                        userId = request.userId,
+                        projectId = projectId,
+                        agentId = request.agentId
+                    )
+
+                    // 최종 프롬프트 구성
+                    val finalPrompt = if (enrichedContext.hasInjectedContext) {
+                        logger.info {
+                            "Context enriched: ${enrichedContext.injectedContexts.size} contexts, " +
+                                    "${enrichedContext.totalContextSize} chars"
+                        }
+                        "${enrichedContext.enrichedPrompt}\n\n$conversationContext"
                     } else {
                         conversationContext
                     }
 
-                    // 프로젝트 컨텍스트 조회
+                    // 작업 디렉토리 결정: Pipeline > 프로젝트 > 에이전트
                     val project = projectRegistry.get(projectId)
-                    // 작업 디렉토리: RAG 탐지 > 선택된 프로젝트 > 에이전트 기본값
-                    val detectedPath = enrichedResult.detectedProjects.firstOrNull { it.path.isNotEmpty() }?.path
-                    val workingDir = detectedPath ?: project?.workingDirectory ?: agentMatch.agent.workingDirectory
+                    val workingDir = enrichedContext.workingDirectory
+                        ?: project?.workingDirectory
+                        ?: agentMatch.agent.workingDirectory
 
                     // 실행 요청 구성
                     val executionRequest = ExecutionRequest(
@@ -229,20 +239,31 @@ class ChatStreamController(
                 // 대화 히스토리 구성
                 val conversationContext = buildConversationContext(request.messages)
 
-                // RAG 기반 프로젝트 컨텍스트 주입
-                val enrichedResult = projectContextService.enrichPromptWithProjectContext(lastUserMessage)
-                val finalPrompt = if (enrichedResult.contextInjected) {
-                    logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
-                    "${enrichedResult.enrichedPrompt}\n\n$conversationContext"
+                // ✅ Pipeline을 통한 컨텍스트 Enrichment
+                val projectId = request.projectId ?: "default"
+                val enrichedContext = enrichmentPipeline.enrich(
+                    prompt = lastUserMessage,
+                    userId = request.userId,
+                    projectId = projectId,
+                    agentId = request.agentId
+                )
+
+                // 최종 프롬프트 구성
+                val finalPrompt = if (enrichedContext.hasInjectedContext) {
+                    logger.info {
+                        "Context enriched: ${enrichedContext.injectedContexts.size} contexts, " +
+                                "${enrichedContext.totalContextSize} chars"
+                    }
+                    "${enrichedContext.enrichedPrompt}\n\n$conversationContext"
                 } else {
                     conversationContext
                 }
 
-                // 프로젝트 컨텍스트
-                val projectId = request.projectId ?: "default"
+                // 작업 디렉토리 결정
                 val project = projectRegistry.get(projectId)
-                val detectedPath = enrichedResult.detectedProjects.firstOrNull { it.path.isNotEmpty() }?.path
-                val workingDir = detectedPath ?: project?.workingDirectory ?: agentMatch.agent.workingDirectory
+                val workingDir = enrichedContext.workingDirectory
+                    ?: project?.workingDirectory
+                    ?: agentMatch.agent.workingDirectory
 
                 // 실행 요청
                 val executionRequest = ExecutionRequest(

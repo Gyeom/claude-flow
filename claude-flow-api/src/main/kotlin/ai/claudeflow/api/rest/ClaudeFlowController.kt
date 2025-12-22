@@ -1,8 +1,8 @@
 package ai.claudeflow.api.rest
 
 import ai.claudeflow.api.command.CommandHandler
-import ai.claudeflow.api.service.ProjectContextService
 import ai.claudeflow.api.slack.SlackMessageSender
+import ai.claudeflow.core.enrichment.ContextEnrichmentPipeline
 import ai.claudeflow.core.model.Agent
 import ai.claudeflow.core.model.Project
 import ai.claudeflow.core.ratelimit.RateLimiter
@@ -44,7 +44,7 @@ class ClaudeFlowController(
     private val claudeExecutor: ClaudeExecutor,
     private val slackMessageSender: SlackMessageSender,
     private val projectRegistry: ProjectRegistry,
-    private val projectContextService: ProjectContextService,
+    private val enrichmentPipeline: ContextEnrichmentPipeline,  // Pipeline 사용
     private val storage: Storage? = null,
     private val rateLimiter: RateLimiter? = null,
     private val contextAugmentationService: ContextAugmentationService? = null,
@@ -448,10 +448,21 @@ class ClaudeFlowController(
                 logger.info { "Using project: ${project.id} (${project.workingDirectory})" }
             }
 
-            // 3. 프로젝트 컨텍스트 주입
-            val enrichedResult = projectContextService.enrichPromptWithProjectContext(request.prompt)
-            if (enrichedResult.contextInjected) {
-                logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
+            // 3. Pipeline을 통한 컨텍스트 Enrichment
+            val enrichedContext = kotlinx.coroutines.runBlocking {
+                enrichmentPipeline.enrich(
+                    prompt = request.prompt,
+                    userId = request.userId,
+                    projectId = projectId,
+                    channelId = request.channel,
+                    threadTs = request.threadTs
+                )
+            }
+            if (enrichedContext.hasInjectedContext) {
+                logger.info {
+                    "Context enriched: ${enrichedContext.injectedContexts.size} contexts, " +
+                            "${enrichedContext.totalContextSize} chars"
+                }
             }
 
             // 4. RAG 컨텍스트 증강 (userId가 있으면)
@@ -479,14 +490,11 @@ class ClaudeFlowController(
             }
 
             // 5. 대화 히스토리 포함 프롬프트 생성
-            val contextualPrompt = buildContextualPrompt(enrichedResult.enrichedPrompt, request.conversationHistory)
+            val contextualPrompt = buildContextualPrompt(enrichedContext.enrichedPrompt, request.conversationHistory)
 
-            // 6. 작업 디렉토리 결정 (우선순위: 요청 > 탐지된 프로젝트 > 채널 프로젝트 > 에이전트)
-            // 빈 경로는 무시 (project-list 같은 메타 정보)
-            val detectedProjectPath = enrichedResult.detectedProjects
-                .firstOrNull { it.path.isNotEmpty() }?.path
+            // 6. 작업 디렉토리 결정 (우선순위: 요청 > Pipeline > 채널 프로젝트 > 에이전트)
             val workingDir = request.workingDirectory
-                ?: detectedProjectPath
+                ?: enrichedContext.workingDirectory
                 ?: project?.workingDirectory
                 ?: match.agent.workingDirectory
 
@@ -590,7 +598,10 @@ class ClaudeFlowController(
                 },
                 routedAgent = match.agent.id,
                 routingConfidence = match.confidence,
-                projectId = enrichedResult.detectedProjects.firstOrNull()?.projectId ?: project?.id
+                projectId = enrichedContext.injectedContexts
+                    .firstOrNull { it.metadata["projectId"] != null }
+                    ?.metadata?.get("projectId") as? String
+                    ?: project?.id
             )
 
             if (result.status == ExecutionStatus.SUCCESS) {
