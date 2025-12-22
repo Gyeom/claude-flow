@@ -90,7 +90,7 @@ const STATUS_CATEGORIES = {
   todo: ['To Do', '할 일', '해야할일', 'Selected for Development'],
   inProgress: ['In Progress', '진행 중', 'In Development', 'Working'],
   inReview: ['In Review', '검토 중', 'Review', 'Code Review', 'QA'],
-  done: ['Done', 'Closed', '완료', '해결됨', 'Resolved', 'Released'],
+  done: ['Done', 'Closed', '완료', '해결됨', 'Resolved', 'Released', 'Cancel', 'Cancelled', '취소'],
 }
 
 // 상태별 카테고리 찾기

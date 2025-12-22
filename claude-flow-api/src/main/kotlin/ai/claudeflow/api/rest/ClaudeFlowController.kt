@@ -482,7 +482,9 @@ class ClaudeFlowController(
             val contextualPrompt = buildContextualPrompt(enrichedResult.enrichedPrompt, request.conversationHistory)
 
             // 6. 작업 디렉토리 결정 (우선순위: 요청 > 탐지된 프로젝트 > 채널 프로젝트 > 에이전트)
-            val detectedProjectPath = enrichedResult.detectedProjects.firstOrNull()?.path
+            // 빈 경로는 무시 (project-list 같은 메타 정보)
+            val detectedProjectPath = enrichedResult.detectedProjects
+                .firstOrNull { it.path.isNotEmpty() }?.path
             val workingDir = request.workingDirectory
                 ?: detectedProjectPath
                 ?: project?.workingDirectory

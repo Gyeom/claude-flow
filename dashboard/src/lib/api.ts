@@ -557,54 +557,6 @@ export const systemApi = {
     }),
 }
 
-// Plugins
-export interface PluginInfo {
-  id: string
-  name: string
-  description: string
-  enabled: boolean
-  commands: string[]
-}
-
-export interface PluginDetail {
-  id: string
-  name: string
-  description: string
-  enabled: boolean
-  commands: {
-    name: string
-    description: string
-    usage: string
-    examples: string[]
-  }[]
-}
-
-export const pluginsApi = {
-  getAll: () =>
-    fetchApi<PluginInfo[]>('/plugins'),
-
-  getById: (pluginId: string) =>
-    fetchApi<PluginDetail>(`/plugins/${pluginId}`),
-
-  setEnabled: (pluginId: string, enabled: boolean) =>
-    fetchApi<{ success: boolean; pluginId: string; enabled: boolean }>(
-      `/plugins/${pluginId}/enabled`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({ enabled }),
-      }
-    ),
-
-  execute: (pluginId: string, command: string, args: Record<string, unknown> = {}) =>
-    fetchApi<{ success: boolean; data?: unknown; message?: string; error?: string }>(
-      `/plugins/${pluginId}/execute`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ command, args }),
-      }
-    ),
-}
-
 // Routing / Classification
 export interface ClassifyResult {
   agentId: string
