@@ -89,8 +89,8 @@ const STATUS_CATEGORIES = {
   backlog: ['Backlog', 'Open', 'New', 'Postpone'],
   todo: ['To Do', '할 일', '해야할일', 'Selected for Development'],
   inProgress: ['In Progress', '진행 중', 'In Development', 'Working'],
-  inReview: ['In Review', '검토 중', 'Review', 'Code Review', 'QA'],
-  done: ['Done', 'Closed', '완료', '해결됨', 'Resolved', 'Released', 'Cancel', 'Cancelled', '취소'],
+  resolved: ['Resolved', '해결됨', 'In Review', '검토 중', 'Review', 'Code Review', 'QA'],
+  done: ['Done', 'Closed', '완료', 'Released', 'Cancel', 'Cancelled', '취소'],
 }
 
 // 상태별 카테고리 찾기
@@ -108,7 +108,7 @@ const categoryStyles = {
   backlog: { icon: Circle, color: 'text-gray-400', bg: 'bg-gray-100 dark:bg-gray-800', border: 'border-gray-200 dark:border-gray-700' },
   todo: { icon: Circle, color: 'text-slate-500', bg: 'bg-slate-100 dark:bg-slate-800', border: 'border-slate-200 dark:border-slate-700' },
   inProgress: { icon: PlayCircle, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/30', border: 'border-blue-200 dark:border-blue-800' },
-  inReview: { icon: Eye, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', border: 'border-purple-200 dark:border-purple-800' },
+  resolved: { icon: Eye, color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-900/30', border: 'border-purple-200 dark:border-purple-800' },
   done: { icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/30', border: 'border-emerald-200 dark:border-emerald-800' },
 }
 
@@ -522,7 +522,7 @@ export function Jira() {
     { key: 'backlog', label: 'Backlog' },
     { key: 'todo', label: 'To Do' },
     { key: 'inProgress', label: 'In Progress' },
-    { key: 'inReview', label: 'In Review' },
+    { key: 'resolved', label: 'Resolved' },
     { key: 'done', label: 'Done' },
   ]
 
@@ -591,7 +591,7 @@ export function Jira() {
       backlog: 0,
       todo: 0,
       inProgress: 0,
-      inReview: 0,
+      resolved: 0,
       done: 0,
     }
     currentIssues.forEach(issue => {
@@ -745,7 +745,7 @@ export function Jira() {
       { value: 'backlog', label: 'Backlog' },
       { value: 'todo', label: 'To Do' },
       { value: 'inProgress', label: 'In Progress' },
-      { value: 'inReview', label: 'In Review' },
+      { value: 'resolved', label: 'Resolved' },
       { value: 'done', label: 'Done' },
     ]
     statusSuggestions.forEach(s => {
@@ -977,8 +977,8 @@ export function Jira() {
         <Card className="p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-muted-foreground">In Review</p>
-              <p className="text-2xl font-bold text-purple-600">{stats.inReview}</p>
+              <p className="text-sm text-muted-foreground">Resolved</p>
+              <p className="text-2xl font-bold text-purple-600">{stats.resolved}</p>
             </div>
             <div className="w-10 h-10 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
               <Eye className="h-5 w-5 text-purple-500" />
@@ -2046,8 +2046,8 @@ export function Jira() {
                   return acc
                 }, {} as Record<string, typeof quickFilteredIssues>)
 
-                // 카테고리 순서대로 정렬: backlog → todo → inProgress → inReview → done
-                const categoryOrder: (keyof typeof STATUS_CATEGORIES)[] = ['backlog', 'todo', 'inProgress', 'inReview', 'done']
+                // 카테고리 순서대로 정렬: backlog → todo → inProgress → resolved → done
+                const categoryOrder: (keyof typeof STATUS_CATEGORIES)[] = ['backlog', 'todo', 'inProgress', 'resolved', 'done']
                 const sortedEntries = Object.entries(groupedByStatus).sort((a, b) => {
                   const catA = categoryOrder.indexOf(getStatusCategory(a[0]))
                   const catB = categoryOrder.indexOf(getStatusCategory(b[0]))
