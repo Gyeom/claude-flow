@@ -32,6 +32,8 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     val analyticsRepository: AnalyticsRepository
     val projectRepository: ProjectRepository
     val projectAliasRepository: ProjectAliasRepository
+    val sessionRepository: SessionRepository
+    val sessionMessageRepository: SessionMessageRepository
 
     init {
         Class.forName("org.sqlite.JDBC")
@@ -49,6 +51,8 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         analyticsRepository = AnalyticsRepository(this, executionRepository, feedbackRepository)
         projectRepository = ProjectRepository(this)
         projectAliasRepository = ProjectAliasRepository(this)
+        sessionRepository = SessionRepository(this)
+        sessionMessageRepository = SessionMessageRepository(this)
 
         // 기본 프로젝트 및 Aliases 초기화
         initDefaultProjectsAndAliases()
@@ -324,6 +328,30 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 )
             """)
 
+            // 세션 테이블 (스레드 기반 대화 세션)
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    channel TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    claude_session_id TEXT,
+                    created_at TEXT NOT NULL,
+                    last_activity_at TEXT NOT NULL
+                )
+            """)
+
+            // 세션 메시지 테이블
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS session_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+                )
+            """)
+
             // 인덱스 생성
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_channel ON executions(channel)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_created ON executions(created_at)")
@@ -333,6 +361,10 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_user_rules_user ON user_rules(user_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_routing_metrics_created ON routing_metrics(created_at)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_queue(created_at)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sessions_activity ON sessions(last_activity_at)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_session_messages_session ON session_messages(session_id)")
         }
     }
 

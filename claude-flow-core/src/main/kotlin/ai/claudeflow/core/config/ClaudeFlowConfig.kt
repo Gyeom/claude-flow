@@ -28,10 +28,15 @@ data class SlackConfig(
  * NOTE: baseUrl 기본값은 개발 환경용입니다.
  * 프로덕션에서는 환경변수로 설정하세요:
  * - N8N_URL 또는 claude-flow.webhook.base-url
+ *
+ * useUnifiedRouting이 true면 모든 이벤트가 unified 엔드포인트로 전송되고,
+ * n8n의 slack-router 워크플로우가 분류를 담당합니다.
  */
 data class WebhookConfig(
     val baseUrl: String = DEFAULT_N8N_URL,
-    val endpoints: WebhookEndpoints = WebhookEndpoints()
+    val endpoints: WebhookEndpoints = WebhookEndpoints(),
+    /** 통합 라우팅: 모든 이벤트를 slack-router로 전송, n8n에서 분류 */
+    val useUnifiedRouting: Boolean = true
 ) {
     companion object {
         const val DEFAULT_N8N_URL = "http://localhost:5678"
@@ -45,7 +50,9 @@ data class WebhookEndpoints(
     val feedback: String = "/webhook/slack-feedback",
     val actionTrigger: String = "/webhook/slack-action",
     val alertBot: String = "/webhook/slack-alert-bot",      // 알람 봇 메시지
-    val issueCreation: String = "/webhook/slack-issue-creation"  // 이슈 생성 확인
+    val issueCreation: String = "/webhook/slack-issue-creation",  // 이슈 생성 확인
+    /** 통합 라우터 엔드포인트 (useUnifiedRouting=true일 때 사용) */
+    val unified: String = "/webhook/slack-event"
 )
 
 /**

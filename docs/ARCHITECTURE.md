@@ -222,6 +222,7 @@ erDiagram
     agents ||--o{ executions : handles
     projects ||--o{ agents : contains
     projects ||--o{ channel_projects : mapped
+    sessions ||--o{ session_messages : contains
 
     executions {
         string id PK
@@ -302,6 +303,23 @@ erDiagram
         string path
         text description
     }
+
+    sessions {
+        string id PK "thread_id"
+        string channel
+        string user_id
+        string claude_session_id
+        datetime created_at
+        datetime last_activity_at
+    }
+
+    session_messages {
+        int id PK
+        string session_id FK
+        string role "user/assistant"
+        text content
+        datetime timestamp
+    }
 ```
 
 ## 7. 플러그인 시스템
@@ -361,6 +379,68 @@ classDiagram
 
 ## 8. n8n 워크플로우
 
+### 8.0. 이벤트 라우팅 모드
+
+Claude Flow는 두 가지 이벤트 라우팅 모드를 지원합니다:
+
+```mermaid
+flowchart TB
+    subgraph Legacy["레거시 모드 (useUnifiedRouting=false)"]
+        direction LR
+        L1["SlackBridge<br/>(Kotlin 분류)"] --> L2["개별 Webhook<br/>/slack-mention<br/>/slack-feedback<br/>/slack-action"]
+        L2 --> L3["개별 Handler"]
+    end
+
+    subgraph Unified["통합 라우팅 모드 (useUnifiedRouting=true)"]
+        direction LR
+        U1["SlackBridge<br/>(전달만)"] --> U2["단일 Webhook<br/>/slack-event"]
+        U2 --> U3["slack-router<br/>(n8n 분류)"]
+        U3 --> U4["개별 Handler"]
+    end
+
+    style Unified fill:#e8f5e9
+```
+
+**통합 라우팅 모드의 장점:**
+- n8n UI에서 분류 로직 즉시 수정 가능
+- Kotlin 코드 변경 없이 새 이벤트 타입 추가
+- 시각적 디버깅
+
+### 8.0.1. slack-router 중앙 분류기
+
+```mermaid
+flowchart LR
+    subgraph Input["입력"]
+        Event["Slack Event<br/>(MENTION/REACTION/MESSAGE)"]
+    end
+
+    subgraph Router["slack-router.json"]
+        Classify["Classify Event<br/>(JavaScript)"]
+        Check1{"Is Mention?"}
+        Check2{"Is MR Review?"}
+        Check3{"Is Feedback?"}
+        Check4{"Is Action?"}
+    end
+
+    subgraph Handlers["핸들러"]
+        H1["mention-handler"]
+        H2["mr-review-handler"]
+        H3["feedback-handler"]
+        H4["action-handler"]
+        H5["Log Unrouted"]
+    end
+
+    Event --> Classify
+    Classify --> Check1 & Check2 & Check3 & Check4
+    Check1 -->|Yes| H1
+    Check2 -->|Yes| H2
+    Check3 -->|Yes| H3
+    Check4 -->|Yes| H4
+    Check1 -->|No| H5
+```
+
+### 8.0.2. 워크플로우 목록
+
 ```mermaid
 flowchart LR
     subgraph Triggers["트리거"]
@@ -370,7 +450,8 @@ flowchart LR
         W4["Alert Bot"]
     end
 
-    subgraph Workflows["워크플로우 (7개)"]
+    subgraph Workflows["워크플로우 (8개)"]
+        WF0["slack-router<br/>🆕 중앙 분류기"]
         WF1["slack-mention-handler<br/>✅ 활성"]
         WF2["slack-mr-review<br/>✅ 활성"]
         WF3["slack-action-handler<br/>✅ 활성"]
@@ -387,10 +468,13 @@ flowchart LR
         A4["GitLab MR 생성"]
     end
 
-    W1 --> WF1
-    W1 --> WF2
-    W2 --> WF4
-    W3 --> WF3
+    W1 --> WF0
+    W2 --> WF0
+    W3 --> WF0
+    WF0 --> WF1
+    WF0 --> WF2
+    WF0 --> WF3
+    WF0 --> WF4
     W4 --> WF6
 
     WF1 --> A1 --> A2
@@ -521,6 +605,50 @@ flowchart LR
     E4 --> Context --> Final
 ```
 
+### 8.4. Enrichment API
+
+n8n 워크플로우에서 프롬프트 실행 전에 컨텍스트를 주입할 수 있습니다:
+
+```mermaid
+sequenceDiagram
+    participant N as n8n Workflow
+    participant E as /api/v1/enrich
+    participant X as /api/v1/execute
+
+    N->>E: POST /enrich
+    Note over E: Chain of Responsibility<br/>Enricher들 순차 적용
+    E-->>N: enrichedPrompt, metadata
+
+    N->>X: POST /execute
+    Note over X: enrichedPrompt 사용
+    X-->>N: Claude 응답
+```
+
+**API 스펙:**
+```
+POST /api/v1/enrich
+{
+  "prompt": "사용자 메시지",
+  "userId": "U123",
+  "projectId": "my-project",
+  "includeRag": true
+}
+
+Response:
+{
+  "success": true,
+  "enrichedPrompt": "컨텍스트가 주입된 프롬프트",
+  "appliedEnrichers": ["ProjectContextEnricher", "UserRuleEnricher"],
+  "workingDirectory": "/workspace/my-project",
+  "ragSystemPrompt": "RAG 시스템 프롬프트 (별도 사용)",
+  "processingTimeMs": 45
+}
+```
+
+**보조 API:**
+- `GET /api/v1/enrichers`: 등록된 Enricher 목록 조회
+- `GET /api/v1/enrich/rag-status`: RAG 시스템 상태 확인
+
 ## 9. Rate Limiting
 
 ```mermaid
@@ -547,6 +675,8 @@ flowchart TD
 
 ## 10. 세션 관리
 
+### 10.1. 세션 상태 다이어그램
+
 ```mermaid
 stateDiagram-v2
     [*] --> NewSession: 첫 메시지
@@ -561,6 +691,59 @@ stateDiagram-v2
         Claude CLI 세션 ID 캐싱
         토큰 30-40% 절감
     end note
+```
+
+### 10.2. 세션 영속화 (하이브리드 방식)
+
+```mermaid
+flowchart TB
+    subgraph Memory["메모리 캐시"]
+        Cache["ConcurrentHashMap<br/>(빠른 액세스)"]
+    end
+
+    subgraph Database["SQLite"]
+        Sessions["sessions 테이블"]
+        Messages["session_messages 테이블"]
+    end
+
+    subgraph Operations["작업"]
+        Create["세션 생성"] --> Cache & Sessions
+        Read["세션 조회"] --> Cache
+        Cache -.->|캐시 미스| Sessions
+        Update["메시지 추가"] --> Cache & Messages
+        Cleanup["TTL 만료"] --> Cache & Sessions
+    end
+
+    style Memory fill:#fff3e0
+    style Database fill:#e3f2fd
+```
+
+**특징:**
+- **앱 재시작 시 복구**: 활성 세션이 DB에서 자동 로드
+- **하이브리드 캐싱**: 메모리 캐시로 빠른 액세스, DB로 영속화
+- **자동 정리**: TTL 만료 세션 자동 삭제
+
+**테이블 구조:**
+```sql
+-- 세션 테이블
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,        -- Slack thread ID
+    channel TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    claude_session_id TEXT,     -- Claude CLI 세션 ID
+    created_at TIMESTAMP,
+    last_activity_at TIMESTAMP
+);
+
+-- 세션 메시지 테이블
+CREATE TABLE session_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,         -- 'user' or 'assistant'
+    content TEXT NOT NULL,
+    timestamp TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES sessions(id)
+);
 ```
 
 ## 11. 배포 아키텍처
@@ -682,26 +865,34 @@ Claude Flow는 **4개의 핵심 모듈**로 구성된 AI 에이전트 플랫폼�
 
 | 모듈 | 역할 | 핵심 컴포넌트 |
 |------|------|--------------|
-| **claude-flow-core** | 도메인 로직 | AgentRouter, Storage, Plugin, RAG, Enrichment |
+| **claude-flow-core** | 도메인 로직 | AgentRouter, Storage, Plugin, RAG, Enrichment, SessionManager |
 | **claude-flow-executor** | CLI 래퍼 | ClaudeExecutor (세션 관리, 스트리밍) |
-| **claude-flow-api** | API 레이어 | REST API, SlackSocketModeBridge, WebhookSender |
+| **claude-flow-api** | API 레이어 | REST API, SlackSocketModeBridge, EnrichmentController |
 | **claude-flow-app** | 애플리케이션 | Spring Boot 통합, 설정 |
 
 **핵심 특징**:
 - 5단계 멀티레벨 라우팅 (피드백 학습 → 키워드 → 패턴 → 시맨틱 → 폴백)
-- Claude 세션 캐싱으로 토큰 30-40% 절감
-- n8n 기반 7개 워크플로우 (Slack 멘션, MR 리뷰, 피드백 수집 등)
+- Claude 세션 캐싱으로 토큰 30-40% 절감 (DB 영속화 지원)
+- n8n 기반 8개 워크플로우 (slack-router 중앙 분류기 포함)
+- 통합 라우팅 모드: n8n에서 이벤트 분류, Kotlin은 전달만
 - 실시간 P50/P90/P95/P99 분석
 - 플러그인 시스템 (GitLab, GitHub, Jira, n8n)
 - RAG 시스템 (Qdrant + Ollama)
   - 피드백 학습 기반 에이전트 추천
-  - 컨텍스트 증강 파이프라인
+  - 컨텍스트 증강 파이프라인 (Enrichment API 공개)
   - 코드베이스 인덱싱
 - 13개 대시보드 페이지 (Chat, Analytics, Jira, Workflows 등)
 
-**데이터 흐름**:
+**데이터 흐름 (통합 라우팅 모드)**:
 ```
-Slack → SlackBridge → n8n → REST API → AgentRouter → ContextEnrichment → ClaudeExecutor → Claude CLI
-                                              ↓
-                                        RAG System (피드백 학습, 유사 대화 검색)
+Slack → SlackBridge → n8n(slack-router) → [분류] → Handler → REST API → AgentRouter → ContextEnrichment → ClaudeExecutor
+                                                                                              ↓
+                                                                                        RAG System (피드백 학습, 유사 대화 검색)
 ```
+
+**주요 API**:
+- `POST /api/v1/execute`: Claude 실행
+- `POST /api/v1/execute-with-routing`: 라우팅 포함 실행
+- `POST /api/v1/enrich`: 컨텍스트 증강
+- `POST /api/v1/feedback`: 피드백 저장
+- `GET /api/v1/sessions`: 세션 관리

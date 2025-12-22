@@ -1,12 +1,8 @@
 package ai.claudeflow.api.slack
 
 import ai.claudeflow.core.alert.AlertService
-import ai.claudeflow.core.config.ActionTriggerConfig
-import ai.claudeflow.core.config.IssueCreationConfig
-import ai.claudeflow.core.config.IssueCreationAction
 import ai.claudeflow.core.config.SlackConfig
 import ai.claudeflow.core.config.WebhookConfig
-import ai.claudeflow.core.event.ActionPayload
 import ai.claudeflow.core.event.SlackEvent
 import ai.claudeflow.core.event.SlackEventType
 import ai.claudeflow.core.event.SlackFile
@@ -39,15 +35,15 @@ private val logger = KotlinLogging.logger {}
  * Slack Socket Mode Bridge with Auto-Reconnect
  *
  * WebSocket connection to Slack with automatic reconnection,
- * health monitoring, and message retry queue
+ * health monitoring, and message retry queue.
+ *
+ * 모든 이벤트는 slack-router 워크플로우로 전송되어 n8n에서 분류됩니다.
  */
 class SlackSocketModeBridge(
     private val slackConfig: SlackConfig,
     private val webhookConfig: WebhookConfig,
     private val webhookSender: WebhookSender,
     private val storage: Storage? = null,
-    private val actionTriggerConfig: ActionTriggerConfig = ActionTriggerConfig(),
-    private val issueCreationConfig: IssueCreationConfig = IssueCreationConfig(),
     private val alertService: AlertService? = null,
     private val maxReconnectAttempts: Int = 10,
     private val initialReconnectDelayMs: Long = 1000,
@@ -74,13 +70,6 @@ class SlackSocketModeBridge(
     private var healthCheckJob: Job? = null
     private var retryJob: Job? = null
 
-    // Feedback emojis
-    private val feedbackReactions = setOf("+1", "-1", "thumbsup", "thumbsdown")
-    private val actionTriggerEmojis = actionTriggerConfig.triggers.keys
-
-    // Issue creation confirmation reactions (✅/❌/✏️)
-    private val issueCreationReactions = issueCreationConfig.reactions
-
     enum class ConnectionState {
         DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, FAILED
     }
@@ -88,7 +77,6 @@ class SlackSocketModeBridge(
     data class FailedMessage(
         val event: SlackEvent,
         val endpoint: String,
-        val actionPayload: ActionPayload? = null,
         val failedAt: Instant = Clock.System.now(),
         val retryCount: Int = 0
     )
@@ -303,7 +291,7 @@ class SlackSocketModeBridge(
                 continue
             }
 
-            val success = sendToWebhookInternal(msg.event, msg.endpoint, msg.actionPayload)
+            val success = sendToWebhookInternal(msg.event, msg.endpoint)
             if (!success) {
                 // Re-queue with incremented retry count
                 if (failedMessageQueue.size < maxQueueSize) {
@@ -477,7 +465,7 @@ class SlackSocketModeBridge(
             )
 
             scope.launch {
-                sendToWebhook(slackEvent, webhookConfig.endpoints.mention)
+                sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
             }
 
             ctx.ack()
@@ -534,7 +522,7 @@ class SlackSocketModeBridge(
             )
 
             scope.launch {
-                sendToWebhook(slackEvent, webhookConfig.endpoints.message)
+                sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
             }
 
             ctx.ack()
@@ -553,81 +541,38 @@ class SlackSocketModeBridge(
             channel = event.channel,
             user = event.botId ?: event.user ?: "unknown",
             text = event.text ?: "",
-            threadTs = event.ts,  // 원본 메시지의 ts를 threadTs로 저장 (나중에 스레드 답글용)
+            threadTs = event.ts,
             timestamp = event.ts,
             receivedAt = Clock.System.now(),
             botId = event.botId,
-            appId = null  // MessageEvent에서는 appId 직접 접근 불가
+            appId = null
         )
 
-        sendToWebhook(slackEvent, webhookConfig.endpoints.alertBot)
+        sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
     }
 
     /**
      * Reaction event handlers
+     * 모든 리액션 이벤트를 slack-router로 전송, n8n에서 분류
      */
     private fun App.registerReactionHandlers() {
         event(ReactionAddedEvent::class.java) { payload, ctx ->
             lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
-            val reaction = event.reaction
-
-            val isActionTrigger = actionTriggerEmojis.contains(reaction)
-            val isFeedback = feedbackReactions.contains(reaction)
-            val isIssueCreation = issueCreationReactions.isIssueCreationReaction(reaction)
-
-            val (eventType, endpoint) = when {
-                isIssueCreation -> SlackEventType.ISSUE_CREATION to webhookConfig.endpoints.issueCreation
-                isActionTrigger -> SlackEventType.ACTION_TRIGGER to webhookConfig.endpoints.actionTrigger
-                isFeedback -> SlackEventType.REACTION_ADDED to webhookConfig.endpoints.feedback
-                else -> SlackEventType.REACTION_ADDED to webhookConfig.endpoints.reaction
-            }
-
-            val actionPayload = when {
-                isIssueCreation -> {
-                    val action = issueCreationReactions.getAction(reaction)
-                    ActionPayload(
-                        actionType = action?.name ?: "UNKNOWN",
-                        emoji = reaction,
-                        description = when (action) {
-                            IssueCreationAction.APPROVE -> "이슈 생성 승인"
-                            IssueCreationAction.REJECT -> "이슈 생성 거절"
-                            else -> "Unknown"
-                        },
-                        targetMessageTs = event.item.ts
-                    )
-                }
-                isActionTrigger -> {
-                    actionTriggerConfig.triggers[reaction]?.let { trigger ->
-                        ActionPayload(
-                            actionType = trigger.action,
-                            emoji = trigger.emoji,
-                            description = trigger.description,
-                            targetMessageTs = event.item.ts
-                        )
-                    }
-                }
-                else -> null
-            }
 
             val slackEvent = SlackEvent(
                 id = UUID.randomUUID().toString(),
-                type = eventType,
+                type = SlackEventType.REACTION_ADDED,
                 channel = event.item.channel,
                 user = event.user,
                 text = "",
                 timestamp = event.item.ts,
-                reaction = reaction,
+                reaction = event.reaction,
                 receivedAt = Clock.System.now()
             )
 
             scope.launch {
-                sendToWebhook(slackEvent, endpoint, actionPayload)
-            }
-
-            when {
-                isIssueCreation -> logger.info { "Issue creation reaction: $reaction -> ${actionPayload?.actionType}" }
-                isActionTrigger -> logger.info { "Action trigger detected: $reaction -> ${actionPayload?.actionType}" }
+                sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
             }
 
             ctx.ack()
@@ -636,10 +581,6 @@ class SlackSocketModeBridge(
         event(ReactionRemovedEvent::class.java) { payload, ctx ->
             lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
-
-            if (!feedbackReactions.contains(event.reaction)) {
-                return@event ctx.ack()
-            }
 
             val slackEvent = SlackEvent(
                 id = UUID.randomUUID().toString(),
@@ -653,23 +594,18 @@ class SlackSocketModeBridge(
             )
 
             scope.launch {
-                sendToWebhook(slackEvent, webhookConfig.endpoints.feedback)
+                sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
             }
 
             ctx.ack()
         }
     }
 
-    private suspend fun sendToWebhook(
-        event: SlackEvent,
-        endpoint: String,
-        actionPayload: ActionPayload? = null
-    ) {
-        val success = sendToWebhookInternal(event, endpoint, actionPayload)
+    private suspend fun sendToWebhook(event: SlackEvent, endpoint: String) {
+        val success = sendToWebhookInternal(event, endpoint)
         if (!success) {
-            // Queue for retry
             if (failedMessageQueue.size < maxQueueSize) {
-                failedMessageQueue.offer(FailedMessage(event, endpoint, actionPayload))
+                failedMessageQueue.offer(FailedMessage(event, endpoint))
                 logger.warn { "Message queued for retry: ${event.id} (queue size: ${failedMessageQueue.size})" }
             } else {
                 logger.error { "Failed message queue full, dropping message: ${event.id}" }
@@ -677,11 +613,7 @@ class SlackSocketModeBridge(
         }
     }
 
-    private suspend fun sendToWebhookInternal(
-        event: SlackEvent,
-        endpoint: String,
-        actionPayload: ActionPayload? = null
-    ): Boolean {
+    private suspend fun sendToWebhookInternal(event: SlackEvent, endpoint: String): Boolean {
         val payload = WebhookPayload(
             eventId = event.id,
             eventType = event.type,
@@ -691,8 +623,7 @@ class SlackSocketModeBridge(
             threadTs = event.threadTs,
             timestamp = event.timestamp,
             reaction = event.reaction,
-            files = event.files,
-            action = actionPayload
+            files = event.files
         )
 
         val url = "${webhookConfig.baseUrl}$endpoint"
