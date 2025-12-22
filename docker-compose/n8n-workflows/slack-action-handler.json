@@ -19,7 +19,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $json.body.channel, timestamp: $json.body.timestamp, emoji: 'gear', remove: false }) }}"
@@ -69,7 +69,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/thread-history",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/thread-history",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, threadTs: $('Webhook').item.json.body.action.targetMessageTs, limit: 50 }) }}"
@@ -83,7 +83,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/thread-history",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/thread-history",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, threadTs: $('Webhook').item.json.body.action.targetMessageTs, limit: 50 }) }}"
@@ -97,7 +97,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/execute",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ prompt: '다음 대화 내용을 바탕으로 Jira 티켓을 작성해줘. 제목, 설명, 우선순위를 포함해서 JSON 형식으로 응답해줘:\\n\\n' + $json.messages.map(m => m.userName + ': ' + m.text).join('\\n'), systemPrompt: 'You are a helpful assistant that creates Jira tickets from conversation context. Respond in JSON format with title, description, priority fields.', maxTurns: 1 }) }}",
@@ -114,7 +114,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/execute",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ prompt: '다음 대화 내용을 요약해줘:\\n\\n' + $json.messages.map(m => m.userName + ': ' + m.text).join('\\n'), systemPrompt: 'You are a helpful assistant. Summarize the conversation concisely in Korean.', maxTurns: 1 }) }}",
@@ -131,7 +131,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ':jira: *Jira 티켓 제안*\\n' + $json.result, threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"
@@ -145,7 +145,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ':memo: *요약*\\n' + $json.result, threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"
@@ -159,7 +159,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'gear', remove: true }) }}"
@@ -173,7 +173,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'gear', remove: true }) }}"
@@ -187,7 +187,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '지원되지 않는 액션입니다: ' + $('Webhook').item.json.body.action.actionType, threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"

@@ -45,7 +45,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/reaction",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $json.channel, timestamp: $json.timestamp, emoji: 'hourglass_flowing_sand', remove: false }) }}"
@@ -169,7 +169,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Execute Claude and preserve Build Prompt data\nconst buildPromptData = $input.item.json;\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://host.docker.internal:8080/api/v1/execute-with-routing',\n  body: {\n    prompt: buildPromptData.formatted_prompt,\n    systemPrompt: 'You are a senior code reviewer. Review the merge request and provide:\\n1. verdict: \"approve\" (no issues), \"request_changes\" (blocking issues), or \"comment\" (suggestions only)\\n2. summary: 1-2 sentence summary in Korean\\n3. points: array of specific feedback points in Korean\\n4. gitlab_comment: formatted markdown comment for GitLab\\n\\nRespond in valid JSON format.',\n    maxTurns: 10,\n    channel: 'gitlab-review'\n  },\n  json: true,\n  timeout: 600000\n});\n\nreturn {\n  json: {\n    ...buildPromptData,\n    claudeResponse: response\n  }\n};"
+        "jsCode": "// Execute Claude and preserve Build Prompt data\nconst buildPromptData = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nconst response = await this.helpers.httpRequest({\n  method: 'POST',\n  url: apiUrl + '/api/v1/execute-with-routing',\n  body: {\n    prompt: buildPromptData.formatted_prompt,\n    systemPrompt: 'You are a senior code reviewer. Review the merge request and provide:\\n1. verdict: \"approve\" (no issues), \"request_changes\" (blocking issues), or \"comment\" (suggestions only)\\n2. summary: 1-2 sentence summary in Korean\\n3. points: array of specific feedback points in Korean\\n4. gitlab_comment: formatted markdown comment for GitLab\\n\\nRespond in valid JSON format.',\n    maxTurns: 10,\n    channel: 'gitlab-review'\n  },\n  json: true,\n  timeout: 600000\n});\n\nreturn {\n  json: {\n    ...buildPromptData,\n    claudeResponse: response\n  }\n};"
       },
       "id": "execute-claude",
       "name": "Execute Claude",
@@ -179,7 +179,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Remove loading reaction and pass data through\nconst data = $input.item.json;\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://host.docker.internal:8080/api/v1/slack/reaction',\n    body: {\n      channel: data.channel,\n      timestamp: data.timestamp,\n      emoji: 'hourglass_flowing_sand',\n      remove: true\n    },\n    json: true\n  });\n} catch (e) {\n  // ignore reaction errors\n}\n\nreturn { json: data };"
+        "jsCode": "// Remove loading reaction and pass data through\nconst data = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/slack/reaction',\n    body: {\n      channel: data.channel,\n      timestamp: data.timestamp,\n      emoji: 'hourglass_flowing_sand',\n      remove: true\n    },\n    json: true\n  });\n} catch (e) {\n  // ignore reaction errors\n}\n\nreturn { json: data };"
       },
       "id": "remove-loading",
       "name": "Remove Loading",
@@ -226,7 +226,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Final step: Post Slack, Update GitLab Labels, Add Success Reaction\nconst data = $input.item.json;\nconst gitlabUrl = process.env.GITLAB_URL || 'https://gitlab.example.com';\nconst gitlabToken = process.env.GITLAB_TOKEN || '';\n\n// 1. Post Slack message\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://host.docker.internal:8080/api/v1/slack/message',\n    body: {\n      channel: data.channel,\n      text: data.slackMessage,\n      threadTs: data.threadTs\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Post Slack error:', e.message);\n}\n\n// 2. Update GitLab labels\ntry {\n  await this.helpers.httpRequest({\n    method: 'PUT',\n    url: `${gitlabUrl}/api/v4/projects/${data.project_id}/merge_requests/${data.mr_iid}`,\n    headers: { 'PRIVATE-TOKEN': gitlabToken },\n    body: {\n      add_labels: 'ai-review::done',\n      remove_labels: 'ai-review::in-progress'\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Mark Done error:', e.message);\n}\n\n// 3. Add success reaction\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: 'http://host.docker.internal:8080/api/v1/slack/reaction',\n    body: {\n      channel: data.channel,\n      timestamp: data.timestamp,\n      emoji: 'white_check_mark',\n      remove: false\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Add Success error:', e.message);\n}\n\nreturn { json: { success: true } };"
+        "jsCode": "// Final step: Post Slack, Update GitLab Labels, Add Success Reaction\nconst data = $input.item.json;\nconst gitlabUrl = process.env.GITLAB_URL || 'https://gitlab.example.com';\nconst gitlabToken = process.env.GITLAB_TOKEN || '';\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\n// 1. Post Slack message\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/slack/message',\n    body: {\n      channel: data.channel,\n      text: data.slackMessage,\n      threadTs: data.threadTs\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Post Slack error:', e.message);\n}\n\n// 2. Update GitLab labels\ntry {\n  await this.helpers.httpRequest({\n    method: 'PUT',\n    url: `${gitlabUrl}/api/v4/projects/${data.project_id}/merge_requests/${data.mr_iid}`,\n    headers: { 'PRIVATE-TOKEN': gitlabToken },\n    body: {\n      add_labels: 'ai-review::done',\n      remove_labels: 'ai-review::in-progress'\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Mark Done error:', e.message);\n}\n\n// 3. Add success reaction\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/slack/reaction',\n    body: {\n      channel: data.channel,\n      timestamp: data.timestamp,\n      emoji: 'white_check_mark',\n      remove: false\n    },\n    json: true\n  });\n} catch (e) {\n  console.log('Add Success error:', e.message);\n}\n\nreturn { json: { success: true } };"
       },
       "id": "post-slack-success",
       "name": "Complete Review",
@@ -237,7 +237,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: ':x: MR 리뷰 실패: ' + ($json.claudeResponse?.error || 'Unknown error'), threadTs: $json.threadTs }) }}"
@@ -275,7 +275,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// MR Not Found - Extract MR Number 데이터 조회\nconst extractData = $('Extract MR Number').first().json;\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: 'http://host.docker.internal:8080/api/v1/slack/message',\n  body: {\n    channel: extractData.channel,\n    text: ':x: MR을 찾을 수 없습니다: !' + extractData.mr_iid,\n    threadTs: extractData.threadTs\n  },\n  json: true\n});\n\nreturn { json: { sent: true } };"
+        "jsCode": "// MR Not Found - Extract MR Number 데이터 조회\nconst extractData = $('Extract MR Number').first().json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nawait this.helpers.httpRequest({\n  method: 'POST',\n  url: apiUrl + '/api/v1/slack/message',\n  body: {\n    channel: extractData.channel,\n    text: ':x: MR을 찾을 수 없습니다: !' + extractData.mr_iid,\n    threadTs: extractData.threadTs\n  },\n  json: true\n});\n\nreturn { json: { sent: true } };"
       },
       "id": "mr-not-found",
       "name": "MR Not Found",
@@ -286,7 +286,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.error, threadTs: $json.threadTs }) }}"

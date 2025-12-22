@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 파이프라인 요청 파싱\nconst body = $input.item.json.body || $input.item.json;\n\nconst project = body.project; // ccds-server, authorization-server 등\nconst summary = body.summary;\nconst description = body.description;\nconst severity = body.severity || 'HIGH';\nconst suggestedFix = body.suggestedFix;\nconst channel = body.channel;\nconst threadTs = body.threadTs;\nconst userId = body.userId;\n\n// 프로젝트 → Jira 키 매핑\nconst PROJECT_JIRA_MAP = {\n  'ccds-server': 'CCDC',\n  'authorization-server': 'CCDC',\n  'vlc-gateway-server': 'CCDC',\n  'ad-data-management-server': 'DC'\n};\n\nconst jiraProject = PROJECT_JIRA_MAP[project] || 'CCDC';\n\n// 프로젝트 → 워크스페이스 경로 매핑\nconst workspacePath = process.env.WORKSPACE_PATH || '/Users/a13801/42dot';\n\nreturn {\n  json: {\n    project,\n    projectPath: `${workspacePath}/${project}`,\n    jiraProject,\n    summary,\n    description,\n    severity,\n    suggestedFix,\n    channel,\n    threadTs,\n    userId,\n    baseBranch: 'develop'\n  }\n};"
+        "jsCode": "// 파이프라인 요청 파싱\nconst body = $input.item.json.body || $input.item.json;\n\nconst project = body.project;\nconst summary = body.summary;\nconst description = body.description;\nconst severity = body.severity || 'HIGH';\nconst suggestedFix = body.suggestedFix;\nconst channel = body.channel;\nconst threadTs = body.threadTs;\nconst userId = body.userId;\n\n// 프로젝트 → Jira 키 매핑 (환경변수 또는 기본값)\nconst projectJiraMapStr = process.env.PROJECT_JIRA_MAP || '{}';\nconst PROJECT_JIRA_MAP = JSON.parse(projectJiraMapStr);\nconst defaultJiraProject = process.env.DEFAULT_JIRA_PROJECT || 'PROJ';\nconst jiraProject = PROJECT_JIRA_MAP[project] || defaultJiraProject;\n\n// 워크스페이스 경로 (환경변수 필수)\nconst workspacePath = process.env.WORKSPACE_PATH;\nif (!workspacePath) {\n  throw new Error('WORKSPACE_PATH environment variable is required');\n}\n\nreturn {\n  json: {\n    project,\n    projectPath: `${workspacePath}/${project}`,\n    jiraProject,\n    summary,\n    description,\n    severity,\n    suggestedFix,\n    channel,\n    threadTs,\n    userId,\n    baseBranch: process.env.DEFAULT_BASE_BRANCH || 'develop'\n  }\n};"
       },
       "id": "parse-request",
       "name": "Parse Pipeline Request",
@@ -30,7 +30,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -58,7 +58,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/plugins/jira/execute",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/plugins/jira/execute",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -95,7 +95,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -123,7 +123,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/execute",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/execute",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -185,7 +185,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [
@@ -213,7 +213,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8080/api/v1/slack/message",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "bodyParameters": {
           "parameters": [

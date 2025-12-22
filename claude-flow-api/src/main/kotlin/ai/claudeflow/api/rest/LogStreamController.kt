@@ -23,7 +23,6 @@ private val logger = KotlinLogging.logger {}
  */
 @RestController
 @RequestMapping("/api/v1/logs")
-@CrossOrigin(origins = ["*"])
 class LogStreamController {
 
     private val logManager = ExecutionLogManager.instance

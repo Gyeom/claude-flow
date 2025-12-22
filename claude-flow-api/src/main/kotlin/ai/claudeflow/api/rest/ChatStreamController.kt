@@ -33,7 +33,6 @@ private val logger = KotlinLogging.logger {}
  */
 @RestController
 @RequestMapping("/api/v1/chat")
-@CrossOrigin(origins = ["*"])
 class ChatStreamController(
     private val claudeExecutor: ClaudeExecutor,
     private val projectRegistry: ProjectRegistry,
