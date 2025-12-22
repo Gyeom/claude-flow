@@ -1,6 +1,7 @@
 package ai.claudeflow.api.rest
 
 import ai.claudeflow.api.dto.*
+import ai.claudeflow.api.service.ProjectContextService
 import ai.claudeflow.core.model.AgentMatch
 import ai.claudeflow.core.model.RoutingMethod
 import ai.claudeflow.core.ratelimit.RateLimiter
@@ -34,6 +35,7 @@ private val logger = KotlinLogging.logger {}
 class ChatStreamController(
     private val claudeExecutor: ClaudeExecutor,
     private val projectRegistry: ProjectRegistry,
+    private val projectContextService: ProjectContextService,
     private val storage: Storage? = null,
     private val rateLimiter: RateLimiter? = null
 ) {
@@ -118,13 +120,24 @@ class ChatStreamController(
                     // 대화 히스토리 구성
                     val conversationContext = buildConversationContext(request.messages)
 
+                    // RAG 기반 프로젝트 컨텍스트 주입
+                    val enrichedResult = projectContextService.enrichPromptWithProjectContext(lastUserMessage)
+                    val finalPrompt = if (enrichedResult.contextInjected) {
+                        logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
+                        "${enrichedResult.enrichedPrompt}\n\n$conversationContext"
+                    } else {
+                        conversationContext
+                    }
+
                     // 프로젝트 컨텍스트 조회
                     val project = projectRegistry.get(projectId)
-                    val workingDir = project?.workingDirectory ?: agentMatch.agent.workingDirectory
+                    // 작업 디렉토리: RAG 탐지 > 선택된 프로젝트 > 에이전트 기본값
+                    val detectedPath = enrichedResult.detectedProjects.firstOrNull { it.path.isNotEmpty() }?.path
+                    val workingDir = detectedPath ?: project?.workingDirectory ?: agentMatch.agent.workingDirectory
 
                     // 실행 요청 구성
                     val executionRequest = ExecutionRequest(
-                        prompt = conversationContext,
+                        prompt = finalPrompt,
                         systemPrompt = agentMatch.agent.systemPrompt,
                         workingDirectory = workingDir,
                         model = request.model ?: agentMatch.agent.model,
@@ -216,14 +229,24 @@ class ChatStreamController(
                 // 대화 히스토리 구성
                 val conversationContext = buildConversationContext(request.messages)
 
+                // RAG 기반 프로젝트 컨텍스트 주입
+                val enrichedResult = projectContextService.enrichPromptWithProjectContext(lastUserMessage)
+                val finalPrompt = if (enrichedResult.contextInjected) {
+                    logger.info { "Project context injected: ${enrichedResult.detectedProjects.map { it.projectId }}" }
+                    "${enrichedResult.enrichedPrompt}\n\n$conversationContext"
+                } else {
+                    conversationContext
+                }
+
                 // 프로젝트 컨텍스트
                 val projectId = request.projectId ?: "default"
                 val project = projectRegistry.get(projectId)
-                val workingDir = project?.workingDirectory ?: agentMatch.agent.workingDirectory
+                val detectedPath = enrichedResult.detectedProjects.firstOrNull { it.path.isNotEmpty() }?.path
+                val workingDir = detectedPath ?: project?.workingDirectory ?: agentMatch.agent.workingDirectory
 
                 // 실행 요청
                 val executionRequest = ExecutionRequest(
-                    prompt = conversationContext,
+                    prompt = finalPrompt,
                     systemPrompt = agentMatch.agent.systemPrompt,
                     workingDirectory = workingDir,
                     model = request.model ?: agentMatch.agent.model,
