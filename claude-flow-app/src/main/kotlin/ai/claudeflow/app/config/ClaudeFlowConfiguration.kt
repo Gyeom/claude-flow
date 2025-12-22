@@ -1,5 +1,6 @@
 package ai.claudeflow.app.config
 
+import ai.claudeflow.api.command.CommandHandler
 import ai.claudeflow.api.rest.ClaudeFlowController
 import ai.claudeflow.api.slack.SlackMessageSender
 import ai.claudeflow.api.slack.SlackSocketModeBridge
@@ -308,6 +309,12 @@ class ClaudeFlowConfiguration(
     }
 
     @Bean
+    fun commandHandler(projectRegistry: ProjectRegistry): CommandHandler {
+        logger.info { "Initializing CommandHandler" }
+        return CommandHandler(projectRegistry)
+    }
+
+    @Bean
     fun sessionManager(): SessionManager {
         logger.info { "Initializing SessionManager (TTL: 60 min)" }
         return SessionManager(sessionTtlMinutes = 60, maxSessions = 1000)
@@ -361,15 +368,19 @@ class ClaudeFlowConfiguration(
         slackMessageSender: SlackMessageSender,
         projectRegistry: ProjectRegistry,
         enrichmentPipeline: ai.claudeflow.core.enrichment.ContextEnrichmentPipeline,
+        agentRouter: AgentRouter,
+        commandHandler: CommandHandler,
         storage: Storage,
         rateLimiter: RateLimiter
     ): ClaudeFlowController = ClaudeFlowController(
-        claudeExecutor,
-        slackMessageSender,
-        projectRegistry,
-        enrichmentPipeline,
-        storage,
-        rateLimiter
+        claudeExecutor = claudeExecutor,
+        slackMessageSender = slackMessageSender,
+        projectRegistry = projectRegistry,
+        enrichmentPipeline = enrichmentPipeline,
+        agentRouter = agentRouter,
+        commandHandler = commandHandler,
+        storage = storage,
+        rateLimiter = rateLimiter
     )
 
     @Bean

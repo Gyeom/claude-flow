@@ -1,5 +1,10 @@
 package ai.claudeflow.core.rag
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
@@ -80,13 +85,50 @@ class EmbeddingService(
     }
 
     /**
-     * 배치 임베딩
+     * 배치 임베딩 (순차 처리)
      *
      * @param texts 임베딩할 텍스트 목록
      * @return 텍스트별 벡터 목록
+     * @deprecated 성능을 위해 embedBatchParallel() 사용 권장
      */
+    @Deprecated("Use embedBatchParallel() for better performance", ReplaceWith("embedBatchParallel(texts)"))
     fun embedBatch(texts: List<String>): List<FloatArray?> {
         return texts.map { embed(it) }
+    }
+
+    /**
+     * 배치 임베딩 (병렬 처리)
+     *
+     * 여러 텍스트를 동시에 임베딩하여 처리 속도 향상
+     * 텍스트 수에 따라 3-5배 성능 개선 가능
+     *
+     * @param texts 임베딩할 텍스트 목록
+     * @param maxConcurrency 최대 동시 요청 수 (기본값: 5, Ollama 부하 고려)
+     * @return 텍스트별 벡터 목록
+     */
+    suspend fun embedBatchParallel(
+        texts: List<String>,
+        maxConcurrency: Int = 5
+    ): List<FloatArray?> = coroutineScope {
+        if (texts.isEmpty()) return@coroutineScope emptyList()
+
+        // 동시성 제한을 위해 청크로 분할
+        texts.chunked(maxConcurrency).flatMap { chunk ->
+            chunk.map { text ->
+                async(Dispatchers.IO) {
+                    embed(text)
+                }
+            }.awaitAll()
+        }
+    }
+
+    /**
+     * 단일 텍스트 임베딩 (suspend 버전)
+     *
+     * coroutine 컨텍스트에서 사용할 때 권장
+     */
+    suspend fun embedAsync(text: String): FloatArray? = withContext(Dispatchers.IO) {
+        embed(text)
     }
 
     /**

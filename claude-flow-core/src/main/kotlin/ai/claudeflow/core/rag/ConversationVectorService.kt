@@ -1,6 +1,11 @@
 package ai.claudeflow.core.rag
 
 import ai.claudeflow.core.storage.ExecutionRecord
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import mu.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
@@ -67,14 +72,24 @@ class ConversationVectorService(
 
     private fun createCollection(): Boolean {
         return try {
-            logger.info { "Creating collection $collectionName with dimension $vectorDimension" }
+            logger.info { "Creating collection $collectionName with dimension $vectorDimension (with scalar quantization)" }
             val requestBody = mapOf(
                 "vectors" to mapOf(
                     "size" to vectorDimension,
                     "distance" to "Cosine"
                 ),
                 "optimizers_config" to mapOf(
-                    "default_segment_number" to 2
+                    "default_segment_number" to 2,
+                    "indexing_threshold" to 10000  // 10K 벡터 이후 인덱싱 시작
+                ),
+                // Scalar Quantization: 메모리 75% 절감 (32-bit float → 8-bit int)
+                // 정확도 손실 최소화하면서 성능 대폭 향상
+                "quantization_config" to mapOf(
+                    "scalar" to mapOf(
+                        "type" to "int8",           // 8-bit 정수로 양자화
+                        "quantile" to 0.99,         // 상위 1% 이상치 클리핑
+                        "always_ram" to true        // 양자화된 벡터를 RAM에 유지
+                    )
                 )
             )
 
@@ -188,8 +203,10 @@ class ConversationVectorService(
     }
 
     /**
-     * 배치 인덱싱
+     * 배치 인덱싱 (순차 처리)
+     * @deprecated 성능을 위해 indexExecutionsParallel() 사용 권장
      */
+    @Deprecated("Use indexExecutionsParallel() for better performance")
     fun indexExecutions(executions: List<ExecutionRecord>): Int {
         var successCount = 0
         for (execution in executions) {
@@ -202,6 +219,43 @@ class ConversationVectorService(
     }
 
     /**
+     * 실행 기록을 벡터화하여 저장 (suspend 버전)
+     *
+     * coroutine 컨텍스트에서 사용할 때 권장
+     */
+    suspend fun indexExecutionAsync(execution: ExecutionRecord): Boolean = withContext(Dispatchers.IO) {
+        indexExecution(execution)
+    }
+
+    /**
+     * 배치 인덱싱 (병렬 처리)
+     *
+     * 여러 실행 기록을 동시에 인덱싱하여 처리 속도 향상
+     *
+     * @param executions 인덱싱할 실행 기록 목록
+     * @param maxConcurrency 최대 동시 요청 수 (기본값: 3, Qdrant/Ollama 부하 고려)
+     * @return 성공적으로 인덱싱된 개수
+     */
+    suspend fun indexExecutionsParallel(
+        executions: List<ExecutionRecord>,
+        maxConcurrency: Int = 3
+    ): Int = coroutineScope {
+        if (executions.isEmpty()) return@coroutineScope 0
+
+        val results = executions.chunked(maxConcurrency).flatMap { chunk ->
+            chunk.map { execution ->
+                async(Dispatchers.IO) {
+                    indexExecution(execution)
+                }
+            }.awaitAll()
+        }
+
+        val successCount = results.count { it }
+        logger.info { "Parallel indexed $successCount/${executions.size} executions" }
+        successCount
+    }
+
+    /**
      * 유사 대화 검색
      *
      * @param query 검색 쿼리
@@ -210,6 +264,27 @@ class ConversationVectorService(
      * @param minScore 최소 유사도 점수 (0.0 ~ 1.0)
      */
     fun findSimilarConversations(
+        query: String,
+        userId: String? = null,
+        topK: Int = DEFAULT_TOP_K,
+        minScore: Float = DEFAULT_MIN_SCORE
+    ): List<SimilarConversation> = findSimilarConversationsInternal(query, userId, topK, minScore)
+
+    /**
+     * 유사 대화 검색 (suspend 버전)
+     *
+     * coroutine 컨텍스트에서 사용할 때 권장
+     */
+    suspend fun findSimilarConversationsAsync(
+        query: String,
+        userId: String? = null,
+        topK: Int = DEFAULT_TOP_K,
+        minScore: Float = DEFAULT_MIN_SCORE
+    ): List<SimilarConversation> = withContext(Dispatchers.IO) {
+        findSimilarConversationsInternal(query, userId, topK, minScore)
+    }
+
+    private fun findSimilarConversationsInternal(
         query: String,
         userId: String? = null,
         topK: Int = DEFAULT_TOP_K,

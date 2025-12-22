@@ -19,7 +19,9 @@ import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
 import ai.claudeflow.executor.ExecutionResult
 import ai.claudeflow.executor.ExecutionStatus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.reactor.mono
+import kotlinx.coroutines.withContext
 import reactor.core.scheduler.Schedulers
 import mu.KotlinLogging
 import org.springframework.http.HttpStatus
@@ -44,14 +46,14 @@ class ClaudeFlowController(
     private val claudeExecutor: ClaudeExecutor,
     private val slackMessageSender: SlackMessageSender,
     private val projectRegistry: ProjectRegistry,
-    private val enrichmentPipeline: ContextEnrichmentPipeline,  // Pipeline 사용
+    private val enrichmentPipeline: ContextEnrichmentPipeline,
+    private val agentRouter: AgentRouter,  // DI로 변경 (테스트 용이)
+    private val commandHandler: CommandHandler,  // DI로 변경 (테스트 용이)
     private val storage: Storage? = null,
     private val rateLimiter: RateLimiter? = null,
     private val contextAugmentationService: ContextAugmentationService? = null,
     private val conversationVectorService: ConversationVectorService? = null
 ) {
-    private val agentRouter = AgentRouter()
-    private val commandHandler = CommandHandler(projectRegistry)
     /**
      * Claude 실행 API
      *
@@ -416,151 +418,155 @@ class ClaudeFlowController(
      * 채널에 설정된 프로젝트가 있으면 해당 프로젝트 경로에서 실행
      */
     @PostMapping("/execute-with-routing")
-    fun executeWithRouting(@RequestBody request: ExecuteRequest): Mono<ResponseEntity<ExecuteResponse>> {
+    fun executeWithRouting(@RequestBody request: ExecuteRequest): Mono<ResponseEntity<ExecuteResponse>> = mono {
         logger.info { "Execute with routing: ${request.prompt.take(50)}..." }
 
-        return Mono.fromCallable {
-            // 0. Rate Limiting 체크
-            val projectId = request.channel?.let { projectRegistry.getChannelProject(it)?.id } ?: "default"
-            rateLimiter?.let { limiter ->
-                val limitResult = limiter.checkLimit(projectId)
-                if (!limitResult.allowed) {
-                    logger.warn { "Rate limit exceeded for project: $projectId" }
-                    return@fromCallable ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
-                        ExecuteResponse(
-                            requestId = UUID.randomUUID().toString(),
-                            success = false,
-                            error = "Rate limit exceeded. Retry after ${limitResult.retryAfterSeconds} seconds."
-                        )
+        // 0. Rate Limiting 체크
+        val projectId = request.channel?.let { projectRegistry.getChannelProject(it)?.id } ?: "default"
+        rateLimiter?.let { limiter ->
+            val limitResult = limiter.checkLimit(projectId)
+            if (!limitResult.allowed) {
+                logger.warn { "Rate limit exceeded for project: $projectId" }
+                return@mono ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
+                    ExecuteResponse(
+                        requestId = UUID.randomUUID().toString(),
+                        success = false,
+                        error = "Rate limit exceeded. Retry after ${limitResult.retryAfterSeconds} seconds."
                     )
-                }
-            }
-
-            // 1. 라우팅 (시간 측정)
-            val routingStartTime = System.currentTimeMillis()
-            val match = agentRouter.route(request.prompt)
-            val routingLatencyMs = System.currentTimeMillis() - routingStartTime
-            logger.info { "Routed to agent: ${match.agent.id} (confidence: ${match.confidence}, method: ${match.method}, latency: ${routingLatencyMs}ms)" }
-
-            // 2. 채널에 설정된 프로젝트 조회 (채널 정보가 있으면)
-            val project = request.channel?.let { projectRegistry.getChannelProject(it) }
-            if (project != null) {
-                logger.info { "Using project: ${project.id} (${project.workingDirectory})" }
-            }
-
-            // 3. Pipeline을 통한 컨텍스트 Enrichment
-            val enrichedContext = kotlinx.coroutines.runBlocking {
-                enrichmentPipeline.enrich(
-                    prompt = request.prompt,
-                    userId = request.userId,
-                    projectId = projectId,
-                    channelId = request.channel,
-                    threadTs = request.threadTs
                 )
             }
-            if (enrichedContext.hasInjectedContext) {
-                logger.info {
-                    "Context enriched: ${enrichedContext.injectedContexts.size} contexts, " +
-                            "${enrichedContext.totalContextSize} chars"
-                }
-            }
+        }
 
-            // 4. RAG 컨텍스트 증강 (userId가 있으면)
-            var ragSystemPrompt: String? = null
-            if (request.userId != null && contextAugmentationService != null) {
-                try {
-                    val augmented = contextAugmentationService.buildAugmentedContext(
-                        userId = request.userId,
-                        message = request.prompt,
-                        options = AugmentationOptions(
-                            includeSimilarConversations = true,
-                            includeUserRules = true,
-                            includeUserSummary = true,
-                            maxSimilarConversations = 3,
-                            minSimilarityScore = 0.65f
-                        )
+        // 1. 라우팅 (시간 측정)
+        val routingStartTime = System.currentTimeMillis()
+        val match = agentRouter.route(request.prompt)
+        val routingLatencyMs = System.currentTimeMillis() - routingStartTime
+        logger.info { "Routed to agent: ${match.agent.id} (confidence: ${match.confidence}, method: ${match.method}, latency: ${routingLatencyMs}ms)" }
+
+        // 2. 채널에 설정된 프로젝트 조회 (채널 정보가 있으면)
+        val project = request.channel?.let { projectRegistry.getChannelProject(it) }
+        if (project != null) {
+            logger.info { "Using project: ${project.id} (${project.workingDirectory})" }
+        }
+
+        // 3. Pipeline을 통한 컨텍스트 Enrichment (suspend 함수 직접 호출)
+        val enrichedContext = enrichmentPipeline.enrich(
+            prompt = request.prompt,
+            userId = request.userId,
+            projectId = projectId,
+            channelId = request.channel,
+            threadTs = request.threadTs
+        )
+        if (enrichedContext.hasInjectedContext) {
+            logger.info {
+                "Context enriched: ${enrichedContext.injectedContexts.size} contexts, " +
+                        "${enrichedContext.totalContextSize} chars"
+            }
+        }
+
+        // 4. RAG 컨텍스트 증강 (userId가 있으면)
+        var ragSystemPrompt: String? = null
+        if (request.userId != null && contextAugmentationService != null) {
+            try {
+                val augmented = contextAugmentationService.buildAugmentedContext(
+                    userId = request.userId,
+                    message = request.prompt,
+                    options = AugmentationOptions(
+                        includeSimilarConversations = true,
+                        includeUserRules = true,
+                        includeUserSummary = true,
+                        maxSimilarConversations = 3,
+                        minSimilarityScore = 0.65f
                     )
-                    if (augmented.systemPrompt.isNotBlank()) {
-                        ragSystemPrompt = augmented.systemPrompt
-                        logger.info { "RAG context augmented: ${augmented.relevantConversations.size} similar conversations, ${augmented.userRules.size} rules (${augmented.metadata.totalTimeMs}ms)" }
-                    }
-                } catch (e: Exception) {
-                    logger.warn { "RAG augmentation failed (continuing without): ${e.message}" }
+                )
+                if (augmented.systemPrompt.isNotBlank()) {
+                    ragSystemPrompt = augmented.systemPrompt
+                    logger.info { "RAG context augmented: ${augmented.relevantConversations.size} similar conversations, ${augmented.userRules.size} rules (${augmented.metadata.totalTimeMs}ms)" }
                 }
+            } catch (e: Exception) {
+                logger.warn { "RAG augmentation failed (continuing without): ${e.message}" }
             }
+        }
 
-            // 5. 대화 히스토리 포함 프롬프트 생성
-            val contextualPrompt = buildContextualPrompt(enrichedContext.enrichedPrompt, request.conversationHistory)
+        // 5. 대화 히스토리 포함 프롬프트 생성
+        val contextualPrompt = buildContextualPrompt(enrichedContext.enrichedPrompt, request.conversationHistory)
 
-            // 6. 작업 디렉토리 결정 (우선순위: 요청 > Pipeline > 채널 프로젝트 > 에이전트)
-            val workingDir = request.workingDirectory
-                ?: enrichedContext.workingDirectory
-                ?: project?.workingDirectory
-                ?: match.agent.workingDirectory
+        // 6. 작업 디렉토리 결정 (우선순위: 요청 > Pipeline > 채널 프로젝트 > 에이전트)
+        val workingDir = request.workingDirectory
+            ?: enrichedContext.workingDirectory
+            ?: project?.workingDirectory
+            ?: match.agent.workingDirectory
 
-            // 7. 시스템 프롬프트 구성 (우선순위: 요청 > RAG증강 + 에이전트)
-            val finalSystemPrompt = request.systemPrompt ?: buildString {
-                // RAG 컨텍스트가 있으면 먼저 추가
-                ragSystemPrompt?.let { ragPrompt ->
-                    append(ragPrompt)
-                    append("\n\n")
-                }
-                // 에이전트 시스템 프롬프트 추가
-                if (match.agent.systemPrompt.isNotBlank()) {
-                    append(match.agent.systemPrompt)
-                }
-            }.takeIf { it.isNotBlank() }
+        // 7. 시스템 프롬프트 구성 (우선순위: 요청 > RAG증강 + 에이전트)
+        val finalSystemPrompt = request.systemPrompt ?: buildString {
+            // RAG 컨텍스트가 있으면 먼저 추가
+            ragSystemPrompt?.let { ragPrompt ->
+                append(ragPrompt)
+                append("\n\n")
+            }
+            // 에이전트 시스템 프롬프트 추가
+            if (match.agent.systemPrompt.isNotBlank()) {
+                append(match.agent.systemPrompt)
+            }
+        }.takeIf { it.isNotBlank() }
 
-            // 8. 라우팅된 에이전트의 설정으로 실행
-            val executionRequest = ExecutionRequest(
-                prompt = contextualPrompt,
-                systemPrompt = finalSystemPrompt,
-                workingDirectory = workingDir,
-                model = request.model ?: match.agent.model,
-                maxTurns = request.maxTurns ?: DEFAULT_MAX_TURNS,
-                allowedTools = request.allowedTools ?: match.agent.allowedTools.takeIf { it.isNotEmpty() },
-                deniedTools = request.deniedTools,
-                agentId = match.agent.id
-            )
+        // 8. 라우팅된 에이전트의 설정으로 실행 (blocking I/O는 Dispatchers.IO에서)
+        val executionRequest = ExecutionRequest(
+            prompt = contextualPrompt,
+            systemPrompt = finalSystemPrompt,
+            workingDirectory = workingDir,
+            model = request.model ?: match.agent.model,
+            maxTurns = request.maxTurns ?: DEFAULT_MAX_TURNS,
+            allowedTools = request.allowedTools ?: match.agent.allowedTools.takeIf { it.isNotEmpty() },
+            deniedTools = request.deniedTools,
+            agentId = match.agent.id
+        )
 
-            val result = claudeExecutor.execute(executionRequest)
+        val result = withContext(Dispatchers.IO) {
+            claudeExecutor.execute(executionRequest)
+        }
 
-            // 9. 실행 결과 저장
-            val executionRecord = ExecutionRecord(
-                id = result.requestId,
-                prompt = request.prompt.take(1000),
-                result = result.result?.take(5000),
-                status = result.status.name,
-                agentId = match.agent.id,
-                projectId = project?.id,
-                userId = request.userId,
-                channel = request.channel,
-                threadTs = request.threadTs,
-                replyTs = null,
-                durationMs = result.durationMs,
-                inputTokens = result.usage?.inputTokens ?: 0,
-                outputTokens = result.usage?.outputTokens ?: 0,
-                error = result.error
-            )
+        // 9. 실행 결과 저장
+        val executionRecord = ExecutionRecord(
+            id = result.requestId,
+            prompt = request.prompt.take(1000),
+            result = result.result?.take(5000),
+            status = result.status.name,
+            agentId = match.agent.id,
+            projectId = project?.id,
+            userId = request.userId,
+            channel = request.channel,
+            threadTs = request.threadTs,
+            replyTs = null,
+            durationMs = result.durationMs,
+            inputTokens = result.usage?.inputTokens ?: 0,
+            outputTokens = result.usage?.outputTokens ?: 0,
+            error = result.error
+        )
 
-            storage?.let { store ->
-                try {
+        storage?.let { store ->
+            try {
+                withContext(Dispatchers.IO) {
                     store.saveExecution(executionRecord)
-                    logger.debug { "Saved execution record: ${result.requestId}" }
+                }
+                logger.debug { "Saved execution record: ${result.requestId}" }
 
-                    // 10. RAG 자동 인덱싱 (성공한 실행만)
-                    if (result.status == ExecutionStatus.SUCCESS && conversationVectorService != null) {
-                        try {
-                            val indexed = conversationVectorService.indexExecution(executionRecord)
-                            if (indexed) {
-                                logger.debug { "RAG indexed execution: ${result.requestId}" }
-                            }
-                        } catch (e: Exception) {
-                            logger.warn { "RAG indexing failed (non-critical): ${e.message}" }
+                // 10. RAG 자동 인덱싱 (성공한 실행만)
+                if (result.status == ExecutionStatus.SUCCESS && conversationVectorService != null) {
+                    try {
+                        val indexed = withContext(Dispatchers.IO) {
+                            conversationVectorService.indexExecution(executionRecord)
                         }
+                        if (indexed) {
+                            logger.debug { "RAG indexed execution: ${result.requestId}" }
+                        }
+                    } catch (e: Exception) {
+                        logger.warn { "RAG indexing failed (non-critical): ${e.message}" }
                     }
+                }
 
-                    // 11. 라우팅 메트릭 저장
+                // 11. 라우팅 메트릭 저장
+                withContext(Dispatchers.IO) {
                     store.saveRoutingMetric(
                         executionId = result.requestId,
                         routingMethod = match.method.name.lowercase(),
@@ -568,48 +574,50 @@ class ClaudeFlowController(
                         confidence = match.confidence,
                         latencyMs = routingLatencyMs
                     )
-                    logger.debug { "Saved routing metric: method=${match.method.name}, latency=${routingLatencyMs}ms" }
+                }
+                logger.debug { "Saved routing metric: method=${match.method.name}, latency=${routingLatencyMs}ms" }
 
-                    // 12. 사용자 컨텍스트 업데이트 (User Management용)
-                    request.userId?.let { userId ->
+                // 12. 사용자 컨텍스트 업데이트 (User Management용)
+                request.userId?.let { userId ->
+                    withContext(Dispatchers.IO) {
                         store.updateUserInteraction(
                             userId = userId,
                             promptLength = request.prompt.length,
                             responseLength = result.result?.length ?: 0
                         )
-                        logger.debug { "Updated user context for: $userId" }
                     }
-                } catch (e: Exception) {
-                    logger.error(e) { "Failed to save execution record" }
+                    logger.debug { "Updated user context for: $userId" }
                 }
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to save execution record" }
             }
+        }
 
-            val response = ExecuteResponse(
-                requestId = result.requestId,
-                success = result.status == ExecutionStatus.SUCCESS,
-                result = result.result,
-                error = result.error,
-                durationMs = result.durationMs,
-                usage = result.usage?.let {
-                    TokenUsageDto(
-                        inputTokens = it.inputTokens,
-                        outputTokens = it.outputTokens
-                    )
-                },
-                routedAgent = match.agent.id,
-                routingConfidence = match.confidence,
-                projectId = enrichedContext.injectedContexts
-                    .firstOrNull { it.metadata["projectId"] != null }
-                    ?.metadata?.get("projectId") as? String
-                    ?: project?.id
-            )
+        val response = ExecuteResponse(
+            requestId = result.requestId,
+            success = result.status == ExecutionStatus.SUCCESS,
+            result = result.result,
+            error = result.error,
+            durationMs = result.durationMs,
+            usage = result.usage?.let {
+                TokenUsageDto(
+                    inputTokens = it.inputTokens,
+                    outputTokens = it.outputTokens
+                )
+            },
+            routedAgent = match.agent.id,
+            routingConfidence = match.confidence,
+            projectId = enrichedContext.injectedContexts
+                .firstOrNull { it.metadata["projectId"] != null }
+                ?.metadata?.get("projectId") as? String
+                ?: project?.id
+        )
 
-            if (result.status == ExecutionStatus.SUCCESS) {
-                ResponseEntity.ok(response)
-            } else {
-                ResponseEntity.status(500).body(response)
-            }
-        }.subscribeOn(Schedulers.boundedElastic())
+        if (result.status == ExecutionStatus.SUCCESS) {
+            ResponseEntity.ok(response)
+        } else {
+            ResponseEntity.status(500).body(response)
+        }
     }
 
     /**

@@ -117,64 +117,53 @@ class AdvancedRateLimiter(
     }
 
     /**
+     * 시간 기반 요청 제한 확인 (RPM/RPH/RPD)
+     * 중복 코드 제거를 위한 헬퍼 함수
+     */
+    private fun checkRequestLimit(
+        key: String,
+        counterType: String,
+        windowMs: Long,
+        limit: Int,
+        policy: RateLimitPolicy,
+        context: RateLimitContext,
+        now: Long
+    ): RateLimitStatus? {
+        val counter = getOrCreateCounter(key, counterType, windowMs)
+        if (counter.getCount() >= limit) {
+            return RateLimitStatus(
+                policyId = policy.id,
+                scope = policy.scope,
+                scopeValue = getScopeValue(policy, context),
+                isExceeded = true,
+                currentCount = counter.getCount(),
+                limit = limit.toLong(),
+                remaining = 0,
+                resetAt = counter.getResetTime(),
+                retryAfterMs = counter.getResetTime() - now
+            )
+        }
+        return null
+    }
+
+    /**
      * 정책별 제한 확인
      */
     private fun checkPolicy(policy: RateLimitPolicy, context: RateLimitContext): RateLimitStatus {
         val key = buildKey(policy, context)
         val now = System.currentTimeMillis()
 
-        // RPM 확인
+        // RPM/RPH/RPD 확인 (헬퍼 함수 사용)
         policy.requestsPerMinute?.let { limit ->
-            val counter = getOrCreateCounter(key, "rpm", 60_000L)
-            if (counter.getCount() >= limit) {
-                return RateLimitStatus(
-                    policyId = policy.id,
-                    scope = policy.scope,
-                    scopeValue = getScopeValue(policy, context),
-                    isExceeded = true,
-                    currentCount = counter.getCount(),
-                    limit = limit.toLong(),
-                    remaining = 0,
-                    resetAt = counter.getResetTime(),
-                    retryAfterMs = counter.getResetTime() - now
-                )
-            }
+            checkRequestLimit(key, "rpm", 60_000L, limit, policy, context, now)?.let { return it }
         }
 
-        // RPH 확인
         policy.requestsPerHour?.let { limit ->
-            val counter = getOrCreateCounter(key, "rph", 3_600_000L)
-            if (counter.getCount() >= limit) {
-                return RateLimitStatus(
-                    policyId = policy.id,
-                    scope = policy.scope,
-                    scopeValue = getScopeValue(policy, context),
-                    isExceeded = true,
-                    currentCount = counter.getCount(),
-                    limit = limit.toLong(),
-                    remaining = 0,
-                    resetAt = counter.getResetTime(),
-                    retryAfterMs = counter.getResetTime() - now
-                )
-            }
+            checkRequestLimit(key, "rph", 3_600_000L, limit, policy, context, now)?.let { return it }
         }
 
-        // RPD 확인
         policy.requestsPerDay?.let { limit ->
-            val counter = getOrCreateCounter(key, "rpd", 86_400_000L)
-            if (counter.getCount() >= limit) {
-                return RateLimitStatus(
-                    policyId = policy.id,
-                    scope = policy.scope,
-                    scopeValue = getScopeValue(policy, context),
-                    isExceeded = true,
-                    currentCount = counter.getCount(),
-                    limit = limit.toLong(),
-                    remaining = 0,
-                    resetAt = counter.getResetTime(),
-                    retryAfterMs = counter.getResetTime() - now
-                )
-            }
+            checkRequestLimit(key, "rpd", 86_400_000L, limit, policy, context, now)?.let { return it }
         }
 
         // TPD 확인
@@ -252,24 +241,32 @@ class AdvancedRateLimiter(
     }
 
     /**
+     * 시간 기반 요청 카운터 증가 헬퍼
+     */
+    private data class CounterConfig(val type: String, val windowMs: Long)
+
+    private val REQUEST_COUNTERS = listOf(
+        CounterConfig("rpm", 60_000L),
+        CounterConfig("rph", 3_600_000L),
+        CounterConfig("rpd", 86_400_000L)
+    )
+
+    /**
      * 정책별 요청 기록
      */
     private fun recordForPolicy(policy: RateLimitPolicy, context: RateLimitContext) {
         val key = buildKey(policy, context)
 
-        // RPM 기록
-        policy.requestsPerMinute?.let {
-            getOrCreateCounter(key, "rpm", 60_000L).increment()
-        }
-
-        // RPH 기록
-        policy.requestsPerHour?.let {
-            getOrCreateCounter(key, "rph", 3_600_000L).increment()
-        }
-
-        // RPD 기록
-        policy.requestsPerDay?.let {
-            getOrCreateCounter(key, "rpd", 86_400_000L).increment()
+        // RPM/RPH/RPD 기록 (데이터 기반 처리)
+        val limits = listOf(
+            policy.requestsPerMinute to REQUEST_COUNTERS[0],
+            policy.requestsPerHour to REQUEST_COUNTERS[1],
+            policy.requestsPerDay to REQUEST_COUNTERS[2]
+        )
+        limits.forEach { (limit, config) ->
+            if (limit != null) {
+                getOrCreateCounter(key, config.type, config.windowMs).increment()
+            }
         }
 
         // TPD 기록
