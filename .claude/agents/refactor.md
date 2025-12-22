@@ -17,7 +17,7 @@ model: sonnet
 claude-flow/
 ├── claude-flow-core/       # 핵심 로직 (리팩토링 주요 대상)
 │   ├── routing/            # AgentRouter, KoreanOptimizedRouter
-│   ├── plugin/             # GitLab, Jira, N8n 플러그인
+│   ├── plugin/             # GitLab, Jira, GitHub 플러그인
 │   ├── storage/            # Repository Pattern
 │   ├── ratelimit/          # Rate Limiting
 │   └── analytics/          # 통계

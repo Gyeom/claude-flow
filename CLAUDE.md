@@ -58,10 +58,7 @@ claude-flow/
 │   │   ├── PluginConfigManager.kt  # 설정 관리
 │   │   ├── GitLabPlugin.kt         # GitLab 연동
 │   │   ├── GitHubPlugin.kt         # GitHub 연동
-│   │   ├── JiraPlugin.kt           # Jira 연동
-│   │   └── N8nPlugin.kt            # n8n 워크플로우 관리
-│   ├── n8n/                # n8n 워크플로우 생성
-│   │   └── N8nWorkflowGenerator.kt # AI 기반 워크플로우 생성기
+│   │   └── JiraPlugin.kt           # Jira 연동
 │   ├── ratelimit/          # Rate Limiting
 │   │   ├── RateLimitPolicy.kt      # 정책 정의
 │   │   └── AdvancedRateLimiter.kt  # 다차원 제한
@@ -156,7 +153,7 @@ claude-flow/
 
 ### Kotlin 코드의 역할
 
-- **Plugin**: 외부 서비스 연동 인터페이스 (GitLabPlugin, JiraPlugin, N8nPlugin)
+- **Plugin**: 외부 서비스 연동 인터페이스 (GitLabPlugin, JiraPlugin, GitHubPlugin)
 - **Router**: 에이전트 라우팅 로직
 - **Storage**: 데이터 저장/조회
 - **API**: REST 엔드포인트
