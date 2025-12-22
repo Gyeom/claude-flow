@@ -48,6 +48,15 @@ claude-flow:
     email: ${JIRA_EMAIL:}
     api-token: ${JIRA_API_TOKEN:}
 
+  # RAG 설정
+  qdrant:
+    url: ${QDRANT_URL:http://localhost:6333}
+    collection: claude-flow-agents
+
+  ollama:
+    url: ${OLLAMA_URL:http://localhost:11434}
+    model: ${OLLAMA_EMBEDDING_MODEL:qwen3-embedding:0.6b}
+
 management:
   endpoints:
     web:

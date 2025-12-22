@@ -33,7 +33,7 @@
     {
       "id": "vlc-gateway-server",
       "name": "VLC Gateway Server",
-      "description": "VLC 게이트웨이 서버 - 차량 통신 게이트웨이",
+        "description": "VLC 게이트웨이 서버 - VLC 게이트웨이",
       "path": "vlc-gateway-server",
       "aliases": ["vlc", "VLC", "게이트웨이", "gateway"]
     }

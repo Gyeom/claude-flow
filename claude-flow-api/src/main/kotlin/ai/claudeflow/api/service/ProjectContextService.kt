@@ -1,5 +1,6 @@
 package ai.claudeflow.api.service
 
+import ai.claudeflow.core.rag.KnowledgeVectorService
 import ai.claudeflow.core.storage.Storage
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -15,6 +16,10 @@ private val logger = KotlinLogging.logger {}
  * 프로젝트 컨텍스트 서비스
  * 프롬프트에서 프로젝트를 탐지하고 관련 컨텍스트를 주입합니다.
  *
+ * RAG 기반 시맨틱 검색을 통해 프로젝트 관련 질문에 답변합니다:
+ * - "어떤 프로젝트들을 관리하고 있니?" → RAG에서 프로젝트 목록 검색
+ * - "인가서버에 대해 설명해줘" → 특정 프로젝트 정보 검색
+ *
  * DB에 저장된 project_aliases 테이블을 우선 사용하고,
  * 없으면 config/project-aliases.json 파일을 폴백으로 사용합니다.
  */
@@ -22,6 +27,7 @@ private val logger = KotlinLogging.logger {}
 class ProjectContextService(
     private val objectMapper: ObjectMapper,
     private val storage: Storage,
+    private val knowledgeVectorService: KnowledgeVectorService?,
     @Value("\${claude-flow.config-path:#{null}}") private val configPath: String?,
     @Value("\${claude-flow.workspace-root:#{null}}") private val workspaceRoot: String?
 ) {
@@ -38,24 +44,30 @@ class ProjectContextService(
 
     /**
      * 프롬프트를 분석하여 프로젝트 컨텍스트를 주입한 프롬프트 반환
+     *
+     * 1. RAG 기반 시맨틱 검색 (프로젝트 목록 질문 등 메타 쿼리 처리)
+     * 2. 패턴 기반 탐지 (특정 프로젝트명 언급 시 디렉토리 컨텍스트 주입)
      */
     fun enrichPromptWithProjectContext(prompt: String): EnrichedPrompt {
-        val config = loadAliasesConfig()
-        val detectedProjects = detectProjects(prompt, config)
-
-        if (detectedProjects.isEmpty()) {
-            return EnrichedPrompt(
-                originalPrompt = prompt,
-                enrichedPrompt = prompt,
-                detectedProjects = emptyList(),
-                contextInjected = false
-            )
-        }
-
         val contextParts = mutableListOf<String>()
         val projectInfos = mutableListOf<DetectedProjectInfo>()
 
+        // 1. RAG 기반 검색 (시맨틱 매칭)
+        val ragContext = searchProjectsWithRag(prompt)
+        if (ragContext != null) {
+            contextParts.add(ragContext.context)
+            projectInfos.addAll(ragContext.projectInfos)
+            logger.info { "RAG search found ${ragContext.projectInfos.size} relevant projects" }
+        }
+
+        // 2. 패턴 기반 탐지 (명시적 프로젝트명 언급)
+        val config = loadAliasesConfig()
+        val detectedProjects = detectProjects(prompt, config)
+
         for (detected in detectedProjects) {
+            // 이미 RAG에서 찾은 프로젝트는 스킵
+            if (projectInfos.any { it.projectId == detected.projectId }) continue
+
             val projectDir = findProjectDirectory(detected.projectId, config)
             if (projectDir != null && projectDir.exists()) {
                 val context = extractProjectContext(projectDir)
@@ -104,6 +116,70 @@ class ProjectContextService(
             detectedProjects = projectInfos,
             contextInjected = true
         )
+    }
+
+    /**
+     * RAG 기반 프로젝트 검색
+     *
+     * 메타 쿼리(프로젝트 목록 질문)와 특정 프로젝트 질문 모두 처리
+     */
+    private fun searchProjectsWithRag(prompt: String): RagSearchResult? {
+        if (knowledgeVectorService == null) return null
+
+        try {
+            val results = knowledgeVectorService.searchProjects(prompt, topK = 3, minScore = 0.4f)
+            if (results.isEmpty()) return null
+
+            val contextParts = mutableListOf<String>()
+            val projectInfos = mutableListOf<DetectedProjectInfo>()
+
+            for (result in results) {
+                when (result.type) {
+                    KnowledgeVectorService.TYPE_PROJECT_LIST -> {
+                        // 프로젝트 목록 컨텍스트
+                        contextParts.add("""
+                            |[Project List from RAG]
+                            |${result.content}
+                        """.trimMargin())
+
+                        // 메타 정보로 DetectedProjectInfo 추가
+                        projectInfos.add(DetectedProjectInfo(
+                            projectId = "project-list",
+                            matchedPattern = "RAG semantic search",
+                            description = "관리 중인 프로젝트 목록",
+                            path = "",
+                            contextSize = result.content.length
+                        ))
+                    }
+                    KnowledgeVectorService.TYPE_PROJECT -> {
+                        // 개별 프로젝트 컨텍스트
+                        contextParts.add("""
+                            |[Project from RAG: ${result.docId}]
+                            |Relevance: ${String.format("%.2f", result.score)}
+                            |${result.content}
+                        """.trimMargin())
+
+                        projectInfos.add(DetectedProjectInfo(
+                            projectId = result.docId,
+                            matchedPattern = "RAG semantic search (score: ${String.format("%.2f", result.score)})",
+                            description = result.metadata["description"] as? String,
+                            path = result.metadata["working_directory"] as? String ?: "",
+                            contextSize = result.content.length
+                        ))
+                    }
+                }
+            }
+
+            if (contextParts.isEmpty()) return null
+
+            return RagSearchResult(
+                context = contextParts.joinToString("\n\n"),
+                projectInfos = projectInfos
+            )
+        } catch (e: Exception) {
+            logger.warn { "RAG search failed: ${e.message}" }
+            return null
+        }
     }
 
     /**
@@ -318,6 +394,14 @@ class ProjectContextService(
 }
 
 // ==================== DTOs ====================
+
+/**
+ * RAG 검색 결과
+ */
+data class RagSearchResult(
+    val context: String,
+    val projectInfos: List<DetectedProjectInfo>
+)
 
 data class EnrichedPrompt(
     val originalPrompt: String,

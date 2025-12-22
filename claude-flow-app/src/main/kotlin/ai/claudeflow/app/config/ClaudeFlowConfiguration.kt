@@ -9,6 +9,8 @@ import ai.claudeflow.core.config.WebhookConfig
 import ai.claudeflow.core.config.WebhookEndpoints
 import ai.claudeflow.core.model.Project
 import ai.claudeflow.core.ratelimit.RateLimiter
+import ai.claudeflow.core.rag.EmbeddingService
+import ai.claudeflow.core.rag.KnowledgeVectorService
 import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.core.routing.AgentRouter
 import ai.claudeflow.core.routing.SemanticRouter
@@ -124,16 +126,78 @@ class ClaudeFlowConfiguration(
         SlackMessageSender(slackConfig.botToken)
 
     @Bean
-    fun projectRegistry(storage: Storage): ProjectRegistry {
+    fun embeddingService(): EmbeddingService? {
+        val ollamaUrl = properties.ollama.url
+        if (ollamaUrl.isEmpty()) {
+            logger.info { "EmbeddingService disabled (Ollama not configured)" }
+            return null
+        }
+
+        logger.info { "Initializing EmbeddingService: $ollamaUrl with model ${properties.ollama.model}" }
+        return EmbeddingService(
+            ollamaUrl = ollamaUrl,
+            model = properties.ollama.model
+        )
+    }
+
+    @Bean
+    fun knowledgeVectorService(embeddingService: EmbeddingService?): KnowledgeVectorService? {
+        if (embeddingService == null) {
+            logger.info { "KnowledgeVectorService disabled (EmbeddingService not available)" }
+            return null
+        }
+
+        val qdrantUrl = properties.qdrant.url
+        if (qdrantUrl.isEmpty()) {
+            logger.info { "KnowledgeVectorService disabled (Qdrant not configured)" }
+            return null
+        }
+
+        logger.info { "Initializing KnowledgeVectorService: $qdrantUrl" }
+        val service = KnowledgeVectorService(
+            embeddingService = embeddingService,
+            qdrantUrl = qdrantUrl,
+            collectionName = "claude-flow-knowledge"
+        )
+
+        // 컬렉션 초기화
+        try {
+            if (service.initCollection()) {
+                logger.info { "Knowledge vector collection initialized" }
+            }
+        } catch (e: Exception) {
+            logger.warn { "Failed to initialize knowledge collection: ${e.message}" }
+        }
+
+        return service
+    }
+
+    @Bean
+    fun projectRegistry(
+        storage: Storage,
+        knowledgeVectorService: KnowledgeVectorService?
+    ): ProjectRegistry {
         // config/projects.json에서 프로젝트가 로드됨 (Storage에서 처리)
         // 여기서는 빈 초기 프로젝트로 레지스트리만 생성
         val registry = ProjectRegistry(
             projectRepository = storage.projectRepository,
+            knowledgeVectorService = knowledgeVectorService,
             initialProjects = emptyList()
         )
 
         val projectCount = storage.projectRepository.findAll().size
         logger.info { "ProjectRegistry initialized with $projectCount projects from config" }
+
+        // 기존 프로젝트들을 RAG에 인덱싱
+        if (knowledgeVectorService != null && projectCount > 0) {
+            try {
+                val projects = storage.projectRepository.findAll()
+                val result = knowledgeVectorService.indexAllProjects(projects)
+                logger.info { "Indexed ${result.successCount} projects to RAG knowledge base" }
+            } catch (e: Exception) {
+                logger.warn { "Failed to index projects to RAG: ${e.message}" }
+            }
+        }
 
         return registry
     }

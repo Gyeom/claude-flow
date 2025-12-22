@@ -9,7 +9,6 @@ import {
   Cpu,
   AlertTriangle,
   Clock,
-  Puzzle,
   Workflow,
   ScrollText,
   FolderOpen,
@@ -31,7 +30,6 @@ const navigation = [
   { name: 'Feedback', href: '/feedback', icon: ThumbsUp },
   { name: 'Models', href: '/models', icon: Cpu },
   { name: 'Errors', href: '/errors', icon: AlertTriangle },
-  { name: 'Plugins', href: '/plugins', icon: Puzzle },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
 ]
 
