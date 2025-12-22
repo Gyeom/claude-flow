@@ -2,18 +2,20 @@
 
 이 문서는 Claude Flow 프로젝트의 전체 아키텍처를 설명합니다.
 
+> **Last Updated**: 2025-12-22
+
 ## 1. 시스템 전체 구조
 
 ```mermaid
 flowchart TB
-    subgraph External["외부 시스템"]
-        Slack["Slack<br/>(Socket Mode)"]
-        GitLab["GitLab"]
-        GitHub["GitHub"]
-        Jira["Jira"]
+    subgraph External["🌐 외부 시스템"]
+        Slack["💬 Slack<br/>(Socket Mode)"]
+        GitLab["🦊 GitLab"]
+        GitHub["🐙 GitHub"]
+        Jira["📋 Jira"]
     end
 
-    subgraph ClaudeFlow["Claude Flow Platform"]
+    subgraph ClaudeFlow["🤖 Claude Flow Platform"]
         subgraph App["claude-flow-app<br/>(Spring Boot 3.4)"]
             Config["Configuration"]
         end
@@ -25,12 +27,24 @@ flowchart TB
         end
 
         subgraph Core["claude-flow-core"]
-            Router["AgentRouter<br/>(Multi-level)"]
+            Router["AgentRouter<br/>(5-level)"]
             Storage["Storage Layer<br/>(SQLite WAL)"]
             Plugin["Plugin System"]
             Session["SessionManager"]
             Analytics["Analytics"]
             RateLimit["RateLimiter"]
+
+            subgraph RAG["RAG System"]
+                Embedding["EmbeddingService"]
+                Feedback["FeedbackLearningService"]
+                Context["ContextAugmentation"]
+                CodeKnowledge["CodeKnowledgeService"]
+            end
+
+            subgraph Enrichment["Context Enrichment"]
+                Pipeline["EnrichmentPipeline"]
+                ProjectCtx["ProjectContextEnricher"]
+            end
         end
 
         subgraph Executor["claude-flow-executor"]
@@ -38,17 +52,17 @@ flowchart TB
         end
     end
 
-    subgraph Workflow["Workflow Engine"]
-        n8n["n8n<br/>(13 Workflows)"]
+    subgraph Workflow["⚡ Workflow Engine"]
+        n8n["n8n<br/>(7 Workflows)"]
     end
 
-    subgraph Dashboard["Dashboard"]
-        React["React Dashboard<br/>(Vite + TailwindCSS)"]
+    subgraph Dashboard["📊 Dashboard"]
+        React["React Dashboard<br/>(Vite + TailwindCSS)<br/>13 Pages"]
     end
 
-    subgraph Optional["Optional Services"]
+    subgraph VectorDB["🔍 Vector Services"]
         Qdrant["Qdrant<br/>(Vector DB)"]
-        Ollama["Ollama<br/>(Embeddings)"]
+        Ollama["Ollama<br/>(qwen3-embedding)"]
     end
 
     Slack <-->|WebSocket| SlackBridge
@@ -56,15 +70,17 @@ flowchart TB
     WebhookSender -->|Webhook| n8n
     n8n -->|HTTP| REST
     REST --> Router
-    Router --> Claude
+    Router --> Pipeline
+    Pipeline --> Claude
     Claude -->|CLI| ClaudeCLI["Claude CLI"]
     REST --> Storage
     Plugin --> GitLab
     Plugin --> GitHub
     Plugin --> Jira
     React -->|API| REST
-    Router -.->|Semantic| Qdrant
-    Router -.->|Embedding| Ollama
+    Router -.->|Feedback Learning| Feedback
+    Feedback -.->|Vectors| Qdrant
+    Embedding -.->|Embed| Ollama
 ```
 
 ## 2. 모듈 의존성
@@ -230,6 +246,9 @@ erDiagram
         string execution_id FK
         string user_id
         string reaction
+        string category "feedback/trigger/action"
+        int is_verified "요청자 피드백만"
+        datetime verified_at
         datetime created_at
     }
 
@@ -346,41 +365,160 @@ classDiagram
 flowchart LR
     subgraph Triggers["트리거"]
         W1["Slack Mention"]
-        W2["Slack Message"]
-        W3["GitLab Webhook"]
-        W4["Schedule"]
+        W2["Slack Reaction"]
+        W3["Slack Action"]
+        W4["Alert Bot"]
     end
 
-    subgraph Workflows["워크플로우"]
-        WF1["slack-mention-handler"]
-        WF2["slack-message-handler"]
-        WF3["gitlab-mr-review"]
-        WF4["daily-report"]
-        WF5["user-context-handler"]
-        WF6["slack-feedback-handler"]
+    subgraph Workflows["워크플로우 (7개)"]
+        WF1["slack-mention-handler<br/>✅ 활성"]
+        WF2["slack-mr-review<br/>✅ 활성"]
+        WF3["slack-action-handler<br/>✅ 활성"]
+        WF4["slack-feedback-handler<br/>✅ 활성"]
+        WF5["user-context-handler<br/>⏸️ 비활성"]
+        WF6["alert-channel-monitor<br/>⏸️ 비활성"]
+        WF7["alert-to-mr-pipeline<br/>⏸️ 비활성"]
     end
 
     subgraph Actions["액션"]
         A1["Claude API 호출"]
         A2["Slack 메시지 전송"]
         A3["DB 저장"]
-        A4["알림 전송"]
+        A4["GitLab MR 생성"]
     end
 
     W1 --> WF1
-    W2 --> WF2
+    W1 --> WF2
+    W2 --> WF4
     W3 --> WF3
-    W4 --> WF4
+    W4 --> WF6
 
-    WF1 --> A1
-    WF1 --> A2
-    WF2 --> A1
-    WF3 --> A1
-    WF3 --> A2
+    WF1 --> A1 --> A2
+    WF2 --> A1 --> A2
+    WF3 --> A3
     WF4 --> A3
-    WF4 --> A4
-    WF5 --> A3
-    WF6 --> A3
+    WF6 --> WF7 --> A4
+```
+
+## 8.1. 피드백 루프
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 사용자
+    participant S as Slack
+    participant B as SlackBridge
+    participant N as n8n
+    participant API as REST API
+    participant DB as SQLite
+    participant RAG as RAG System
+
+    Note over U,RAG: 피드백 수집 흐름
+    U->>S: 👍/👎 리액션 추가
+    S->>B: reaction_added 이벤트
+    B->>N: Webhook (feedback)
+    N->>API: GET /executions/by-reply-ts
+    API-->>N: executionId
+    N->>API: POST /feedback
+    API->>DB: INSERT feedback
+
+    Note over U,RAG: 피드백 학습 흐름
+    API->>RAG: recordFeedback()
+    RAG->>RAG: updateAgentPreferences()
+    RAG->>RAG: adjustRoutingScore()
+
+    Note over U,RAG: 다음 요청 시
+    U->>S: 새 질문
+    S->>B: mention 이벤트
+    B->>N: Webhook
+    N->>API: POST /execute-with-routing
+    API->>RAG: feedbackLearningMatch()
+    RAG-->>API: 추천 에이전트 (피드백 기반)
+```
+
+## 8.2. RAG 시스템 아키텍처
+
+```mermaid
+flowchart TB
+    subgraph Input["입력"]
+        Query["사용자 쿼리"]
+        Feedback["피드백 (👍/👎)"]
+        Code["코드베이스"]
+    end
+
+    subgraph RAG["RAG System"]
+        subgraph Embedding["임베딩 레이어"]
+            ES["EmbeddingService"]
+            EC["EmbeddingCache"]
+            Ollama["Ollama<br/>qwen3-embedding:0.6b"]
+        end
+
+        subgraph Learning["학습 레이어"]
+            FLS["FeedbackLearningService"]
+            Prefs["UserAgentPreferences<br/>(메모리 캐시)"]
+        end
+
+        subgraph Search["검색 레이어"]
+            CVS["ConversationVectorService"]
+            CKS["CodeKnowledgeService"]
+            KVS["KnowledgeVectorService"]
+        end
+
+        subgraph Augmentation["증강 레이어"]
+            CAS["ContextAugmentationService"]
+            CEP["ContextEnrichmentPipeline"]
+            PCE["ProjectContextEnricher"]
+        end
+    end
+
+    subgraph Storage["저장소"]
+        Qdrant["Qdrant Vector DB"]
+        SQLite["SQLite"]
+    end
+
+    Query --> ES --> Ollama
+    ES --> CVS --> Qdrant
+    ES --> CKS --> Qdrant
+    Feedback --> FLS --> Prefs
+    Code --> CKS
+
+    CVS --> CAS
+    CKS --> CAS
+    Prefs --> CAS
+    CAS --> CEP
+    PCE --> CEP
+
+    FLS --> SQLite
+```
+
+## 8.3. Context Enrichment Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Input["입력"]
+        Prompt["사용자 프롬프트"]
+        User["사용자 ID"]
+        Channel["채널"]
+    end
+
+    subgraph Pipeline["ContextEnrichmentPipeline"]
+        direction TB
+        E1["ProjectContextEnricher<br/>(프로젝트 정보)"]
+        E2["UserContextEnricher<br/>(사용자 규칙/요약)"]
+        E3["RAGContextEnricher<br/>(유사 대화/피드백)"]
+        E4["JiraContextEnricher<br/>(관련 이슈)"]
+    end
+
+    subgraph Output["출력"]
+        Context["EnrichmentContext"]
+        Final["증강된 프롬프트"]
+    end
+
+    Input --> E1
+    E1 --> E2
+    E2 --> E3
+    E3 --> E4
+    E4 --> Context --> Final
 ```
 
 ## 9. Rate Limiting
@@ -461,41 +599,46 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    subgraph Dashboard["React Dashboard"]
-        subgraph Pages["페이지"]
-            P1["Dashboard<br/>(종합)"]
-            P2["Analytics<br/>(상세 분석)"]
-            P3["Agents<br/>(관리)"]
-            P4["Users<br/>(사용자)"]
-            P5["Executions<br/>(이력)"]
-            P6["Feedback<br/>(피드백)"]
-            P7["Plugins<br/>(플러그인)"]
-            P8["Settings<br/>(설정)"]
+    subgraph Dashboard["React Dashboard (13 Pages)"]
+        subgraph Core["핵심 페이지"]
+            P1["📊 Dashboard<br/>(종합 통계)"]
+            P2["💬 Chat<br/>(웹 채팅)"]
+            P3["📈 Analytics<br/>(상세 분석)"]
         end
 
-        subgraph Components["컴포넌트"]
-            C1["Layout"]
-            C2["Chart"]
-            C3["DataTable"]
-            C4["ThemeToggle"]
+        subgraph Management["관리 페이지"]
+            P4["🤖 Agents<br/>(에이전트)"]
+            P5["📁 Projects<br/>(프로젝트)"]
+            P6["📋 Jira<br/>(이슈 관리)"]
+            P7["⚡ Workflows<br/>(n8n)"]
         end
 
-        subgraph Lib["라이브러리"]
-            API["api.ts"]
+        subgraph Monitoring["모니터링"]
+            P8["📜 History<br/>(실행 이력)"]
+            P9["📝 Logs<br/>(실시간)"]
+            P10["👍 Feedback<br/>(피드백)"]
+            P11["⚠️ Errors<br/>(에러)"]
+            P12["🧠 Models<br/>(모델 통계)"]
+        end
+
+        subgraph System["시스템"]
+            P13["⚙️ Settings<br/>(설정)"]
         end
     end
 
     subgraph Tech["기술 스택"]
         React["React 18"]
-        Vite["Vite"]
+        Vite["Vite 5"]
         TW["TailwindCSS"]
         RC["Recharts"]
-        RQ["React Query"]
+        RQ["TanStack Query"]
     end
 
-    Pages --> Components
-    Components --> Lib
-    Lib -->|HTTP| Backend["REST API"]
+    Core --> API["lib/api.ts"]
+    Management --> API
+    Monitoring --> API
+    System --> API
+    API -->|HTTP/SSE| Backend["REST API :8080"]
 ```
 
 ## 13. 전체 기술 스택
@@ -539,14 +682,26 @@ Claude Flow는 **4개의 핵심 모듈**로 구성된 AI 에이전트 플랫폼�
 
 | 모듈 | 역할 | 핵심 컴포넌트 |
 |------|------|--------------|
-| **claude-flow-core** | 도메인 로직 | AgentRouter, Storage, Plugin, Analytics |
+| **claude-flow-core** | 도메인 로직 | AgentRouter, Storage, Plugin, RAG, Enrichment |
 | **claude-flow-executor** | CLI 래퍼 | ClaudeExecutor (세션 관리, 스트리밍) |
-| **claude-flow-api** | API 레이어 | REST API, SlackSocketModeBridge |
+| **claude-flow-api** | API 레이어 | REST API, SlackSocketModeBridge, WebhookSender |
 | **claude-flow-app** | 애플리케이션 | Spring Boot 통합, 설정 |
 
 **핵심 특징**:
-- 5단계 멀티레벨 라우팅 (키워드 → 패턴 → 시맨틱 → LLM → 폴백)
+- 5단계 멀티레벨 라우팅 (피드백 학습 → 키워드 → 패턴 → 시맨틱 → 폴백)
 - Claude 세션 캐싱으로 토큰 30-40% 절감
-- n8n 기반 워크플로우 자동화
+- n8n 기반 7개 워크플로우 (Slack 멘션, MR 리뷰, 피드백 수집 등)
 - 실시간 P50/P90/P95/P99 분석
-- 플러그인 시스템 (GitLab, GitHub, Jira)
+- 플러그인 시스템 (GitLab, GitHub, Jira, n8n)
+- RAG 시스템 (Qdrant + Ollama)
+  - 피드백 학습 기반 에이전트 추천
+  - 컨텍스트 증강 파이프라인
+  - 코드베이스 인덱싱
+- 13개 대시보드 페이지 (Chat, Analytics, Jira, Workflows 등)
+
+**데이터 흐름**:
+```
+Slack → SlackBridge → n8n → REST API → AgentRouter → ContextEnrichment → ClaudeExecutor → Claude CLI
+                                              ↓
+                                        RAG System (피드백 학습, 유사 대화 검색)
+```

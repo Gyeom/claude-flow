@@ -199,32 +199,53 @@ npm run dev
 
 ## 아키텍처
 
+```mermaid
+flowchart TB
+    subgraph Slack["💬 Slack"]
+        Mention["@claude 멘션"]
+        Reaction["👍/👎 리액션"]
+    end
+
+    subgraph ClaudeFlow["🤖 Claude Flow"]
+        Bridge["SlackSocketModeBridge"]
+        Router["AgentRouter<br/>(5단계 라우팅)"]
+        RAG["RAG System<br/>(피드백 학습)"]
+        Enrichment["ContextEnrichment"]
+        Executor["ClaudeExecutor"]
+
+        subgraph Plugins["Plugins"]
+            GitLab["GitLab"]
+            Jira["Jira"]
+            GitHub["GitHub"]
+        end
+    end
+
+    subgraph n8n["⚡ n8n Workflows"]
+        WF1["slack-mention-handler"]
+        WF2["slack-feedback-handler"]
+        WF3["slack-mr-review"]
+    end
+
+    subgraph Storage["💾 Storage"]
+        SQLite["SQLite"]
+        Qdrant["Qdrant<br/>(Vector DB)"]
+    end
+
+    Mention --> Bridge --> n8n
+    Reaction --> Bridge --> WF2
+    n8n --> Router
+    Router --> RAG --> Enrichment --> Executor
+    Executor --> Claude["Claude CLI"]
+    WF2 --> SQLite
+    RAG --> Qdrant
 ```
-Slack (@멘션)
-    │ Socket Mode
-    ▼
-┌─────────────────────────────────────────────────┐
-│             Claude Flow (Kotlin)                │
-│  SlackBridge → AgentRouter → Executor           │
-│         │                                       │
-│   Storage │ UserContext │ Analytics │ Plugins   │
-│                                                 │
-│   ┌─────────────────────────────────────────┐   │
-│   │ Plugins: GitLab │ Jira │ GitHub │ n8n   │   │
-│   └─────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────┘
-    │ Webhook
-    ▼
-┌─────────────────────────────────────────────────┐
-│                n8n Workflows                    │
-│  • slack-mention-handler    (멘션 처리)         │
-│  • slack-mr-review          (MR 리뷰)           │
-│  • slack-action-handler     (버튼 액션)         │
-│  • slack-feedback-handler   (피드백 수집)       │
-│  • alert-channel-monitor    (장애 알람 분석)    │
-│  • alert-to-mr-pipeline     (알람→MR 자동화)    │
-└─────────────────────────────────────────────────┘
-```
+
+**핵심 흐름:**
+1. **Slack 멘션** → SlackSocketModeBridge → n8n Webhook
+2. **에이전트 라우팅** (피드백 학습 → 키워드 → 패턴 → 시맨틱 → 폴백)
+3. **컨텍스트 증강** (프로젝트, 사용자 규칙, RAG 유사 대화)
+4. **Claude 실행** → 응답 → Slack 전송
+5. **피드백 수집** (👍/👎) → 학습 → 다음 라우팅 개선
 
 ## 프로젝트 구조
 
