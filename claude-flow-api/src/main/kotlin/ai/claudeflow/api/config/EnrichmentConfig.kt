@@ -3,6 +3,8 @@ package ai.claudeflow.api.config
 import ai.claudeflow.core.enrichment.ContextEnricher
 import ai.claudeflow.core.enrichment.ContextEnrichmentPipeline
 import ai.claudeflow.core.enrichment.ProjectContextEnricher
+import ai.claudeflow.core.enrichment.DomainKnowledgeEnricher
+import ai.claudeflow.core.plugin.PluginManager
 import ai.claudeflow.core.rag.KnowledgeVectorService
 import ai.claudeflow.core.storage.Storage
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -41,6 +43,24 @@ class EnrichmentConfig {
             objectMapper = objectMapper,
             configPath = configPath,
             workspaceRoot = workspaceRoot
+        )
+    }
+
+    /**
+     * 도메인 지식 Enricher
+     * Confluence 플러그인 기반 컨텍스트 주입
+     */
+    @Bean
+    fun domainKnowledgeEnricher(
+        pluginManager: PluginManager,
+        @Value("\${claude-flow.confluence.default-space:#{null}}") defaultSpaceKey: String?,
+        @Value("\${claude-flow.enrichment.token-budget:1500}") tokenBudget: Int
+    ): DomainKnowledgeEnricher {
+        logger.info { "Creating DomainKnowledgeEnricher (space: $defaultSpaceKey)" }
+        return DomainKnowledgeEnricher(
+            pluginManager = pluginManager,
+            defaultSpaceKey = defaultSpaceKey,
+            tokenBudget = tokenBudget
         )
     }
 

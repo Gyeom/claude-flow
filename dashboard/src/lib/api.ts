@@ -1181,6 +1181,158 @@ export const jiraApi = {
     }>(`/plugins/jira/projects/${projectKey}/users`),
 }
 
+// Knowledge Base API
+export interface KnowledgeDocument {
+  id: string
+  title: string
+  source: string
+  sourceUrl: string | null
+  mimeType: string | null
+  status: 'PENDING' | 'PROCESSING' | 'INDEXED' | 'OUTDATED' | 'ERROR'
+  chunkCount: number
+  errorMessage: string | null
+  projectId: string | null
+  createdAt: string
+  updatedAt: string
+  lastIndexedAt: string | null
+  lastSyncedAt: string | null
+}
+
+export interface KnowledgeStats {
+  totalDocuments: number
+  totalChunks: number
+  bySource: Record<string, number>
+  byStatus: Record<string, number>
+  recentQueries: number
+  lastUpdated: string | null
+}
+
+export interface KnowledgeSearchResult {
+  documentId: string
+  documentTitle: string
+  content: string
+  score: number
+  metadata: Record<string, unknown>
+}
+
+// Vector Store Types
+export interface VectorItem {
+  type: string
+  docId: string
+  content: string
+  name: string | null
+  description: string | null
+  updatedAt: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface VectorStats {
+  system: Record<string, number>
+  user: Record<string, number>
+  total: number
+}
+
+export interface VectorDataResponse {
+  system: VectorItem[]
+  user: VectorItem[]
+  stats: VectorStats
+}
+
+export const knowledgeApi = {
+  // Get all documents
+  getDocuments: (projectId?: string) => {
+    const params = projectId ? `?projectId=${projectId}` : ''
+    return fetchApi<KnowledgeDocument[]>(`/knowledge/documents${params}`)
+  },
+
+  // Get document by ID
+  getDocument: (id: string) =>
+    fetchApi<KnowledgeDocument>(`/knowledge/documents/${id}`),
+
+  // Upload file
+  uploadFile: async (file: File, title?: string, projectId?: string): Promise<KnowledgeDocument> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (title) formData.append('title', title)
+    if (projectId) formData.append('projectId', projectId)
+
+    const response = await fetch(`${API_BASE_V1}/knowledge/upload`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Upload failed: ${response.status}`)
+    }
+
+    return response.json()
+  },
+
+  // Fetch URL
+  fetchUrl: (url: string, title?: string, projectId?: string, autoSync = false) =>
+    fetchApi<KnowledgeDocument>('/knowledge/url', {
+      method: 'POST',
+      body: JSON.stringify({ url, title, projectId, autoSync }),
+    }),
+
+  // Re-index document
+  reindexDocument: (id: string) =>
+    fetchApi<{ success: boolean; message: string }>(`/knowledge/documents/${id}/reindex`, {
+      method: 'POST',
+    }),
+
+  // Delete document
+  deleteDocument: (id: string) =>
+    fetchApi<void>(`/knowledge/documents/${id}`, { method: 'DELETE' }),
+
+  // Search knowledge
+  search: (query: string, projectId?: string, topK = 5) => {
+    const params = new URLSearchParams({ query, topK: topK.toString() })
+    if (projectId) params.set('projectId', projectId)
+    return fetchApi<KnowledgeSearchResult[]>(`/knowledge/search?${params}`)
+  },
+
+  // Get stats
+  getStats: (projectId?: string) => {
+    const params = projectId ? `?projectId=${projectId}` : ''
+    return fetchApi<KnowledgeStats>(`/knowledge/stats${params}`)
+  },
+
+  // Trigger sync
+  triggerSync: () =>
+    fetchApi<{ success: boolean; syncedCount: number }>('/knowledge/sync', { method: 'POST' }),
+
+  // Analyze image
+  analyzeImage: async (file: File): Promise<{
+    description: string
+    extractedText: string | null
+    uiComponents: Array<{ name: string; type: string; description: string | null; properties: Record<string, string> }>
+    designSpecs: { colors: string[]; fonts: string[]; spacing: string[]; layout: string | null } | null
+    functionalSpecs: string[]
+  }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch(`${API_BASE_V1}/knowledge/analyze-image`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    if (!response.ok) {
+      throw new Error(`Image analysis failed: ${response.status}`)
+    }
+
+    return response.json()
+  },
+
+  // Vector Store APIs
+  getVectorData: () =>
+    fetchApi<VectorDataResponse>('/knowledge/vectors'),
+
+  getVectorStats: () =>
+    fetchApi<VectorStats>('/knowledge/vectors/stats'),
+}
+
 // Extended Analytics API (Verified Feedback)
 export const verifiedFeedbackApi = {
   // Get verified feedback stats

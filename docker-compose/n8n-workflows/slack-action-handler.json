@@ -68,6 +68,24 @@
     },
     {
       "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $('Webhook').item.json.body.action.action_id }}",
+              "operation": "startsWith",
+              "value2": "select_mr_"
+            }
+          ]
+        }
+      },
+      "id": "is-mr-select",
+      "name": "Is MR Select?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 600]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/thread-history",
         "sendBody": true,
@@ -186,6 +204,44 @@
     },
     {
       "parameters": {
+        "jsCode": "// MR 선택 액션 처리\nconst body = $('Webhook').item.json.body;\nconst actionValue = JSON.parse(body.action.value);\nconst mrData = actionValue.mr_data;\nconst channel = actionValue.channel;\nconst threadTs = actionValue.threadTs;\nconst timestamp = actionValue.timestamp;\n\n// 선택된 MR 정보 반환\nreturn {\n  json: {\n    selected_mr: mrData,\n    channel: channel,\n    threadTs: threadTs,\n    timestamp: timestamp,\n    action_type: 'mr_review_selected'\n  }\n};"
+      },
+      "id": "process-mr-select",
+      "name": "Process MR Selection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:5678/webhook/slack-mr-review",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: { text: '!{{ $json.selected_mr.iid }} 리뷰 시작', channel: $json.channel, threadTs: $json.threadTs, timestamp: $json.timestamp, user: $('Webhook').item.json.body.user } }) }}"
+      },
+      "id": "trigger-mr-review",
+      "name": "Trigger MR Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1150, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ':mag: 선택된 MR !{{ $('Process MR Selection').item.json.selected_mr.iid }} 리뷰를 시작합니다...', threadTs: $('Webhook').item.json.body.action.targetMessageTs }) }}"
+      },
+      "id": "confirm-mr-selection",
+      "name": "Confirm MR Selection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 500]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
@@ -196,7 +252,7 @@
       "name": "Unsupported Action",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 550]
+      "position": [900, 750]
     }
   ],
   "connections": {
@@ -209,7 +265,8 @@
       "main": [
         [
           { "node": "Is Jira?", "type": "main", "index": 0 },
-          { "node": "Is Summarize?", "type": "main", "index": 0 }
+          { "node": "Is Summarize?", "type": "main", "index": 0 },
+          { "node": "Is MR Select?", "type": "main", "index": 0 }
         ]
       ]
     },
@@ -222,7 +279,23 @@
     "Is Summarize?": {
       "main": [
         [{ "node": "Get Context (Summarize)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Is MR Select?": {
+      "main": [
+        [{ "node": "Process MR Selection", "type": "main", "index": 0 }],
         [{ "node": "Unsupported Action", "type": "main", "index": 0 }]
+      ]
+    },
+    "Process MR Selection": {
+      "main": [
+        [{ "node": "Trigger MR Review", "type": "main", "index": 0 }]
+      ]
+    },
+    "Trigger MR Review": {
+      "main": [
+        [{ "node": "Confirm MR Selection", "type": "main", "index": 0 }]
       ]
     },
     "Get Context (Jira)": {

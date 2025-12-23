@@ -1,0 +1,857 @@
+import { useState, useRef, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  BookOpen,
+  Upload,
+  Link,
+  Search,
+  RefreshCw,
+  Trash2,
+  FileText,
+  Image,
+  Globe,
+  CheckCircle,
+  AlertCircle,
+  Clock,
+  Loader2,
+  Plus,
+  X,
+  ChevronRight,
+  Database,
+  Layers,
+  Server,
+  User,
+  FolderGit2,
+  Bot,
+  MessageSquare,
+  FileCode,
+} from 'lucide-react'
+import { Card, CardHeader, StatCard } from '@/components/Card'
+import { knowledgeApi, type KnowledgeDocument, type KnowledgeSearchResult, type VectorItem } from '@/lib/api'
+import { cn } from '@/lib/utils'
+
+export function Knowledge() {
+  const queryClient = useQueryClient()
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null)
+  const [selectedVectorItem, setSelectedVectorItem] = useState<VectorItem | null>(null)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [showUrlModal, setShowUrlModal] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[] | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+  const [activeTab, setActiveTab] = useState<'vectors' | 'documents'>('vectors')
+
+  // Fetch documents
+  const { data: documents, isLoading } = useQuery({
+    queryKey: ['knowledge-documents'],
+    queryFn: () => knowledgeApi.getDocuments(),
+  })
+
+  // Fetch stats
+  const { data: stats } = useQuery({
+    queryKey: ['knowledge-stats'],
+    queryFn: () => knowledgeApi.getStats(),
+  })
+
+  // Fetch vector data
+  const { data: vectorData, isLoading: isLoadingVectors } = useQuery({
+    queryKey: ['knowledge-vectors'],
+    queryFn: () => knowledgeApi.getVectorData(),
+  })
+
+  // Sync mutation
+  const syncMutation = useMutation({
+    mutationFn: () => knowledgeApi.triggerSync(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] })
+      queryClient.invalidateQueries({ queryKey: ['knowledge-stats'] })
+    },
+  })
+
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => knowledgeApi.deleteDocument(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] })
+      queryClient.invalidateQueries({ queryKey: ['knowledge-stats'] })
+      setSelectedDocument(null)
+    },
+  })
+
+  // Reindex mutation
+  const reindexMutation = useMutation({
+    mutationFn: (id: string) => knowledgeApi.reindexDocument(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] })
+    },
+  })
+
+  // Search handler
+  const handleSearch = useCallback(async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null)
+      return
+    }
+    setIsSearching(true)
+    try {
+      const results = await knowledgeApi.search(searchQuery)
+      setSearchResults(results)
+    } catch (error) {
+      console.error('Search failed:', error)
+      setSearchResults([])
+    } finally {
+      setIsSearching(false)
+    }
+  }, [searchQuery])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    )
+  }
+
+  const documentList = documents || []
+  const selected = documentList.find(d => d.id === selectedDocument)
+
+  return (
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Knowledge Base</h1>
+          <p className="text-muted-foreground mt-1">
+            Manage domain knowledge, documents, and image specs for AI context
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => syncMutation.mutate()}
+            disabled={syncMutation.isPending}
+            className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg hover:bg-muted transition-colors"
+          >
+            {syncMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            Sync All
+          </button>
+          <button
+            onClick={() => setShowUrlModal(true)}
+            className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg hover:bg-muted transition-colors"
+          >
+            <Link className="h-4 w-4" />
+            Add URL
+          </button>
+          <button
+            onClick={() => setShowUploadModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            <Upload className="h-4 w-4" />
+            Upload
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <StatCard
+          title="Total Vectors"
+          value={vectorData?.stats.total || 0}
+          icon={<Database className="h-6 w-6" />}
+        />
+        <StatCard
+          title="System (Auto)"
+          value={vectorData?.system.length || 0}
+          icon={<Server className="h-6 w-6" />}
+          subtitle={Object.entries(vectorData?.stats.system || {}).map(([k, v]) => `${k}: ${v}`).join(', ') || '-'}
+        />
+        <StatCard
+          title="User Documents"
+          value={vectorData?.user.length || 0}
+          icon={<User className="h-6 w-6" />}
+          subtitle={Object.entries(vectorData?.stats.user || {}).map(([k, v]) => `${k}: ${v}`).join(', ') || '-'}
+        />
+        <StatCard
+          title="Indexed Chunks"
+          value={stats?.totalChunks || 0}
+          icon={<Layers className="h-6 w-6" />}
+        />
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-border">
+        <button
+          onClick={() => setActiveTab('vectors')}
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === 'vectors'
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Database className="h-4 w-4 inline-block mr-2" />
+          Vector Store
+        </button>
+        <button
+          onClick={() => setActiveTab('documents')}
+          className={cn(
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === 'documents'
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <FileText className="h-4 w-4 inline-block mr-2" />
+          Documents ({documents?.length || 0})
+        </button>
+      </div>
+
+      {/* Search */}
+      <Card>
+        <CardHeader title="Search Knowledge" />
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="Search indexed knowledge..."
+              className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+          <button
+            onClick={handleSearch}
+            disabled={isSearching || !searchQuery.trim()}
+            className="px-6 py-2.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          >
+            {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Search'}
+          </button>
+        </div>
+
+        {/* Search Results */}
+        {searchResults && (
+          <div className="mt-4 space-y-3">
+            {searchResults.length === 0 ? (
+              <p className="text-center text-muted-foreground py-4">No results found</p>
+            ) : (
+              searchResults.map((result, idx) => (
+                <div key={idx} className="p-4 rounded-lg bg-muted/50 border border-border">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="font-medium">{result.documentTitle}</p>
+                      <p className="text-sm text-muted-foreground line-clamp-2 mt-1">
+                        {result.content}
+                      </p>
+                    </div>
+                    <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded">
+                      {(result.score * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </Card>
+
+      {/* Vector Store Tab Content */}
+      {activeTab === 'vectors' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* System (Auto-indexed) */}
+          <div className="lg:col-span-1">
+            <Card>
+              <CardHeader
+                title="System (Auto-indexed)"
+                action={
+                  <span className="text-xs text-muted-foreground">
+                    {vectorData?.system.length || 0} items
+                  </span>
+                }
+              />
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {isLoadingVectors ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  vectorData?.system.map((item) => (
+                    <button
+                      key={item.docId}
+                      onClick={() => setSelectedVectorItem(item)}
+                      className={cn(
+                        "w-full p-3 rounded-lg text-left transition-colors",
+                        selectedVectorItem?.docId === item.docId
+                          ? "bg-primary/10 border border-primary/30"
+                          : "bg-muted/50 hover:bg-muted"
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <VectorTypeIcon type={item.type} />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{item.name || item.docId}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs bg-blue-500/10 text-blue-500 px-2 py-0.5 rounded">
+                              {item.type}
+                            </span>
+                          </div>
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </button>
+                  ))
+                )}
+                {!isLoadingVectors && (vectorData?.system.length || 0) === 0 && (
+                  <p className="text-center text-muted-foreground py-8">
+                    No system data indexed yet.
+                  </p>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* User Documents */}
+          <div className="lg:col-span-1">
+            <Card>
+              <CardHeader
+                title="User Documents"
+                action={
+                  <span className="text-xs text-muted-foreground">
+                    {vectorData?.user.length || 0} items
+                  </span>
+                }
+              />
+              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                {isLoadingVectors ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  vectorData?.user.map((item) => (
+                    <button
+                      key={item.docId}
+                      onClick={() => setSelectedVectorItem(item)}
+                      className={cn(
+                        "w-full p-3 rounded-lg text-left transition-colors",
+                        selectedVectorItem?.docId === item.docId
+                          ? "bg-primary/10 border border-primary/30"
+                          : "bg-muted/50 hover:bg-muted"
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <VectorTypeIcon type={item.type} />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{item.name || item.docId}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs bg-green-500/10 text-green-500 px-2 py-0.5 rounded">
+                              {item.type}
+                            </span>
+                          </div>
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </button>
+                  ))
+                )}
+                {!isLoadingVectors && (vectorData?.user.length || 0) === 0 && (
+                  <p className="text-center text-muted-foreground py-8">
+                    No user documents yet.
+                  </p>
+                )}
+              </div>
+            </Card>
+          </div>
+
+          {/* Vector Item Details */}
+          <div className="lg:col-span-1">
+            {selectedVectorItem ? (
+              <Card>
+                <CardHeader title={selectedVectorItem.name || selectedVectorItem.docId} />
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <InfoItem label="Type" value={selectedVectorItem.type} />
+                    <InfoItem label="Doc ID" value={selectedVectorItem.docId} />
+                  </div>
+                  {selectedVectorItem.description && (
+                    <InfoItem label="Description" value={selectedVectorItem.description} />
+                  )}
+                  {selectedVectorItem.updatedAt && (
+                    <InfoItem
+                      label="Updated"
+                      value={new Date(selectedVectorItem.updatedAt).toLocaleString()}
+                    />
+                  )}
+                  <div className="p-3 rounded-lg bg-muted/50 max-h-48 overflow-y-auto">
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      {selectedVectorItem.content.substring(0, 500)}
+                      {selectedVectorItem.content.length > 500 && '...'}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            ) : (
+              <Card className="flex flex-col items-center justify-center py-16">
+                <Database className="h-16 w-16 text-muted-foreground/30 mb-4" />
+                <p className="text-muted-foreground">Select an item to view details</p>
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Document List and Details */}
+      {activeTab === 'documents' && (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Document List */}
+        <div className="lg:col-span-1">
+          <Card>
+            <CardHeader title="Documents" />
+            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+              {documentList.map((doc) => (
+                <button
+                  key={doc.id}
+                  onClick={() => setSelectedDocument(doc.id)}
+                  className={cn(
+                    "w-full p-3 rounded-lg text-left transition-colors",
+                    selectedDocument === doc.id
+                      ? "bg-primary/10 border border-primary/30"
+                      : "bg-muted/50 hover:bg-muted"
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <SourceIcon source={doc.source} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium truncate">{doc.title}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <StatusBadge status={doc.status} />
+                        <span className="text-xs text-muted-foreground">
+                          {doc.chunkCount} chunks
+                        </span>
+                      </div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </button>
+              ))}
+              {documentList.length === 0 && (
+                <p className="text-center text-muted-foreground py-8">
+                  No documents yet. Upload files or add URLs.
+                </p>
+              )}
+            </div>
+          </Card>
+        </div>
+
+        {/* Document Details */}
+        <div className="lg:col-span-2">
+          {selected ? (
+            <Card>
+              <CardHeader
+                title={selected.title}
+                action={
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => reindexMutation.mutate(selected.id)}
+                      disabled={reindexMutation.isPending}
+                      className="p-2 hover:bg-muted rounded-lg transition-colors"
+                      title="Re-index"
+                    >
+                      {reindexMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm('Delete this document?')) {
+                          deleteMutation.mutate(selected.id)
+                        }
+                      }}
+                      className="p-2 hover:bg-red-500/10 text-red-500 rounded-lg transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                }
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                <InfoItem label="Source" value={selected.source} />
+                <InfoItem label="Status">
+                  <StatusBadge status={selected.status} />
+                </InfoItem>
+                <InfoItem label="Chunks" value={selected.chunkCount.toString()} />
+                <InfoItem label="MIME Type" value={selected.mimeType || '-'} />
+                <InfoItem
+                  label="Created"
+                  value={new Date(selected.createdAt).toLocaleString()}
+                />
+                <InfoItem
+                  label="Last Indexed"
+                  value={selected.lastIndexedAt ? new Date(selected.lastIndexedAt).toLocaleString() : '-'}
+                />
+              </div>
+
+              {selected.sourceUrl && (
+                <div className="mt-4 p-3 rounded-lg bg-muted/50">
+                  <p className="text-sm text-muted-foreground">Source URL</p>
+                  <a
+                    href={selected.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary hover:underline break-all"
+                  >
+                    {selected.sourceUrl}
+                  </a>
+                </div>
+              )}
+
+              {selected.errorMessage && (
+                <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+                  <p className="text-sm text-red-500">{selected.errorMessage}</p>
+                </div>
+              )}
+            </Card>
+          ) : (
+            <Card className="flex flex-col items-center justify-center py-16">
+              <BookOpen className="h-16 w-16 text-muted-foreground/30 mb-4" />
+              <p className="text-muted-foreground">Select a document to view details</p>
+            </Card>
+          )}
+        </div>
+      </div>
+      )}
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <UploadModal
+          onClose={() => setShowUploadModal(false)}
+          onSuccess={() => {
+            setShowUploadModal(false)
+            queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] })
+            queryClient.invalidateQueries({ queryKey: ['knowledge-stats'] })
+          }}
+        />
+      )}
+
+      {/* URL Modal */}
+      {showUrlModal && (
+        <UrlModal
+          onClose={() => setShowUrlModal(false)}
+          onSuccess={() => {
+            setShowUrlModal(false)
+            queryClient.invalidateQueries({ queryKey: ['knowledge-documents'] })
+            queryClient.invalidateQueries({ queryKey: ['knowledge-stats'] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// Helper Components
+
+function SourceIcon({ source }: { source: string }) {
+  switch (source) {
+    case 'UPLOAD':
+      return <FileText className="h-5 w-5 text-blue-500" />
+    case 'URL':
+      return <Globe className="h-5 w-5 text-green-500" />
+    case 'IMAGE':
+      return <Image className="h-5 w-5 text-purple-500" />
+    default:
+      return <FileText className="h-5 w-5 text-muted-foreground" />
+  }
+}
+
+function VectorTypeIcon({ type }: { type: string }) {
+  switch (type) {
+    case 'project':
+    case 'project-list':
+      return <FolderGit2 className="h-5 w-5 text-blue-500" />
+    case 'agent':
+      return <Bot className="h-5 w-5 text-purple-500" />
+    case 'conversation':
+      return <MessageSquare className="h-5 w-5 text-green-500" />
+    case 'document':
+      return <FileText className="h-5 w-5 text-orange-500" />
+    case 'url':
+      return <Globe className="h-5 w-5 text-cyan-500" />
+    case 'image':
+      return <Image className="h-5 w-5 text-pink-500" />
+    default:
+      return <FileCode className="h-5 w-5 text-muted-foreground" />
+  }
+}
+
+function StatusBadge({ status }: { status: KnowledgeDocument['status'] }) {
+  const styles = {
+    PENDING: 'bg-yellow-500/10 text-yellow-500',
+    PROCESSING: 'bg-blue-500/10 text-blue-500',
+    INDEXED: 'bg-green-500/10 text-green-500',
+    OUTDATED: 'bg-orange-500/10 text-orange-500',
+    ERROR: 'bg-red-500/10 text-red-500',
+  }
+
+  const icons = {
+    PENDING: <Clock className="h-3 w-3" />,
+    PROCESSING: <Loader2 className="h-3 w-3 animate-spin" />,
+    INDEXED: <CheckCircle className="h-3 w-3" />,
+    OUTDATED: <RefreshCw className="h-3 w-3" />,
+    ERROR: <AlertCircle className="h-3 w-3" />,
+  }
+
+  return (
+    <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs', styles[status])}>
+      {icons[status]}
+      {status}
+    </span>
+  )
+}
+
+function InfoItem({ label, value, children }: { label: string; value?: string; children?: React.ReactNode }) {
+  return (
+    <div className="p-3 rounded-lg bg-muted/50">
+      <p className="text-sm text-muted-foreground">{label}</p>
+      {children || <p className="font-medium mt-0.5">{value}</p>}
+    </div>
+  )
+}
+
+// Upload Modal
+function UploadModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [title, setTitle] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
+  const [isUploading, setIsUploading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const droppedFile = e.dataTransfer.files[0]
+    if (droppedFile) {
+      setFile(droppedFile)
+      if (!title) setTitle(droppedFile.name.replace(/\.[^/.]+$/, ''))
+    }
+  }, [title])
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0]
+    if (selectedFile) {
+      setFile(selectedFile)
+      if (!title) setTitle(selectedFile.name.replace(/\.[^/.]+$/, ''))
+    }
+  }
+
+  const handleUpload = async () => {
+    if (!file) return
+    setIsUploading(true)
+    setError(null)
+    try {
+      await knowledgeApi.uploadFile(file, title || undefined)
+      onSuccess()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-xl p-6 w-full max-w-lg">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold">Upload Document</h2>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-lg">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Drop Zone */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={cn(
+            "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors",
+            isDragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+          )}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            onChange={handleFileSelect}
+            className="hidden"
+            accept=".txt,.md,.html,.pdf,.doc,.docx,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp"
+          />
+          {file ? (
+            <div className="flex items-center gap-3 justify-center">
+              <FileText className="h-8 w-8 text-primary" />
+              <div className="text-left">
+                <p className="font-medium">{file.name}</p>
+                <p className="text-sm text-muted-foreground">
+                  {(file.size / 1024).toFixed(1)} KB
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <p className="font-medium">Drop file here or click to browse</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Supports: TXT, MD, HTML, PDF, DOC, DOCX, XLSX, XLS, CSV, Images
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* Title Input */}
+        <div className="mt-4">
+          <label className="block text-sm font-medium mb-2">Title (optional)</label>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Document title"
+            className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50"
+          />
+        </div>
+
+        {error && (
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-500">{error}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleUpload}
+            disabled={!file || isUploading}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          >
+            {isUploading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+            Upload
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// URL Modal
+function UrlModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
+  const [url, setUrl] = useState('')
+  const [title, setTitle] = useState('')
+  const [autoSync, setAutoSync] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async () => {
+    if (!url.trim()) return
+    setIsLoading(true)
+    setError(null)
+    try {
+      await knowledgeApi.fetchUrl(url, title || undefined, undefined, autoSync)
+      onSuccess()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch URL')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-xl p-6 w-full max-w-lg">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold">Add URL</h2>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-lg">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">URL *</label>
+            <input
+              type="url"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://example.com/docs/..."
+              className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Title (optional)</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Document title"
+              className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoSync}
+              onChange={(e) => setAutoSync(e.target.checked)}
+              className="w-4 h-4 rounded"
+            />
+            <span className="text-sm">Auto-sync (re-fetch periodically)</span>
+          </label>
+        </div>
+
+        {error && (
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-500">{error}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!url.trim() || isLoading}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Link className="h-4 w-4" />
+            )}
+            Add URL
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default Knowledge

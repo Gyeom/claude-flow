@@ -20,6 +20,7 @@ import ai.claudeflow.core.plugin.PluginManager
 import ai.claudeflow.core.plugin.GitLabPlugin
 import ai.claudeflow.core.plugin.GitHubPlugin
 import ai.claudeflow.core.plugin.JiraPlugin
+import ai.claudeflow.core.plugin.ConfluencePlugin
 import ai.claudeflow.core.storage.Storage
 import ai.claudeflow.executor.ClaudeExecutor
 import kotlinx.coroutines.runBlocking
@@ -42,7 +43,8 @@ data class ClaudeFlowProperties(
     val ollama: OllamaProperties = OllamaProperties(),
     val gitlab: GitLabProperties = GitLabProperties(),
     val github: GitHubProperties = GitHubProperties(),
-    val jira: JiraProperties = JiraProperties()
+    val jira: JiraProperties = JiraProperties(),
+    val confluence: ConfluenceProperties = ConfluenceProperties()
 )
 
 data class SlackProperties(
@@ -92,6 +94,12 @@ data class JiraProperties(
 
 data class GitHubProperties(
     val token: String = ""
+)
+
+data class ConfluenceProperties(
+    val url: String = "",
+    val email: String = "",
+    val apiToken: String = ""
 )
 
 @Configuration
@@ -352,6 +360,17 @@ class ClaudeFlowConfiguration(
             )
             manager.register(JiraPlugin(), jiraConfig)
             logger.info { "Jira plugin registered: ${properties.jira.url}" }
+        }
+
+        // Confluence 플러그인 등록
+        if (properties.confluence.url.isNotEmpty() && properties.confluence.email.isNotEmpty()) {
+            val confluenceConfig = mapOf(
+                "CONFLUENCE_URL" to properties.confluence.url,
+                "CONFLUENCE_EMAIL" to properties.confluence.email,
+                "CONFLUENCE_API_TOKEN" to properties.confluence.apiToken
+            )
+            manager.register(ConfluencePlugin(), confluenceConfig)
+            logger.info { "Confluence plugin registered: ${properties.confluence.url}" }
         }
 
         // 플러그인 초기화

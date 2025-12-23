@@ -36,10 +36,22 @@ class KnowledgeVectorService(
         const val DEFAULT_MIN_SCORE = 0.5f
         const val DEFAULT_TOP_K = 5
 
-        // 문서 타입
+        // 데이터 출처 (source)
+        const val SOURCE_SYSTEM = "system"  // 시스템 자동 인덱싱
+        const val SOURCE_USER = "user"      // 사용자 업로드
+
+        // 문서 타입 (type)
         const val TYPE_PROJECT = "project"
         const val TYPE_PROJECT_LIST = "project-list"
         const val TYPE_AGENT = "agent"
+        const val TYPE_CONVERSATION = "conversation"
+        const val TYPE_DOCUMENT = "document"
+        const val TYPE_URL = "url"
+        const val TYPE_IMAGE = "image"
+
+        // 하위 호환성을 위해 유지 (deprecated)
+        @Deprecated("Use TYPE_DOCUMENT instead", ReplaceWith("TYPE_DOCUMENT"))
+        const val TYPE_KNOWLEDGE = "document"
         const val TYPE_DOMAIN = "domain"
     }
 
@@ -105,6 +117,7 @@ class KnowledgeVectorService(
     }
 
     private fun createIndexes() {
+        createFieldIndex("source", "keyword")
         createFieldIndex("type", "keyword")
         createFieldIndex("doc_id", "keyword")
         createFieldIndex("updated_at", "datetime")
@@ -143,6 +156,7 @@ class KnowledgeVectorService(
 
             val pointId = generatePointId("${TYPE_PROJECT}:${project.id}")
             val payload = mapOf(
+                "source" to SOURCE_SYSTEM,
                 "type" to TYPE_PROJECT,
                 "doc_id" to project.id,
                 "name" to project.name,
@@ -173,6 +187,7 @@ class KnowledgeVectorService(
 
             val pointId = generatePointId(TYPE_PROJECT_LIST)
             val payload = mapOf(
+                "source" to SOURCE_SYSTEM,
                 "type" to TYPE_PROJECT_LIST,
                 "doc_id" to "project-list",
                 "project_count" to projects.size,
@@ -283,6 +298,231 @@ class KnowledgeVectorService(
      */
     fun searchProjects(query: String, topK: Int = 3, minScore: Float = 0.4f): List<KnowledgeResult> {
         return search(query, listOf(TYPE_PROJECT, TYPE_PROJECT_LIST), topK, minScore)
+    }
+
+    // ==================== Knowledge Document Methods ====================
+
+    /**
+     * 지식 문서 인덱싱
+     *
+     * @param id 문서 ID
+     * @param content 문서 내용
+     * @param embedding 임베딩 벡터
+     * @param metadata 추가 메타데이터
+     * @param source 데이터 출처 (SOURCE_SYSTEM 또는 SOURCE_USER)
+     * @param type 문서 타입 (TYPE_DOCUMENT, TYPE_URL, TYPE_IMAGE 등)
+     */
+    fun indexKnowledge(
+        id: String,
+        content: String,
+        embedding: FloatArray,
+        metadata: Map<String, Any>,
+        source: String = SOURCE_USER,
+        type: String = TYPE_DOCUMENT
+    ): Boolean {
+        return try {
+            val pointId = generatePointId(id)
+            val payload = mapOf(
+                "source" to source,
+                "type" to type,
+                "doc_id" to id,
+                "content" to content,
+                "updated_at" to Instant.now().toString()
+            ) + metadata
+
+            upsertPoint(pointId, embedding, payload)
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to index knowledge: $id" }
+            false
+        }
+    }
+
+    /**
+     * 문서 ID로 모든 청크 삭제
+     */
+    fun deleteByDocumentId(documentId: String): Boolean {
+        return try {
+            // 문서 ID로 시작하는 모든 포인트 삭제
+            val requestBody = mapOf(
+                "filter" to mapOf(
+                    "must" to listOf(
+                        mapOf(
+                            "key" to "documentId",
+                            "match" to mapOf("value" to documentId)
+                        )
+                    )
+                )
+            )
+
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("$qdrantUrl/collections/$collectionName/points/delete"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
+                .timeout(Duration.ofSeconds(10))
+                .build()
+
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            val success = response.statusCode() in 200..299
+            if (success) {
+                logger.info { "Deleted knowledge chunks for document: $documentId" }
+            }
+            success
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to delete knowledge by document ID: $documentId" }
+            false
+        }
+    }
+
+    /**
+     * 임베딩으로 지식 검색
+     */
+    fun searchKnowledge(
+        embedding: FloatArray,
+        topK: Int = DEFAULT_TOP_K,
+        filter: Map<String, Any>? = null
+    ): List<ai.claudeflow.core.knowledge.SearchResult> {
+        return try {
+            val filterConditions = mutableListOf<Map<String, Any>>(
+                mapOf("key" to "type", "match" to mapOf("value" to TYPE_KNOWLEDGE))
+            )
+
+            filter?.forEach { (key, value) ->
+                if (value is String && value.isNotBlank()) {
+                    filterConditions.add(
+                        mapOf("key" to key, "match" to mapOf("value" to value))
+                    )
+                }
+            }
+
+            val requestBody = mapOf(
+                "vector" to embedding.toList(),
+                "limit" to topK,
+                "with_payload" to true,
+                "filter" to mapOf("must" to filterConditions)
+            )
+
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("$qdrantUrl/collections/$collectionName/points/search"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
+                .timeout(Duration.ofSeconds(10))
+                .build()
+
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+
+            if (response.statusCode() == 200) {
+                parseKnowledgeSearchResults(response.body())
+            } else {
+                logger.warn { "Knowledge search failed: ${response.body()}" }
+                emptyList()
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to search knowledge" }
+            emptyList()
+        }
+    }
+
+    private fun parseKnowledgeSearchResults(responseBody: String): List<ai.claudeflow.core.knowledge.SearchResult> {
+        val result: Map<String, Any> = objectMapper.readValue(responseBody)
+        @Suppress("UNCHECKED_CAST")
+        val hits = result["result"] as? List<Map<String, Any>> ?: return emptyList()
+
+        return hits.mapNotNull { hit ->
+            @Suppress("UNCHECKED_CAST")
+            val payload = hit["payload"] as? Map<String, Any> ?: return@mapNotNull null
+            val score = (hit["score"] as? Number)?.toFloat() ?: return@mapNotNull null
+
+            ai.claudeflow.core.knowledge.SearchResult(
+                documentId = payload["documentId"] as? String ?: "",
+                documentTitle = payload["documentTitle"] as? String ?: "",
+                content = payload["content"] as? String ?: "",
+                score = score,
+                metadata = payload.filterKeys { it !in listOf("type", "doc_id", "content", "documentId", "documentTitle") }
+            )
+        }
+    }
+
+    /**
+     * 전체 데이터 조회 (source별 그룹화)
+     */
+    fun getAllBySource(): Map<String, List<KnowledgeResult>> {
+        return try {
+            val allPoints = scrollAllPoints()
+            allPoints.groupBy { it.metadata["source"] as? String ?: SOURCE_SYSTEM }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get all knowledge by source" }
+            emptyMap()
+        }
+    }
+
+    /**
+     * source별 통계 조회
+     */
+    fun getStatsBySource(): Map<String, Map<String, Int>> {
+        return try {
+            val allPoints = scrollAllPoints()
+            allPoints.groupBy { it.metadata["source"] as? String ?: SOURCE_SYSTEM }
+                .mapValues { (_, results) ->
+                    results.groupBy { it.type }
+                        .mapValues { it.value.size }
+                }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get stats by source" }
+            emptyMap()
+        }
+    }
+
+    /**
+     * 모든 포인트 스크롤
+     */
+    private fun scrollAllPoints(limit: Int = 100): List<KnowledgeResult> {
+        val results = mutableListOf<KnowledgeResult>()
+        var offset: Any? = null
+
+        do {
+            val requestBody = buildMap {
+                put("limit", limit)
+                put("with_payload", true)
+                offset?.let { put("offset", it) }
+            }
+
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("$qdrantUrl/collections/$collectionName/points/scroll"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
+                .timeout(Duration.ofSeconds(10))
+                .build()
+
+            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+
+            if (response.statusCode() == 200) {
+                val result: Map<String, Any> = objectMapper.readValue(response.body())
+                @Suppress("UNCHECKED_CAST")
+                val scrollResult = result["result"] as? Map<String, Any> ?: break
+                @Suppress("UNCHECKED_CAST")
+                val points = scrollResult["points"] as? List<Map<String, Any>> ?: break
+
+                points.forEach { point ->
+                    @Suppress("UNCHECKED_CAST")
+                    val payload = point["payload"] as? Map<String, Any> ?: return@forEach
+                    results.add(
+                        KnowledgeResult(
+                            type = payload["type"] as? String ?: "",
+                            docId = payload["doc_id"] as? String ?: "",
+                            content = payload["content"] as? String ?: "",
+                            metadata = payload,
+                            score = 1.0f
+                        )
+                    )
+                }
+
+                offset = scrollResult["next_page_offset"]
+            } else {
+                break
+            }
+        } while (offset != null)
+
+        return results
     }
 
     /**

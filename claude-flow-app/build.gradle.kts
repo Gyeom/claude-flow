@@ -33,6 +33,9 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
     // 프로젝트 루트에서 실행되도록 설정
     workingDir = rootProject.projectDir
 
+    // JVM 메모리 설정 (대용량 파일 처리용)
+    jvmArgs = listOf("-Xmx2g", "-Xms512m")
+
     // docker-compose/.env 파일에서 환경 변수 자동 로드
     doFirst {
         val envFile = file("${rootProject.projectDir}/docker-compose/.env")

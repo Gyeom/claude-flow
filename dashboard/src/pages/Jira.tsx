@@ -350,7 +350,7 @@ export function Jira() {
   })
 
   // Manual JQL search
-  const { data: manualSearchResults, isLoading: manualSearchLoading, refetch: executeSearch } = useQuery({
+  const { data: manualSearchResults, isLoading: manualSearchLoading } = useQuery({
     queryKey: ['jira', 'manual-search', searchJql],
     queryFn: () => jiraApi.searchIssues(searchJql),
     enabled: !!searchJql,

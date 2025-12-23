@@ -14,6 +14,7 @@ const History = lazy(() => import('@/pages/History').then(m => ({ default: m.His
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
 const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
 const Jira = lazy(() => import('@/pages/Jira').then(m => ({ default: m.Jira })))
+const Knowledge = lazy(() => import('@/pages/Knowledge').then(m => ({ default: m.Knowledge })))
 const Logs = lazy(() => import('@/pages/Logs'))
 const Settings = lazy(() => import('@/pages/Settings'))
 
@@ -83,6 +84,11 @@ function App() {
         <Route path="/jira" element={
           <Suspense fallback={<PageLoader />}>
             <Jira />
+          </Suspense>
+        } />
+        <Route path="/knowledge" element={
+          <Suspense fallback={<PageLoader />}>
+            <Knowledge />
           </Suspense>
         } />
         <Route path="/logs" element={

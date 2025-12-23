@@ -40,6 +40,22 @@ services:
       - claude-flow-network
     restart: unless-stopped
 
+  # React 대시보드
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: ../docker-compose/Dockerfile.dashboard
+    container_name: claude-flow-dashboard
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://claude-flow:8080
+    depends_on:
+      - claude-flow
+    networks:
+      - claude-flow-network
+    restart: unless-stopped
+
   # n8n 워크플로우 엔진
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest

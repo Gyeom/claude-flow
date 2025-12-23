@@ -16,9 +16,9 @@ Claude Flow 대시보드(React)를 관리합니다.
 **status (기본)**
 ```bash
 # 대시보드 프로세스 확인
-lsof -i :3000 | head -3
+lsof -i :5173 | head -3
 # 접속 테스트
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ 2>/dev/null || echo "Not running"
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5173/ 2>/dev/null || echo "Not running"
 ```
 
 **start**
@@ -28,14 +28,14 @@ cd "$PROJECT_ROOT/dashboard"
 npm run dev &
 ```
 - 백그라운드로 실행
-- 약 3초 후 http://localhost:3000 에서 접속 가능
+- 약 3초 후 http://localhost:5173 에서 접속 가능
 - Vite dev server 사용
 
 **stop**
 ```bash
 pkill -f "vite"
 # 또는
-lsof -ti:3000 | xargs kill -9
+lsof -ti:5173 | xargs kill -9
 ```
 
 **build**

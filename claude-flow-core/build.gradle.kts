@@ -19,8 +19,17 @@ dependencies {
     // Caffeine Cache (high-performance in-memory cache)
     implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
 
+    // Jsoup for HTML parsing (Confluence)
+    implementation("org.jsoup:jsoup:1.17.2")
+
+    // Apache POI for Excel parsing (.xlsx)
+    implementation("org.apache.poi:poi-ooxml:5.2.5")
+
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+
+    // Retry with Exponential Backoff
+    implementation("com.michael-bull.kotlin-retry:kotlin-retry:2.0.2")
 
     // Logging
     implementation("io.github.microutils:kotlin-logging-jvm:3.0.5")

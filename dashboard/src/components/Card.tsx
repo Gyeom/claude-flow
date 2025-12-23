@@ -44,6 +44,7 @@ export function CardHeader({ title, description, action }: CardHeaderProps) {
 interface StatCardProps {
   title: string
   value: string | number
+  subtitle?: string
   change?: {
     value: number
     label: string
@@ -53,13 +54,16 @@ interface StatCardProps {
   className?: string
 }
 
-export function StatCard({ title, value, change, icon, trend, className }: StatCardProps) {
+export function StatCard({ title, value, subtitle, change, icon, trend, className }: StatCardProps) {
   return (
     <Card className={cn('relative overflow-hidden', className)}>
       <div className="flex items-start justify-between">
         <div className="space-y-2">
           <p className="text-sm font-medium text-muted-foreground">{title}</p>
           <p className="text-3xl font-bold tracking-tight">{value}</p>
+          {subtitle && (
+            <p className="text-xs text-muted-foreground truncate max-w-[180px]">{subtitle}</p>
+          )}
           {change && (
             <p
               className={cn(
@@ -69,8 +73,8 @@ export function StatCard({ title, value, change, icon, trend, className }: StatC
                 trend === 'neutral' && 'text-muted-foreground'
               )}
             >
-              {trend === 'up' && '�'}
-              {trend === 'down' && '�'}
+              {trend === 'up' && '↑'}
+              {trend === 'down' && '↓'}
               {change.value > 0 ? '+' : ''}{change.value}% {change.label}
             </p>
           )}

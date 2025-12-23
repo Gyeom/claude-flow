@@ -34,6 +34,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     val projectAliasRepository: ProjectAliasRepository
     val sessionRepository: SessionRepository
     val sessionMessageRepository: SessionMessageRepository
+    val knowledgeRepository: KnowledgeRepository
 
     init {
         Class.forName("org.sqlite.JDBC")
@@ -53,6 +54,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         projectAliasRepository = ProjectAliasRepository(this)
         sessionRepository = SessionRepository(this)
         sessionMessageRepository = SessionMessageRepository(this)
+        knowledgeRepository = KnowledgeRepository(this)
 
         // 기본 프로젝트 및 Aliases 초기화
         initDefaultProjectsAndAliases()
