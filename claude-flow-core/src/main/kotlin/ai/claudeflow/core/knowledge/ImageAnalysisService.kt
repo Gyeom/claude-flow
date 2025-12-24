@@ -9,18 +9,20 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
-import java.util.Base64
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
 /**
  * 이미지 분석 서비스
  *
- * Claude Vision API를 사용하여 이미지에서 UI 스펙, 기능 명세 등을 추출합니다.
+ * Claude Code CLI를 사용하여 이미지에서 UI 스펙, 기능 명세 등을 추출합니다.
  * Figma 스크린샷, 와이어프레임, 디자인 시안 등을 분석할 수 있습니다.
+ *
+ * @param claudeExecutor Claude Code CLI 실행기 (선택적, null이면 API 직접 호출 시도)
  */
 class ImageAnalysisService(
-    private val apiKey: String = System.getenv("ANTHROPIC_API_KEY") ?: "",
+    private val claudeExecutor: Any? = null,  // ClaudeExecutor 타입 (순환 의존 방지)
     private val model: String = "claude-sonnet-4-20250514"
 ) {
     private val mapper = jacksonObjectMapper()
@@ -29,9 +31,6 @@ class ImageAnalysisService(
         .build()
 
     companion object {
-        private const val API_URL = "https://api.anthropic.com/v1/messages"
-        private const val API_VERSION = "2023-06-01"
-
         // 지원하는 이미지 타입
         val SUPPORTED_TYPES = setOf(
             "image/png", "image/jpeg", "image/gif", "image/webp"
@@ -39,40 +38,33 @@ class ImageAnalysisService(
 
         // 분석 프롬프트
         private val ANALYSIS_PROMPT = """
-            이 이미지를 분석하여 다음 정보를 JSON 형식으로 추출해주세요:
+이 이미지를 분석하여 다음 정보를 JSON 형식으로 추출해주세요:
 
-            1. **description**: 이미지에 대한 전체적인 설명 (한국어)
-            2. **extractedText**: 이미지에서 읽을 수 있는 모든 텍스트 (OCR)
-            3. **uiComponents**: UI 컴포넌트 목록
-               - name: 컴포넌트 이름 (예: "로그인 버튼")
-               - type: 컴포넌트 타입 (Button, Input, Modal, Card, Table, etc.)
-               - description: 컴포넌트 설명
-               - properties: 속성 (color, size, state 등)
-            4. **designSpecs**: 디자인 스펙
-               - colors: 사용된 색상 목록 (가능하면 hex 코드)
-               - fonts: 폰트 스타일
-               - spacing: 여백/간격 패턴
-               - layout: 레이아웃 구조 설명
-            5. **functionalSpecs**: 기능 명세 목록
-               - 화면에서 파악할 수 있는 기능 요구사항
-               - 사용자 인터랙션 흐름
-               - 비즈니스 로직 힌트
+1. **description**: 이미지에 대한 전체적인 설명 (한국어, 2-3문장)
+2. **extractedText**: 이미지에서 읽을 수 있는 주요 텍스트 (OCR)
+3. **uiComponents**: 주요 UI 컴포넌트 목록 (최대 5개)
+   - name: 컴포넌트 이름
+   - type: 컴포넌트 타입 (Button, Input, Modal, Card, Table, etc.)
+4. **functionalSpecs**: 기능 명세 목록 (최대 5개)
+   - 화면에서 파악할 수 있는 기능 요구사항
 
-            JSON 형식으로만 응답해주세요:
-            ```json
-            {
-              "description": "...",
-              "extractedText": "...",
-              "uiComponents": [...],
-              "designSpecs": {...},
-              "functionalSpecs": [...]
-            }
-            ```
+JSON 형식으로만 응답해주세요 (마크다운 코드 블록 없이):
+{
+  "description": "...",
+  "extractedText": "...",
+  "uiComponents": [{"name": "...", "type": "..."}],
+  "functionalSpecs": ["..."]
+}
         """.trimIndent()
+
+        // 임시 파일 디렉토리
+        private val TEMP_DIR = File(System.getProperty("java.io.tmpdir"), "claude-flow-images").apply {
+            if (!exists()) mkdirs()
+        }
     }
 
     /**
-     * 이미지 파일 분석
+     * 이미지 파일 분석 (Claude Code CLI 사용)
      */
     suspend fun analyzeImage(imageFile: File): ImageAnalysisResult {
         require(imageFile.exists()) { "Image file not found: ${imageFile.absolutePath}" }
@@ -80,147 +72,169 @@ class ImageAnalysisService(
         val mimeType = detectMimeType(imageFile)
         require(mimeType in SUPPORTED_TYPES) { "Unsupported image type: $mimeType" }
 
-        val base64Data = Base64.getEncoder().encodeToString(imageFile.readBytes())
-        return analyzeBase64Image(base64Data, mimeType)
-    }
+        logger.info { "Analyzing image with Claude Code CLI: ${imageFile.name}" }
 
-    /**
-     * Base64 인코딩된 이미지 분석
-     */
-    suspend fun analyzeBase64Image(
-        base64Data: String,
-        mimeType: String
-    ): ImageAnalysisResult {
-        require(apiKey.isNotBlank()) { "ANTHROPIC_API_KEY is not set" }
-
-        logger.info { "Analyzing image with Claude Vision (type: $mimeType)" }
-
-        val requestBody = mapOf(
-            "model" to model,
-            "max_tokens" to 4096,
-            "messages" to listOf(
-                mapOf(
-                    "role" to "user",
-                    "content" to listOf(
-                        mapOf(
-                            "type" to "image",
-                            "source" to mapOf(
-                                "type" to "base64",
-                                "media_type" to mimeType,
-                                "data" to base64Data
-                            )
-                        ),
-                        mapOf(
-                            "type" to "text",
-                            "text" to ANALYSIS_PROMPT
-                        )
-                    )
-                )
-            )
-        )
-
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(API_URL))
-            .header("Content-Type", "application/json")
-            .header("x-api-key", apiKey)
-            .header("anthropic-version", API_VERSION)
-            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(requestBody)))
-            .timeout(Duration.ofSeconds(120))
-            .build()
-
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-
-        if (response.statusCode() !in 200..299) {
-            throw RuntimeException("Claude API error: ${response.statusCode()} - ${response.body()}")
-        }
-
-        return parseAnalysisResponse(response.body())
+        return executeClaudeAnalysis(imageFile.absolutePath)
     }
 
     /**
      * URL 이미지 분석
+     *
+     * 1. URL에서 이미지를 다운로드하여 임시 파일로 저장
+     * 2. Claude Code CLI로 분석
+     * 3. 임시 파일 삭제
      */
     suspend fun analyzeImageUrl(imageUrl: String): ImageAnalysisResult {
-        require(apiKey.isNotBlank()) { "ANTHROPIC_API_KEY is not set" }
+        logger.info { "Downloading image from URL: ${imageUrl.take(80)}..." }
 
-        logger.info { "Analyzing image from URL: $imageUrl" }
+        // 임시 파일로 다운로드
+        val tempFile = downloadImage(imageUrl)
 
-        val requestBody = mapOf(
-            "model" to model,
-            "max_tokens" to 4096,
-            "messages" to listOf(
-                mapOf(
-                    "role" to "user",
-                    "content" to listOf(
-                        mapOf(
-                            "type" to "image",
-                            "source" to mapOf(
-                                "type" to "url",
-                                "url" to imageUrl
-                            )
-                        ),
-                        mapOf(
-                            "type" to "text",
-                            "text" to ANALYSIS_PROMPT
-                        )
-                    )
-                )
-            )
-        )
+        return try {
+            executeClaudeAnalysis(tempFile.absolutePath)
+        } finally {
+            // 임시 파일 정리
+            tempFile.delete()
+        }
+    }
 
+    /**
+     * 이미지 다운로드
+     */
+    private fun downloadImage(imageUrl: String): File {
         val request = HttpRequest.newBuilder()
-            .uri(URI.create(API_URL))
-            .header("Content-Type", "application/json")
-            .header("x-api-key", apiKey)
-            .header("anthropic-version", API_VERSION)
-            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(requestBody)))
-            .timeout(Duration.ofSeconds(120))
+            .uri(URI.create(imageUrl))
+            .timeout(Duration.ofSeconds(60))
+            .GET()
             .build()
 
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray())
 
         if (response.statusCode() !in 200..299) {
-            throw RuntimeException("Claude API error: ${response.statusCode()} - ${response.body()}")
+            throw RuntimeException("Failed to download image: ${response.statusCode()}")
         }
 
-        return parseAnalysisResponse(response.body())
+        // 확장자 추출
+        val extension = when {
+            imageUrl.contains(".png", ignoreCase = true) -> "png"
+            imageUrl.contains(".jpg", ignoreCase = true) || imageUrl.contains(".jpeg", ignoreCase = true) -> "jpg"
+            imageUrl.contains(".gif", ignoreCase = true) -> "gif"
+            imageUrl.contains(".webp", ignoreCase = true) -> "webp"
+            else -> "png"
+        }
+
+        val tempFile = File(TEMP_DIR, "figma_${UUID.randomUUID()}.$extension")
+        tempFile.writeBytes(response.body())
+
+        logger.info { "Downloaded image to: ${tempFile.absolutePath} (${tempFile.length()} bytes)" }
+        return tempFile
+    }
+
+    /**
+     * Claude Code CLI로 이미지 분석 실행
+     */
+    private suspend fun executeClaudeAnalysis(imagePath: String): ImageAnalysisResult {
+        // ClaudeExecutor가 주입되지 않은 경우 기본 결과 반환
+        if (claudeExecutor == null) {
+            logger.warn { "ClaudeExecutor not available, returning basic result" }
+            return ImageAnalysisResult(
+                description = "이미지 분석 서비스가 설정되지 않았습니다.",
+                extractedText = null,
+                uiComponents = emptyList(),
+                designSpecs = null,
+                functionalSpecs = emptyList(),
+                rawAnalysis = ""
+            )
+        }
+
+        val prompt = """
+다음 이미지 파일을 읽고 분석해주세요: $imagePath
+
+$ANALYSIS_PROMPT
+        """.trimIndent()
+
+        try {
+            // 리플렉션으로 ClaudeExecutor.execute 호출 (순환 의존 방지)
+            val executeMethod = claudeExecutor.javaClass.getMethod("execute", Class.forName("ai.claudeflow.executor.ExecutionRequest"))
+            val requestClass = Class.forName("ai.claudeflow.executor.ExecutionRequest")
+            val requestConstructor = requestClass.constructors.first()
+
+            // ExecutionRequest 생성 (prompt만 필수, 나머지 기본값)
+            val request = requestConstructor.newInstance(
+                prompt,      // prompt
+                null,        // systemPrompt
+                null,        // workingDirectory
+                "sonnet",    // model
+                3,           // maxTurns
+                listOf("Read"),  // allowedTools - Read만 허용
+                null,        // deniedTools
+                null,        // config
+                null,        // userId
+                null,        // threadTs
+                false,       // forceNewSession
+                "image-analysis"  // agentId
+            )
+
+            val result = executeMethod.invoke(claudeExecutor, request)
+
+            // ExecutionResult에서 결과 추출
+            val statusMethod = result.javaClass.getMethod("getStatus")
+            val resultMethod = result.javaClass.getMethod("getResult")
+
+            val status = statusMethod.invoke(result).toString()
+            val responseText = resultMethod.invoke(result) as? String ?: ""
+
+            if (status != "SUCCESS") {
+                logger.error { "Claude Code CLI analysis failed: $status" }
+                return ImageAnalysisResult(
+                    description = "이미지 분석 실패",
+                    extractedText = null,
+                    uiComponents = emptyList(),
+                    designSpecs = null,
+                    functionalSpecs = emptyList(),
+                    rawAnalysis = responseText
+                )
+            }
+
+            return parseAnalysisResponse(responseText)
+
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to execute Claude Code CLI analysis" }
+            return ImageAnalysisResult(
+                description = "이미지 분석 중 오류 발생: ${e.message}",
+                extractedText = null,
+                uiComponents = emptyList(),
+                designSpecs = null,
+                functionalSpecs = emptyList(),
+                rawAnalysis = ""
+            )
+        }
     }
 
     /**
      * Claude 응답 파싱
      */
-    private fun parseAnalysisResponse(responseBody: String): ImageAnalysisResult {
-        val response: Map<String, Any> = mapper.readValue(responseBody)
-
-        @Suppress("UNCHECKED_CAST")
-        val content = response["content"] as? List<Map<String, Any>>
-            ?: throw RuntimeException("Invalid response format")
-
-        val textContent = content.find { it["type"] == "text" }
-            ?: throw RuntimeException("No text content in response")
-
-        val rawText = textContent["text"] as String
-
+    private fun parseAnalysisResponse(responseText: String): ImageAnalysisResult {
         // JSON 블록 추출
-        val jsonMatch = Regex("```json\\s*([\\s\\S]*?)\\s*```").find(rawText)
-            ?: Regex("\\{[\\s\\S]*\\}").find(rawText)
+        val jsonMatch = Regex("```json\\s*([\\s\\S]*?)\\s*```").find(responseText)
+            ?: Regex("\\{[\\s\\S]*?\\}").find(responseText)
 
         val jsonString = jsonMatch?.groupValues?.getOrNull(1)
             ?: jsonMatch?.value
-            ?: rawText
+            ?: responseText
 
         return try {
             val parsed: Map<String, Any> = mapper.readValue(jsonString)
-            mapToAnalysisResult(parsed, rawText)
+            mapToAnalysisResult(parsed, responseText)
         } catch (e: Exception) {
             logger.warn(e) { "Failed to parse JSON, using raw text" }
             ImageAnalysisResult(
-                description = rawText.take(500),
+                description = responseText.take(500),
                 extractedText = null,
                 uiComponents = emptyList(),
                 designSpecs = null,
                 functionalSpecs = emptyList(),
-                rawAnalysis = rawText
+                rawAnalysis = responseText
             )
         }
     }

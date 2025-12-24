@@ -35,11 +35,13 @@ private val logger = KotlinLogging.logger {}
  * 100+ 언어 지원 (한국어 포함)
  *
  * 배치 처리 권장 설정 (하드웨어별):
- * - RTX 4090: batchSize=256
- * - Apple M2 Max: batchSize=128
- * - Apple M2 Pro: batchSize=64
- * - Apple M1/M2: batchSize=32
- * - CPU-only: batchSize=8~16
+ * - RTX 4090: batchSize=64~128
+ * - Apple M2 Max: batchSize=32~64
+ * - Apple M2 Pro: batchSize=16~32
+ * - Apple M1/M2: batchSize=8~16
+ * - CPU-only: batchSize=4~8
+ *
+ * ⚠️ 대용량 청크(1000자+)는 배치 크기를 줄여야 안정적
  *
  * @see <a href="https://docs.ollama.com/capabilities/embeddings">Ollama Embeddings</a>
  */
@@ -47,11 +49,12 @@ class EmbeddingService(
     private val ollamaUrl: String = "http://localhost:11434",
     private val model: String = "qwen3-embedding:0.6b",
     private val cache: EmbeddingCache? = null,
-    private val timeoutSeconds: Long = 120,  // M2 Pro 기준 적절한 타임아웃
-    private val defaultBatchSize: Int = 64   // M2 Pro 최적화
+    private val timeoutSeconds: Long = 300,  // 대용량 배치용 5분 타임아웃
+    private val defaultBatchSize: Int = 16   // 안정성 우선 (64→16, 대용량 청크 대응)
 ) {
     private val httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(30))
+        .connectTimeout(Duration.ofSeconds(60))   // 연결 타임아웃 증가
+        .version(HttpClient.Version.HTTP_1_1)     // HTTP/2 문제 방지
         .build()
     private val objectMapper = jacksonObjectMapper()
 
@@ -191,9 +194,10 @@ class EmbeddingService(
             } catch (e: Exception) {
                 logger.warn { "Batch $batchNum failed after retries: ${e.message}, falling back to smaller batches..." }
 
-                // 실패 시 더 작은 배치로 재시도
-                val smallerBatchSize = maxOf(1, batchSize / 4)
+                // 점진적 폴백: batchSize/2 → batchSize/4 → 개별 처리
+                val smallerBatchSize = maxOf(1, batchSize / 2)
                 val smallerBatches = batch.chunked(smallerBatchSize)
+                logger.info { "Falling back to batch size $smallerBatchSize (${smallerBatches.size} sub-batches)" }
 
                 smallerBatches.forEachIndexed { idx, smallBatch ->
                     try {
@@ -310,6 +314,11 @@ class EmbeddingService(
 
     /**
      * Ollama /api/embed 배치 요청
+     *
+     * 타임아웃은 배치 크기에 따라 동적 조절:
+     * - 기본: timeoutSeconds (5분)
+     * - 텍스트당 추가: 10초
+     * - 최대: 10분
      */
     private fun requestBatchEmbedding(texts: List<String>): List<FloatArray?> {
         val requestBody = mapOf(
@@ -319,11 +328,14 @@ class EmbeddingService(
             "truncate" to true     // 컨텍스트 초과 시 자동 자르기
         )
 
+        // 배치 크기에 비례한 동적 타임아웃 (최소 60초, 최대 10분)
+        val dynamicTimeout = minOf(600L, maxOf(60L, timeoutSeconds / 5 + texts.size * 10L))
+
         val request = HttpRequest.newBuilder()
             .uri(URI.create("$ollamaUrl/api/embed"))
             .header("Content-Type", "application/json")
             .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
-            .timeout(Duration.ofSeconds(timeoutSeconds))
+            .timeout(Duration.ofSeconds(dynamicTimeout))
             .build()
 
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())

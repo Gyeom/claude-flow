@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   BookOpen,
@@ -17,6 +17,7 @@ import {
   Plus,
   X,
   ChevronRight,
+  ChevronDown,
   Database,
   Layers,
   Server,
@@ -25,6 +26,8 @@ import {
   Bot,
   MessageSquare,
   FileCode,
+  Figma,
+  ExternalLink,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { knowledgeApi, type KnowledgeDocument, type KnowledgeSearchResult, type VectorItem } from '@/lib/api'
@@ -40,6 +43,7 @@ export function Knowledge() {
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[] | null>(null)
   const [isSearching, setIsSearching] = useState(false)
   const [activeTab, setActiveTab] = useState<'vectors' | 'documents'>('vectors')
+  const [expandedDocuments, setExpandedDocuments] = useState<Set<string>>(new Set())
 
   // Fetch documents
   const { data: documents, isLoading } = useQuery({
@@ -58,6 +62,47 @@ export function Knowledge() {
     queryKey: ['knowledge-vectors'],
     queryFn: () => knowledgeApi.getVectorData(),
   })
+
+  // Group user documents by documentId for hierarchical display
+  const groupedUserDocuments = useMemo(() => {
+    if (!vectorData?.user) return new Map<string, { title: string; chunks: VectorItem[] }>()
+
+    const groups = new Map<string, { title: string; chunks: VectorItem[] }>()
+
+    for (const item of vectorData.user) {
+      const documentId = (item.metadata?.documentId as string) || item.docId
+      const documentTitle = (item.metadata?.documentTitle as string) || item.name || documentId
+
+      if (!groups.has(documentId)) {
+        groups.set(documentId, { title: documentTitle, chunks: [] })
+      }
+      groups.get(documentId)!.chunks.push(item)
+    }
+
+    // Sort chunks by chunkIndex within each document
+    for (const group of groups.values()) {
+      group.chunks.sort((a, b) => {
+        const indexA = (a.metadata?.chunkIndex as number) ?? 0
+        const indexB = (b.metadata?.chunkIndex as number) ?? 0
+        return indexA - indexB
+      })
+    }
+
+    return groups
+  }, [vectorData?.user])
+
+  // Toggle document expansion
+  const toggleDocumentExpansion = useCallback((documentId: string) => {
+    setExpandedDocuments(prev => {
+      const next = new Set(prev)
+      if (next.has(documentId)) {
+        next.delete(documentId)
+      } else {
+        next.add(documentId)
+      }
+      return next
+    })
+  }, [])
 
   // Sync mutation
   const syncMutation = useMutation({
@@ -314,50 +359,88 @@ export function Knowledge() {
             </Card>
           </div>
 
-          {/* User Documents */}
+          {/* User Documents - Hierarchical View */}
           <div className="lg:col-span-1">
             <Card>
               <CardHeader
                 title="User Documents"
                 action={
                   <span className="text-xs text-muted-foreground">
-                    {vectorData?.user.length || 0} items
+                    {groupedUserDocuments.size} docs · {vectorData?.user.length || 0} chunks
                   </span>
                 }
               />
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              <div className="space-y-1 max-h-[400px] overflow-y-auto">
                 {isLoadingVectors ? (
                   <div className="flex justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                   </div>
                 ) : (
-                  vectorData?.user.map((item) => (
-                    <button
-                      key={item.docId}
-                      onClick={() => setSelectedVectorItem(item)}
-                      className={cn(
-                        "w-full p-3 rounded-lg text-left transition-colors",
-                        selectedVectorItem?.docId === item.docId
-                          ? "bg-primary/10 border border-primary/30"
-                          : "bg-muted/50 hover:bg-muted"
-                      )}
-                    >
-                      <div className="flex items-start gap-3">
-                        <VectorTypeIcon type={item.type} />
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{item.name || item.docId}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs bg-green-500/10 text-green-500 px-2 py-0.5 rounded">
-                              {item.type}
-                            </span>
+                  Array.from(groupedUserDocuments.entries()).map(([documentId, { title, chunks }]) => {
+                    const isExpanded = expandedDocuments.has(documentId)
+                    return (
+                      <div key={documentId} className="rounded-lg overflow-hidden">
+                        {/* Document Header */}
+                        <button
+                          onClick={() => toggleDocumentExpansion(documentId)}
+                          className={cn(
+                            "w-full p-3 text-left transition-colors",
+                            isExpanded
+                              ? "bg-primary/10 border-l-2 border-primary"
+                              : "bg-muted/50 hover:bg-muted"
+                          )}
+                        >
+                          <div className="flex items-start gap-3">
+                            {isExpanded ? (
+                              <ChevronDown className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                            )}
+                            <FileText className="h-5 w-5 text-orange-500 shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">{title}</p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className="text-xs bg-green-500/10 text-green-500 px-2 py-0.5 rounded">
+                                  {chunks.length} chunks
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        </button>
+
+                        {/* Chunks (Collapsible) */}
+                        {isExpanded && (
+                          <div className="pl-6 pr-2 pb-2 bg-muted/30 space-y-1">
+                            {chunks.map((chunk, idx) => {
+                              const chunkIndex = (chunk.metadata?.chunkIndex as number) ?? idx
+                              return (
+                                <button
+                                  key={chunk.docId}
+                                  onClick={() => setSelectedVectorItem(chunk)}
+                                  className={cn(
+                                    "w-full p-2 rounded-md text-left transition-colors text-sm",
+                                    selectedVectorItem?.docId === chunk.docId
+                                      ? "bg-primary/15 border border-primary/30"
+                                      : "hover:bg-muted"
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <Layers className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    <span className="text-muted-foreground">Chunk {chunkIndex}</span>
+                                    <span className="text-xs text-muted-foreground/60 truncate flex-1">
+                                      {chunk.content.substring(0, 50)}...
+                                    </span>
+                                  </div>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
-                    </button>
-                  ))
+                    )
+                  })
                 )}
-                {!isLoadingVectors && (vectorData?.user.length || 0) === 0 && (
+                {!isLoadingVectors && groupedUserDocuments.size === 0 && (
                   <p className="text-center text-muted-foreground py-8">
                     No user documents yet.
                   </p>
@@ -385,10 +468,13 @@ export function Knowledge() {
                       value={new Date(selectedVectorItem.updatedAt).toLocaleString()}
                     />
                   )}
-                  <div className="p-3 rounded-lg bg-muted/50 max-h-48 overflow-y-auto">
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                      {selectedVectorItem.content.substring(0, 500)}
-                      {selectedVectorItem.content.length > 500 && '...'}
+
+                  {/* Figma Frame Image Preview */}
+                  <FigmaImagePreview content={selectedVectorItem.content} />
+
+                  <div className="p-3 rounded-lg bg-muted/50 max-h-[400px] overflow-y-auto">
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
+                      {selectedVectorItem.content}
                     </p>
                   </div>
                 </div>
@@ -565,6 +651,8 @@ function SourceIcon({ source }: { source: string }) {
       return <Globe className="h-5 w-5 text-green-500" />
     case 'IMAGE':
       return <Image className="h-5 w-5 text-purple-500" />
+    case 'FIGMA':
+      return <Figma className="h-5 w-5 text-[#F24E1E]" />
     default:
       return <FileText className="h-5 w-5 text-muted-foreground" />
   }
@@ -585,6 +673,8 @@ function VectorTypeIcon({ type }: { type: string }) {
       return <Globe className="h-5 w-5 text-cyan-500" />
     case 'image':
       return <Image className="h-5 w-5 text-pink-500" />
+    case 'figma':
+      return <Figma className="h-5 w-5 text-[#F24E1E]" />
     default:
       return <FileCode className="h-5 w-5 text-muted-foreground" />
   }
@@ -620,6 +710,125 @@ function InfoItem({ label, value, children }: { label: string; value?: string; c
     <div className="p-3 rounded-lg bg-muted/50">
       <p className="text-sm text-muted-foreground">{label}</p>
       {children || <p className="font-medium mt-0.5">{value}</p>}
+    </div>
+  )
+}
+
+/**
+ * Figma Frame 이미지 미리보기 컴포넌트
+ * 콘텐츠에서 "Image: https://..." 패턴을 찾아 이미지 미리보기 표시
+ */
+function FigmaImagePreview({ content }: { content: string }) {
+  // Extract ALL frames with images using matchAll (global flag)
+  const frames = useMemo(() => {
+    const result: { name: string; imageUrl: string }[] = []
+
+    // Split content by Frame headers (## FrameName)
+    const frameRegex = /^##\s+(.+)$/gm
+    const imageRegex = /Image:\s*(https:\/\/[^\s\n]+)/gi
+
+    // Find all frame names
+    const frameMatches = [...content.matchAll(frameRegex)]
+    // Find all image URLs
+    const imageMatches = [...content.matchAll(imageRegex)]
+
+    // Pair them up (frames and images appear in same order)
+    const maxPairs = Math.min(frameMatches.length, imageMatches.length)
+    for (let i = 0; i < maxPairs; i++) {
+      result.push({
+        name: frameMatches[i][1],
+        imageUrl: imageMatches[i][1]
+      })
+    }
+
+    return result
+  }, [content])
+
+  const [loadingStates, setLoadingStates] = useState<Record<number, boolean>>({})
+  const [errorStates, setErrorStates] = useState<Record<number, boolean>>({})
+  const [selectedIndex, setSelectedIndex] = useState(0)
+
+  if (frames.length === 0) return null
+
+  const selectedFrame = frames[selectedIndex]
+
+  return (
+    <div className="rounded-lg overflow-hidden border border-border bg-muted/30">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Figma className="h-4 w-4 text-[#F24E1E]" />
+          <span className="text-sm font-medium">{selectedFrame.name || 'Frame Preview'}</span>
+          {frames.length > 1 && (
+            <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+              {selectedIndex + 1} / {frames.length}
+            </span>
+          )}
+        </div>
+        <a
+          href={selectedFrame.imageUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1 text-xs text-primary hover:underline"
+        >
+          <ExternalLink className="h-3 w-3" />
+          Open
+        </a>
+      </div>
+
+      {/* Main Image */}
+      <div className="relative aspect-video bg-muted/50">
+        {loadingStates[selectedIndex] !== false && !errorStates[selectedIndex] && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {errorStates[selectedIndex] ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-muted-foreground">
+            <AlertCircle className="h-8 w-8 mb-2" />
+            <p className="text-sm">Failed to load image</p>
+            <p className="text-xs mt-1">(Figma image URLs expire after 30 days)</p>
+          </div>
+        ) : (
+          <img
+            src={selectedFrame.imageUrl}
+            alt={selectedFrame.name || 'Figma Frame'}
+            className={cn(
+              "w-full h-full object-contain transition-opacity",
+              loadingStates[selectedIndex] === false ? "opacity-100" : "opacity-0"
+            )}
+            onLoad={() => setLoadingStates(prev => ({ ...prev, [selectedIndex]: false }))}
+            onError={() => {
+              setLoadingStates(prev => ({ ...prev, [selectedIndex]: false }))
+              setErrorStates(prev => ({ ...prev, [selectedIndex]: true }))
+            }}
+          />
+        )}
+      </div>
+
+      {/* Thumbnail Strip (if multiple frames) */}
+      {frames.length > 1 && (
+        <div className="flex gap-1 p-2 overflow-x-auto bg-muted/30 border-t border-border">
+          {frames.map((frame, idx) => (
+            <button
+              key={idx}
+              onClick={() => setSelectedIndex(idx)}
+              className={cn(
+                "flex-shrink-0 w-16 h-12 rounded border-2 overflow-hidden transition-all",
+                selectedIndex === idx
+                  ? "border-primary ring-1 ring-primary"
+                  : "border-transparent opacity-60 hover:opacity-100"
+              )}
+            >
+              <img
+                src={frame.imageUrl}
+                alt={frame.name}
+                className="w-full h-full object-cover"
+              />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

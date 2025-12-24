@@ -1,5 +1,7 @@
 package ai.claudeflow.core.plugin
 
+import ai.claudeflow.core.clarification.ClarificationRequest
+import ai.claudeflow.core.clarification.ClarificationOption
 import ai.claudeflow.core.rag.CodeChunk
 import ai.claudeflow.core.rag.CodeKnowledgeService
 import ai.claudeflow.core.rag.ReviewGuideline
@@ -103,12 +105,197 @@ class GitLabPlugin(
 
     private lateinit var baseUrl: String
     private lateinit var token: String
+    private var group: String? = null
+    private val projectCache = mutableMapOf<String, String>()
 
     override suspend fun initialize(config: Map<String, String>) {
         super.initialize(config)
         baseUrl = requireConfig("GITLAB_URL").trimEnd('/')
         token = requireConfig("GITLAB_TOKEN")
-        logger.info { "GitLab plugin initialized: $baseUrl" }
+        group = config["GITLAB_GROUP"]  // 선택: sirius/ccds 형태
+        logger.info { "GitLab plugin initialized: $baseUrl (group: ${group ?: "none"})" }
+    }
+
+    /**
+     * MR 검색 결과 타입
+     */
+    sealed class MrSearchResult {
+        data class Found(val project: String, val mr: Map<String, Any>) : MrSearchResult()
+        data class MultipleFound(val matches: List<MrMatch>) : MrSearchResult()
+        object NotFound : MrSearchResult()
+    }
+
+    data class MrMatch(
+        val project: String,
+        val iid: Int,
+        val title: String,
+        val author: String,
+        val state: String,
+        val webUrl: String
+    )
+
+    /**
+     * MR 번호로 프로젝트 찾기 (전역 검색)
+     *
+     * @param mrIid MR 번호 (프로젝트 내 IID)
+     * @return MrSearchResult - Found, MultipleFound, 또는 NotFound
+     */
+    private fun findProjectByMrIid(mrIid: Int): MrSearchResult {
+        try {
+            // 그룹이 설정되어 있으면 그룹 내에서 검색
+            val searchUrl = if (group != null) {
+                "$baseUrl/api/v4/groups/${java.net.URLEncoder.encode(group, "UTF-8")}/merge_requests?state=all&per_page=100"
+            } else {
+                "$baseUrl/api/v4/merge_requests?state=all&scope=all&per_page=100"
+            }
+
+            val response = apiGet(searchUrl)
+            val allMrs = mapper.readValue<List<Map<String, Any>>>(response)
+
+            // 해당 IID를 가진 MR 찾기
+            val matchingMrs = allMrs.filter { mr ->
+                (mr["iid"] as? Number)?.toInt() == mrIid
+            }
+
+            return when {
+                matchingMrs.isEmpty() -> {
+                    logger.warn { "MR !$mrIid not found in ${group ?: "accessible projects"}" }
+                    MrSearchResult.NotFound
+                }
+                matchingMrs.size == 1 -> {
+                    val mr = matchingMrs[0]
+                    val webUrl = mr["web_url"] as? String ?: ""
+                    val projectPath = webUrl
+                        .substringAfter("$baseUrl/")
+                        .substringBefore("/-/merge_requests")
+                    logger.info { "Found MR !$mrIid in project: $projectPath" }
+                    MrSearchResult.Found(projectPath, mr)
+                }
+                else -> {
+                    // 여러 프로젝트에서 같은 MR 번호 발견 - 사용자에게 선택 요청
+                    val matches = matchingMrs.map { mr ->
+                        val webUrl = mr["web_url"] as? String ?: ""
+                        val projectPath = webUrl.substringAfter("$baseUrl/").substringBefore("/-/merge_requests")
+                        MrMatch(
+                            project = projectPath,
+                            iid = (mr["iid"] as? Number)?.toInt() ?: mrIid,
+                            title = mr["title"] as? String ?: "",
+                            author = (mr["author"] as? Map<*, *>)?.get("name") as? String ?: "unknown",
+                            state = mr["state"] as? String ?: "",
+                            webUrl = webUrl
+                        )
+                    }
+                    logger.info { "Multiple MRs found with IID $mrIid: ${matches.map { it.project }}" }
+                    MrSearchResult.MultipleFound(matches)
+                }
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to search for MR !$mrIid" }
+            return MrSearchResult.NotFound
+        }
+    }
+
+    /**
+     * 여러 MR 중 선택을 요청하는 응답 생성
+     * ClarificationRequest 패턴 사용
+     */
+    private fun createMrSelectionRequest(mrIid: Int, matches: List<MrMatch>): PluginResult {
+        val clarification = ClarificationRequest(
+            header = "MR 선택",
+            question = "MR !$mrIid 가 여러 프로젝트에서 발견되었습니다. 어떤 MR을 처리할까요?",
+            options = matches.take(4).map { match ->
+                ClarificationOption(
+                    label = "${match.project.substringAfterLast("/")} !${match.iid}",
+                    description = "${match.title.take(40)} (by ${match.author}, ${match.state})",
+                    value = match.project,
+                    metadata = mapOf(
+                        "project" to match.project,
+                        "iid" to match.iid,
+                        "webUrl" to match.webUrl
+                    )
+                )
+            },
+            context = mapOf("mrIid" to mrIid, "matchCount" to matches.size)
+        )
+
+        return PluginResult(
+            success = false,
+            message = clarification.toSlackMessage(),
+            data = mapOf(
+                "clarificationRequired" to true,
+                "clarification" to clarification.toAskUserQuestionFormat(),
+                "matches" to matches.map { mapOf(
+                    "project" to it.project,
+                    "iid" to it.iid,
+                    "title" to it.title,
+                    "author" to it.author,
+                    "webUrl" to it.webUrl
+                )}
+            )
+        )
+    }
+
+    /**
+     * 프로젝트 이름을 GitLab API용 full path로 변환
+     *
+     * - 이미 full path(/포함)이면 그대로 반환
+     * - 숫자(프로젝트 ID)면 그대로 반환
+     * - 단순 이름이면 GitLab API로 검색 후 캐싱
+     */
+    private fun resolveProject(project: String): String {
+        // 이미 full path이거나 숫자(프로젝트 ID)이면 그대로 사용
+        if (project.contains("/") || project.all { it.isDigit() }) {
+            return project
+        }
+
+        // 캐시 확인
+        projectCache[project]?.let { return it }
+
+        // GitLab API로 프로젝트 검색
+        try {
+            val searchUrl = "$baseUrl/api/v4/projects?search=$project&per_page=20"
+            val response = apiGet(searchUrl)
+            val projects = mapper.readValue<List<Map<String, Any>>>(response)
+
+            // 그룹 설정이 있으면 필터링
+            val filtered = if (group != null) {
+                projects.filter { p ->
+                    val path = p["path_with_namespace"] as? String ?: ""
+                    path.startsWith("$group/")
+                }
+            } else {
+                projects
+            }
+
+            // 정확히 일치하는 프로젝트 찾기
+            val exactMatch = filtered.find { p ->
+                val name = p["name"] as? String ?: ""
+                val path = p["path"] as? String ?: ""
+                name.equals(project, ignoreCase = true) || path.equals(project, ignoreCase = true)
+            }
+
+            val resolvedPath = if (exactMatch != null) {
+                exactMatch["path_with_namespace"] as? String ?: project
+            } else if (filtered.size == 1) {
+                // 필터링 결과가 1개면 사용
+                filtered[0]["path_with_namespace"] as? String ?: project
+            } else if (filtered.isNotEmpty()) {
+                // 여러 개면 첫 번째 사용 (경고 로그)
+                val firstPath = filtered[0]["path_with_namespace"] as? String ?: project
+                logger.warn { "Multiple projects found for '$project': ${filtered.map { it["path_with_namespace"] }}. Using: $firstPath" }
+                firstPath
+            } else {
+                logger.warn { "Project not found: $project. Using as-is." }
+                project
+            }
+
+            projectCache[project] = resolvedPath
+            logger.info { "Resolved project '$project' -> '$resolvedPath'" }
+            return resolvedPath
+        } catch (e: Exception) {
+            logger.warn { "Failed to resolve project '$project': ${e.message}. Using as-is." }
+            return project
+        }
     }
 
     override fun shouldHandle(message: String): Boolean {
@@ -124,10 +311,26 @@ class GitLabPlugin(
         return when (command) {
             // 조회 명령어
             "mr-list" -> listMergeRequests(args["project"] as? String)
-            "mr-info" -> getMergeRequestInfo(
-                args["project"] as? String ?: return PluginResult(false, error = "Project required"),
-                args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
-            )
+            "mr-info" -> {
+                val mrId = args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+                val project = args["project"] as? String ?: run {
+                    // 프로젝트 없으면 MR 번호로 검색
+                    when (val result = findProjectByMrIid(mrId)) {
+                        is MrSearchResult.Found -> {
+                            logger.info { "Auto-resolved project for MR !$mrId: ${result.project}" }
+                            result.project
+                        }
+                        is MrSearchResult.MultipleFound -> {
+                            // 여러 개 발견 - 사용자에게 선택 요청
+                            return createMrSelectionRequest(mrId, result.matches)
+                        }
+                        is MrSearchResult.NotFound -> {
+                            return PluginResult(false, error = "MR !$mrId not found. Please specify project: /gitlab mr-info <project> $mrId")
+                        }
+                    }
+                }
+                getMergeRequestInfo(project, mrId)
+            }
             "pipeline-status" -> getPipelineStatus(
                 args["project"] as? String ?: return PluginResult(false, error = "Project required")
             )
@@ -155,10 +358,26 @@ class GitLabPlugin(
                 args["description"] as? String
             )
             // RAG 기반 명령어
-            "mr-review" -> reviewMergeRequestWithRag(
-                args["project"] as? String ?: return PluginResult(false, error = "Project required"),
-                args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
-            )
+            "mr-review" -> {
+                val mrId = args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+                val project = args["project"] as? String ?: run {
+                    // 프로젝트 없으면 MR 번호로 검색
+                    when (val result = findProjectByMrIid(mrId)) {
+                        is MrSearchResult.Found -> {
+                            logger.info { "Auto-resolved project for MR !$mrId: ${result.project}" }
+                            result.project
+                        }
+                        is MrSearchResult.MultipleFound -> {
+                            // 여러 개 발견 - 사용자에게 선택 요청
+                            return createMrSelectionRequest(mrId, result.matches)
+                        }
+                        is MrSearchResult.NotFound -> {
+                            return PluginResult(false, error = "MR !$mrId not found. Please specify project: /gitlab mr-review <project> $mrId")
+                        }
+                    }
+                }
+                reviewMergeRequestWithRag(project, mrId)
+            }
             "index-project" -> indexProjectToKnowledgeBase(
                 args["project"] as? String ?: return PluginResult(false, error = "Project required"),
                 args["branch"] as? String ?: "main"
@@ -814,7 +1033,11 @@ class GitLabPlugin(
         return response.body()
     }
 
+    /**
+     * 프로젝트 이름을 resolve 후 URL 인코딩
+     */
     private fun encodeProject(project: String): String {
-        return java.net.URLEncoder.encode(project, "UTF-8")
+        val resolved = resolveProject(project)
+        return java.net.URLEncoder.encode(resolved, "UTF-8")
     }
 }

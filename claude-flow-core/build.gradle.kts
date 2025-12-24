@@ -22,6 +22,9 @@ dependencies {
     // Jsoup for HTML parsing (Confluence)
     implementation("org.jsoup:jsoup:1.17.2")
 
+    // JSON parsing (Figma API)
+    implementation("org.json:json:20240303")
+
     // Apache POI for Excel parsing (.xlsx)
     implementation("org.apache.poi:poi-ooxml:5.2.5")
 

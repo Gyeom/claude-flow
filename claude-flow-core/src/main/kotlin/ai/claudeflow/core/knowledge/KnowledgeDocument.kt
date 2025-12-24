@@ -34,6 +34,7 @@ enum class SourceType {
     URL,            // 웹 URL
     CONFLUENCE,     // Confluence 페이지
     NOTION,         // Notion 페이지
+    FIGMA,          // Figma 디자인 파일
     IMAGE           // 이미지 (Figma 스크린샷 등)
 }
 
@@ -123,4 +124,33 @@ data class UrlFetchRequest(
     val projectId: String? = null,
     val autoSync: Boolean = false,          // 자동 동기화 여부
     val syncIntervalHours: Int = 24         // 동기화 주기
+)
+
+/**
+ * Figma Frame 정보
+ *
+ * Figma 파일에서 추출한 각 Frame의 정보를 담습니다.
+ * Vision AI 분석을 통해 시각적 컨텍스트까지 포함합니다.
+ */
+data class FigmaFrame(
+    val id: String,                         // Figma node ID (예: "11250-126016")
+    val name: String,                       // Frame 이름 (예: "대시보드_홈")
+    val imageUrl: String?,                  // 렌더링된 이미지 URL (30일간 유효)
+    val description: String?,               // Vision AI가 생성한 설명
+    val textContent: String?,               // 추출된 텍스트 콘텐츠
+    val uiComponents: List<String> = emptyList(),  // 감지된 UI 컴포넌트
+    val functionalSpecs: List<String> = emptyList() // 기능 명세
+)
+
+/**
+ * Figma 분석 결과
+ *
+ * Frame 이미지 + Vision 분석 + 모든 텍스트 노드 추출을 결합합니다.
+ */
+data class FigmaAnalysisResult(
+    val fileName: String,
+    val lastModified: String,
+    val frames: List<FigmaFrame>,
+    val comments: List<String> = emptyList(),
+    val allTextContent: String = ""  // 모든 TEXT 노드에서 추출한 콘텐츠 (검색용)
 )

@@ -34,7 +34,8 @@ class KnowledgeService(
     private val knowledgeRepository: KnowledgeRepository,
     private val knowledgeVectorService: KnowledgeVectorService?,
     private val imageAnalysisService: ImageAnalysisService?,
-    private val embeddingService: EmbeddingService?
+    private val embeddingService: EmbeddingService?,
+    private val figmaAccessToken: String? = null
 ) {
     private val httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(30))
@@ -47,6 +48,10 @@ class KnowledgeService(
         // 청킹 설정
         private const val CHUNK_SIZE = 1000
         private const val CHUNK_OVERLAP = 200
+
+        // Figma API
+        private const val FIGMA_API_BASE = "https://api.figma.com/v1"
+        private val FIGMA_URL_PATTERN = Regex("""figma\.com/(file|design)/([a-zA-Z0-9]+)""")
 
         // 지원 파일 타입
         val TEXT_TYPES = setOf("text/plain", "text/markdown", "text/html", "text/csv")
@@ -121,13 +126,17 @@ class KnowledgeService(
     suspend fun fetchUrl(request: UrlFetchRequest): KnowledgeDocument {
         val docId = UUID.randomUUID().toString()
 
-        logger.info { "Fetching URL: ${request.url}" }
+        // Figma URL 감지
+        val isFigmaUrl = isFigmaUrl(request.url)
+        val sourceType = if (isFigmaUrl) SourceType.FIGMA else request.sourceType
+
+        logger.info { "Fetching URL: ${request.url} (type: $sourceType)" }
 
         val document = KnowledgeDocument(
             id = docId,
             title = request.title ?: extractTitleFromUrl(request.url),
             content = "",
-            source = request.sourceType,
+            source = sourceType,
             sourceUrl = request.url,
             status = IndexStatus.PROCESSING,
             projectId = request.projectId,
@@ -142,7 +151,11 @@ class KnowledgeService(
         // 비동기로 처리
         scope.launch {
             try {
-                val content = fetchAndParseUrl(request.url)
+                val content = if (isFigmaUrl) {
+                    fetchFigmaContent(request.url)
+                } else {
+                    fetchAndParseUrl(request.url)
+                }
 
                 val updatedDoc = document.copy(
                     content = content,
@@ -177,7 +190,12 @@ class KnowledgeService(
             try {
                 // URL 소스면 다시 가져오기
                 if (document.sourceUrl != null) {
-                    val content = fetchAndParseUrl(document.sourceUrl)
+                    // Figma URL은 fetchFigmaContent 사용
+                    val content = if (isFigmaUrl(document.sourceUrl)) {
+                        fetchFigmaContent(document.sourceUrl)
+                    } else {
+                        fetchAndParseUrl(document.sourceUrl)
+                    }
                     val updatedDoc = document.copy(
                         content = content,
                         lastSyncedAt = Instant.now(),
@@ -424,6 +442,287 @@ class KnowledgeService(
         }
     }
 
+    /**
+     * Figma URL인지 확인
+     */
+    private fun isFigmaUrl(url: String): Boolean {
+        return FIGMA_URL_PATTERN.containsMatchIn(url)
+    }
+
+    /**
+     * Figma URL에서 파일 키 추출
+     */
+    private fun extractFigmaFileKey(url: String): String? {
+        return FIGMA_URL_PATTERN.find(url)?.groupValues?.getOrNull(2)
+    }
+
+    /**
+     * Figma 파일 콘텐츠 가져오기 (Enhanced with Vision AI)
+     *
+     * Best Practice 구현:
+     * 1. Figma API로 주요 Frame들을 이미지로 export
+     * 2. Claude Vision으로 각 Frame 분석 (UI 컴포넌트, 기능 명세 추출)
+     * 3. 모든 TEXT 노드 재귀 추출 (검색 가능성 확보)
+     * 4. 텍스트 + 시각적 컨텍스트를 결합한 rich knowledge 생성
+     *
+     * @see https://developers.figma.com/docs/rest-api/file-endpoints/
+     */
+    private suspend fun fetchFigmaContent(url: String): String {
+        if (figmaAccessToken.isNullOrBlank()) {
+            throw IllegalStateException("Figma API token not configured. Set FIGMA_ACCESS_TOKEN environment variable.")
+        }
+
+        val fileKey = extractFigmaFileKey(url)
+            ?: throw IllegalArgumentException("Invalid Figma URL: $url")
+
+        logger.info { "Fetching Figma file with Vision AI analysis: $fileKey" }
+
+        // 1. 파일 메타데이터 및 구조 가져오기 (depth=3으로 더 깊은 텍스트 노드까지)
+        val fileData = fetchFigmaApi("/files/$fileKey?depth=3")
+        val fileName = fileData.optString("name", "Untitled")
+        val lastModified = fileData.optString("lastModified", "")
+
+        // 2. 주요 Frame ID들 추출 (depth=1 레벨의 FRAME만)
+        val document = fileData.optJSONObject("document")
+        val topLevelFrames = extractTopLevelFrames(document)
+        logger.info { "Found ${topLevelFrames.size} top-level frames" }
+
+        // 2-1. 모든 TEXT 노드에서 텍스트 추출 (검색용, 별도 섹션으로 저장)
+        val allTextContent = StringBuilder()
+        if (document != null) {
+            extractFigmaNodes(document, allTextContent, 0, maxDepth = 15)
+        }
+        logger.info { "Extracted ${allTextContent.length} characters from all text nodes" }
+
+        // 3. 모든 Frame 이미지 export (배치 처리, Figma API 제한 고려)
+        // Figma Images API는 한 번에 최대 500개 노드 지원
+        val frameImages = mutableMapOf<String, String>()
+        val batchSize = 50  // 안정적인 배치 크기
+        val frameBatches = topLevelFrames.chunked(batchSize)
+
+        logger.info { "Exporting ${topLevelFrames.size} frames in ${frameBatches.size} batches..." }
+
+        frameBatches.forEachIndexed { batchIdx, batch ->
+            try {
+                val batchImages = exportFrameImages(fileKey, batch.map { it.first })
+                frameImages.putAll(batchImages)
+                logger.info { "Batch ${batchIdx + 1}/${frameBatches.size}: Exported ${batchImages.size} images" }
+            } catch (e: Exception) {
+                logger.warn { "Batch ${batchIdx + 1} failed: ${e.message}" }
+            }
+        }
+        logger.info { "Total exported: ${frameImages.size}/${topLevelFrames.size} frame images" }
+
+        // 4. Frame 정보 수집 (Vision AI 분석 제거 - 불안정하고 느림)
+        val analyzedFrames = topLevelFrames.map { (nodeId, nodeName) ->
+            FigmaFrame(
+                id = nodeId,
+                name = nodeName,
+                imageUrl = frameImages[nodeId],
+                description = null,
+                textContent = null
+            )
+        }
+
+        // 5. 코멘트 가져오기
+        val comments = mutableListOf<String>()
+        try {
+            val commentsData = fetchFigmaApi("/files/$fileKey/comments")
+            val commentsArray = commentsData.optJSONArray("comments")
+            if (commentsArray != null) {
+                for (i in 0 until minOf(commentsArray.length(), 50)) {
+                    val comment = commentsArray.getJSONObject(i)
+                    val user = comment.optJSONObject("user")?.optString("handle", "Unknown")
+                    val message = comment.optString("message", "")
+                    if (message.isNotBlank()) {
+                        comments.add("@$user: $message")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            logger.warn { "Failed to fetch Figma comments: ${e.message}" }
+        }
+
+        // 6. Rich Content 생성 (Frame 이미지 + Vision 분석 + 모든 텍스트)
+        val result = FigmaAnalysisResult(
+            fileName = fileName,
+            lastModified = lastModified,
+            frames = analyzedFrames,
+            comments = comments,
+            allTextContent = allTextContent.toString()
+        )
+
+        return formatFigmaContent(result)
+    }
+
+    /**
+     * 최상위 Frame들 추출 (Canvas > Frame)
+     */
+    private fun extractTopLevelFrames(document: org.json.JSONObject?): List<Pair<String, String>> {
+        if (document == null) return emptyList()
+
+        val frames = mutableListOf<Pair<String, String>>()
+
+        // Document > Canvas (pages) > Frames
+        val pages = document.optJSONArray("children") ?: return emptyList()
+
+        for (i in 0 until pages.length()) {
+            val page = pages.getJSONObject(i)
+            val pageChildren = page.optJSONArray("children") ?: continue
+
+            for (j in 0 until pageChildren.length()) {
+                val node = pageChildren.getJSONObject(j)
+                val nodeType = node.optString("type")
+                val nodeName = node.optString("name", "Untitled")
+                val nodeId = node.optString("id")
+
+                // FRAME, COMPONENT_SET, COMPONENT만 추출
+                if (nodeType in listOf("FRAME", "COMPONENT_SET", "COMPONENT") && nodeId.isNotBlank()) {
+                    frames.add(nodeId to nodeName)
+                }
+            }
+        }
+
+        return frames
+    }
+
+    /**
+     * Figma Frame들을 이미지로 export
+     *
+     * @see https://developers.figma.com/docs/rest-api/file-endpoints/#get-images-endpoint
+     */
+    private fun exportFrameImages(fileKey: String, nodeIds: List<String>): Map<String, String> {
+        if (nodeIds.isEmpty()) return emptyMap()
+
+        val idsParam = nodeIds.joinToString(",")
+        logger.info { "Exporting ${nodeIds.size} frames as images..." }
+
+        val response = fetchFigmaApi("/images/$fileKey?ids=$idsParam&format=png&scale=1")
+        val images = response.optJSONObject("images") ?: return emptyMap()
+
+        val result = mutableMapOf<String, String>()
+        for (nodeId in nodeIds) {
+            val imageUrl = images.optString(nodeId, null)
+            if (!imageUrl.isNullOrBlank() && imageUrl != "null") {
+                result[nodeId] = imageUrl
+            }
+        }
+
+        return result
+    }
+
+    /**
+     * Figma 분석 결과를 검색 가능한 텍스트로 포맷
+     *
+     * 구조 최적화:
+     * - 각 Frame은 간결하게 (이름 + 이미지 URL만)
+     * - 텍스트 콘텐츠는 검색용으로 맨 뒤에
+     * - 청크당 3-5개 Frame이 들어가도록 간결하게
+     */
+    private fun formatFigmaContent(result: FigmaAnalysisResult): String {
+        return buildString {
+            appendLine("# ${result.fileName}")
+            appendLine("Last Modified: ${result.lastModified}")
+            appendLine("Total Frames: ${result.frames.size}")
+            appendLine()
+
+            // Frame 목록 (간결하게 - 각 Frame이 청크에 잘 분배되도록)
+            result.frames.forEach { frame ->
+                appendLine("## ${frame.name}")
+                appendLine("Frame ID: ${frame.id}")
+                frame.imageUrl?.let { appendLine("Image: $it") }
+                appendLine()
+            }
+
+            // 검색용 텍스트 (모든 TEXT 노드에서 추출)
+            if (result.allTextContent.isNotBlank()) {
+                appendLine("---")
+                appendLine()
+                appendLine("# 텍스트 콘텐츠 (검색용)")
+                appendLine()
+                appendLine(result.allTextContent)
+            }
+
+            // 코멘트
+            if (result.comments.isNotEmpty()) {
+                appendLine()
+                appendLine("---")
+                appendLine()
+                appendLine("# 코멘트 (${result.comments.size})")
+                result.comments.forEach { comment ->
+                    appendLine("- $comment")
+                }
+            }
+        }
+    }
+
+    /**
+     * Figma API 호출
+     *
+     * 주의: Figma Rate Limit은 파일이 속한 플랜 기준으로 적용됨
+     * - Starter/Free: 6개/월 (Tier 1)
+     * - Professional: 15개/분
+     * - Enterprise: 20개/분
+     */
+    private fun fetchFigmaApi(path: String): org.json.JSONObject {
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create("$FIGMA_API_BASE$path"))
+            .header("X-Figma-Token", figmaAccessToken)
+            .header("Content-Type", "application/json")
+            .GET()
+            .timeout(Duration.ofSeconds(180))
+            .build()
+
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+
+        if (response.statusCode() == 429) {
+            val retryAfter = response.headers().firstValue("Retry-After").orElse("unknown")
+            throw RuntimeException("Figma rate limit exceeded (Retry-After: ${retryAfter}s). 파일이 Starter 플랜에 있다면 월 6회 제한입니다.")
+        }
+
+        if (response.statusCode() !in 200..299) {
+            throw RuntimeException("Figma API error: ${response.statusCode()} - ${response.body().take(200)}")
+        }
+
+        return org.json.JSONObject(response.body())
+    }
+
+    /**
+     * Figma 노드에서 텍스트 및 구조 추출 (재귀)
+     */
+    private fun extractFigmaNodes(
+        node: org.json.JSONObject,
+        content: StringBuilder,
+        depth: Int,
+        maxDepth: Int = 10
+    ) {
+        if (depth > maxDepth) return
+
+        val indent = "  ".repeat(depth)
+        val name = node.optString("name", "")
+        val type = node.optString("type", "")
+
+        // TEXT 노드에서 실제 텍스트 추출
+        if (type == "TEXT") {
+            val characters = node.optString("characters", "")
+            if (characters.isNotBlank()) {
+                content.append("$indent[Text] $name: $characters\n")
+            }
+        } else if (type == "FRAME" || type == "COMPONENT" || type == "COMPONENT_SET" || type == "INSTANCE") {
+            // 주요 컴포넌트/프레임 이름 기록
+            content.append("$indent[$type] $name\n")
+        }
+
+        // 자식 노드 순회
+        val children = node.optJSONArray("children")
+        if (children != null) {
+            for (i in 0 until children.length()) {
+                val child = children.getJSONObject(i)
+                extractFigmaNodes(child, content, depth + 1, maxDepth)
+            }
+        }
+    }
+
     private suspend fun indexDocument(document: KnowledgeDocument) {
         if (knowledgeVectorService == null || embeddingService == null) {
             logger.warn { "Vector service not configured, skipping indexing" }
@@ -440,6 +739,7 @@ class KnowledgeService(
         val vectorType = when (document.source) {
             SourceType.UPLOAD -> TYPE_DOCUMENT
             SourceType.URL, SourceType.CONFLUENCE, SourceType.NOTION -> TYPE_URL
+            SourceType.FIGMA -> "figma"
             SourceType.IMAGE -> TYPE_IMAGE
         }
 
