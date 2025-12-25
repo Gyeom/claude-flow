@@ -50,6 +50,7 @@ class KnowledgeRepository(
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_project ON $tableName(project_id)")
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source ON $tableName(source)")
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_status ON $tableName(status)")
+            stmt.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_source_url ON $tableName(source_url)")
         }
     }
 
@@ -118,6 +119,16 @@ class KnowledgeRepository(
             stmt.setString(16, entity.lastSyncedAt?.toString())
             stmt.executeUpdate()
         }
+    }
+
+    /**
+     * Source URL로 문서 조회
+     */
+    fun findBySourceUrl(sourceUrl: String): KnowledgeDocument? {
+        return executeQueryOne(
+            "SELECT * FROM $tableName WHERE source_url = ?",
+            sourceUrl
+        ) { mapRow(it) }
     }
 
     /**

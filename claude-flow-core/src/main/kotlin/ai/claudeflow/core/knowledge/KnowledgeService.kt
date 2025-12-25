@@ -856,3 +856,4 @@ data class SearchResult(
     val score: Float,
     val metadata: Map<String, Any>
 )
+

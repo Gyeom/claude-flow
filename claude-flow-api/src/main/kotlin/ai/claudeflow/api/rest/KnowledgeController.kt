@@ -410,3 +410,4 @@ data class VectorStatsDto(
     val user: Map<String, Int>,
     val total: Int
 )
+
