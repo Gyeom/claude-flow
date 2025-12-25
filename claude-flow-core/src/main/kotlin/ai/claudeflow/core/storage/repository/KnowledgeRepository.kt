@@ -3,6 +3,7 @@ package ai.claudeflow.core.storage.repository
 import ai.claudeflow.core.knowledge.*
 import ai.claudeflow.core.storage.BaseRepository
 import ai.claudeflow.core.storage.ConnectionProvider
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.sql.ResultSet
 import java.time.Instant
 
@@ -17,6 +18,9 @@ class KnowledgeRepository(
 
     override val tableName = "knowledge_documents"
     override val primaryKeyColumn = "id"
+
+    // ObjectMapper 싱글톤 (매번 생성 방지)
+    private val objectMapper = jacksonObjectMapper()
 
     init {
         // 테이블 생성
@@ -285,15 +289,13 @@ class KnowledgeRepository(
         if (json.isNullOrBlank()) return emptyMap()
         return try {
             @Suppress("UNCHECKED_CAST")
-            com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-                .readValue(json, Map::class.java) as Map<String, Any>
+            objectMapper.readValue(json, Map::class.java) as Map<String, Any>
         } catch (e: Exception) {
             emptyMap()
         }
     }
 
     private fun toJson(map: Map<String, Any>): String {
-        return com.fasterxml.jackson.module.kotlin.jacksonObjectMapper()
-            .writeValueAsString(map)
+        return objectMapper.writeValueAsString(map)
     }
 }

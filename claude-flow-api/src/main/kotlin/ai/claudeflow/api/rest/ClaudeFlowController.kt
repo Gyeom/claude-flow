@@ -6,6 +6,9 @@ import ai.claudeflow.core.enrichment.ContextEnrichmentPipeline
 import ai.claudeflow.core.model.Agent
 import ai.claudeflow.core.model.Project
 import ai.claudeflow.core.ratelimit.RateLimiter
+import ai.claudeflow.core.ratelimit.AdvancedRateLimiter
+import ai.claudeflow.core.ratelimit.RateLimitPolicy
+import ai.claudeflow.core.ratelimit.RateLimitContext
 import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.core.routing.AgentRouter
 import ai.claudeflow.core.routing.AgentUpdate
@@ -50,10 +53,36 @@ class ClaudeFlowController(
     private val agentRouter: AgentRouter,  // DI로 변경 (테스트 용이)
     private val commandHandler: CommandHandler,  // DI로 변경 (테스트 용이)
     private val storage: Storage? = null,
-    private val rateLimiter: RateLimiter? = null,
+    rateLimiter: Any? = null,  // RateLimiter 또는 AdvancedRateLimiter
     private val contextAugmentationService: ContextAugmentationService? = null,
     private val conversationVectorService: ConversationVectorService? = null
 ) {
+    // Rate Limiter: null이면 기본 정책 적용 (보안 강화)
+    private val rateLimiter: Any = rateLimiter ?: createDefaultRateLimiter()
+
+    companion object {
+        /**
+         * 기본 Rate Limiter 생성 (보안 강화)
+         * rateLimiter가 null일 경우 기본 정책 적용
+         */
+        private fun createDefaultRateLimiter(): AdvancedRateLimiter {
+            logger.warn { "RateLimiter not configured - using default policy (RPM: 60, RPH: 500, RPD: 5000)" }
+            return AdvancedRateLimiter(
+                policies = mutableListOf(
+                    RateLimitPolicy(
+                        id = "default-fallback",
+                        name = "Default Fallback Policy",
+                        description = "기본 보안 정책 - rateLimiter가 설정되지 않은 경우 자동 적용",
+                        requestsPerMinute = 60,
+                        requestsPerHour = 500,
+                        requestsPerDay = 5000,
+                        scope = ai.claudeflow.core.ratelimit.RateLimitScope.GLOBAL
+                    )
+                )
+            )
+        }
+    }
+
     /**
      * Claude 실행 API
      *
@@ -423,17 +452,45 @@ class ClaudeFlowController(
 
         // 0. Rate Limiting 체크
         val projectId = request.channel?.let { projectRegistry.getChannelProject(it)?.id } ?: "default"
-        rateLimiter?.let { limiter ->
-            val limitResult = limiter.checkLimit(projectId)
-            if (!limitResult.allowed) {
-                logger.warn { "Rate limit exceeded for project: $projectId" }
-                return@mono ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
-                    ExecuteResponse(
-                        requestId = UUID.randomUUID().toString(),
-                        success = false,
-                        error = "Rate limit exceeded. Retry after ${limitResult.retryAfterSeconds} seconds."
-                    )
+
+        // 타입에 따라 다른 Rate Limit 체크
+        val isRateLimited = when (rateLimiter) {
+            is AdvancedRateLimiter -> {
+                val context = RateLimitContext(
+                    userId = request.userId,
+                    projectId = projectId
                 )
+                val result = rateLimiter.checkLimit(context)
+                if (!result.allowed) {
+                    val retryAfterSeconds = (result.retryAfterMs ?: 60000) / 1000
+                    logger.warn { "Rate limit exceeded for project: $projectId (${result.message})" }
+                    return@mono ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
+                        ExecuteResponse(
+                            requestId = UUID.randomUUID().toString(),
+                            success = false,
+                            error = "Rate limit exceeded. Retry after $retryAfterSeconds seconds."
+                        )
+                    )
+                }
+                false
+            }
+            is ai.claudeflow.core.ratelimit.RateLimiter -> {
+                val result = rateLimiter.checkLimit(projectId)
+                if (!result.allowed) {
+                    logger.warn { "Rate limit exceeded for project: $projectId" }
+                    return@mono ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(
+                        ExecuteResponse(
+                            requestId = UUID.randomUUID().toString(),
+                            success = false,
+                            error = "Rate limit exceeded. Retry after ${result.retryAfterSeconds} seconds."
+                        )
+                    )
+                }
+                false
+            }
+            else -> {
+                logger.warn { "Unknown rate limiter type: ${rateLimiter::class.simpleName}" }
+                false
             }
         }
 
@@ -774,8 +831,32 @@ class ClaudeFlowController(
      */
     @GetMapping("/rate-limit/status")
     fun getRateLimitStatus(): Mono<ResponseEntity<Map<String, Any>>> = mono {
-        val status = rateLimiter?.getStatus() ?: emptyMap()
-        ResponseEntity.ok(mapOf("limiters" to status))
+        val status = when (rateLimiter) {
+            is AdvancedRateLimiter -> {
+                // AdvancedRateLimiter의 정책 조회
+                val policies = rateLimiter.getAllPolicies().map { policy ->
+                    mapOf(
+                        "id" to policy.id,
+                        "name" to policy.name,
+                        "description" to policy.description,
+                        "requestsPerMinute" to policy.requestsPerMinute,
+                        "requestsPerHour" to policy.requestsPerHour,
+                        "requestsPerDay" to policy.requestsPerDay,
+                        "scope" to policy.scope.name,
+                        "enabled" to policy.enabled
+                    )
+                }
+                mapOf("type" to "advanced", "policies" to policies)
+            }
+            is ai.claudeflow.core.ratelimit.RateLimiter -> {
+                // 기존 RateLimiter의 상태 조회
+                mapOf("type" to "simple", "limiters" to rateLimiter.getStatus())
+            }
+            else -> {
+                mapOf("type" to "unknown", "policies" to emptyList<Map<String, Any>>())
+            }
+        }
+        ResponseEntity.ok(status)
     }
 
     /**
@@ -783,7 +864,24 @@ class ClaudeFlowController(
      */
     @PostMapping("/rate-limit/set")
     fun setRateLimit(@RequestBody request: SetRateLimitRequest): Mono<ResponseEntity<Map<String, Any>>> = mono {
-        rateLimiter?.setLimit(request.projectId, request.rpm)
+        when (rateLimiter) {
+            is AdvancedRateLimiter -> {
+                // AdvancedRateLimiter의 경우 동적 정책 추가
+                val policy = RateLimitPolicy(
+                    id = "project-${request.projectId}",
+                    name = "Project ${request.projectId}",
+                    description = "Dynamic rate limit for project ${request.projectId}",
+                    requestsPerMinute = request.rpm,
+                    scope = ai.claudeflow.core.ratelimit.RateLimitScope.PROJECT,
+                    scopeValue = request.projectId
+                )
+                rateLimiter.addPolicy(policy)
+            }
+            is ai.claudeflow.core.ratelimit.RateLimiter -> {
+                // 기존 RateLimiter의 경우 기존 API 사용
+                rateLimiter.setLimit(request.projectId, request.rpm)
+            }
+        }
         ResponseEntity.ok(mapOf("success" to true, "projectId" to request.projectId, "rpm" to request.rpm))
     }
 }

@@ -33,6 +33,15 @@ class AgentRouter(
             Agent.BUG_FIXER,
             Agent.GENERAL
         )
+
+        // Regex 패턴 캐싱 (매번 생성 방지로 성능 최적화)
+        private val PATTERNS: List<Pair<Regex, String>> = listOf(
+            Regex("(mr|merge request|pull request|pr)\\s*(#?\\d+)?", RegexOption.IGNORE_CASE) to "code-reviewer",
+            Regex("(버그|bug|에러|error|오류|exception|crash)", RegexOption.IGNORE_CASE) to "bug-fixer",
+            Regex("(리뷰|review|검토|코드\\s*리뷰)", RegexOption.IGNORE_CASE) to "code-reviewer",
+            Regex("(수정|fix|고쳐|patch|debug)", RegexOption.IGNORE_CASE) to "bug-fixer",
+            Regex("(설명|explain|뭐야|무엇|어떻게|how|what|why)", RegexOption.IGNORE_CASE) to "general"
+        )
     }
 
     /**
@@ -150,18 +159,10 @@ class AgentRouter(
     }
 
     /**
-     * 정규식 패턴 매칭
+     * 정규식 패턴 매칭 (캐싱된 Regex 사용으로 성능 최적화)
      */
     private fun patternMatch(message: String, agents: List<Agent>): AgentMatch? {
-        val patterns = mapOf(
-            Regex("(mr|merge request|pull request|pr)\\s*(#?\\d+)?", RegexOption.IGNORE_CASE) to "code-reviewer",
-            Regex("(버그|bug|에러|error|오류|exception|crash)", RegexOption.IGNORE_CASE) to "bug-fixer",
-            Regex("(리뷰|review|검토|코드\\s*리뷰)", RegexOption.IGNORE_CASE) to "code-reviewer",
-            Regex("(수정|fix|고쳐|patch|debug)", RegexOption.IGNORE_CASE) to "bug-fixer",
-            Regex("(설명|explain|뭐야|무엇|어떻게|how|what|why)", RegexOption.IGNORE_CASE) to "general"
-        )
-
-        for ((pattern, agentId) in patterns) {
+        for ((pattern, agentId) in PATTERNS) {
             if (pattern.containsMatchIn(message)) {
                 val agent = agents.find { it.id == agentId }
                 if (agent != null) {

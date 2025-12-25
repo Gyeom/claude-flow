@@ -58,7 +58,7 @@ services:
 
   # n8n 워크플로우 엔진
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n:1.86.0
     container_name: claude-flow-n8n
     ports:
       - "5678:5678"
@@ -98,7 +98,7 @@ services:
 
   # Qdrant 벡터 데이터베이스
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.12.5
     container_name: claude-flow-qdrant
     ports:
       - "6333:6333"
@@ -118,7 +118,7 @@ services:
 
   # Ollama 임베딩 서비스 (qwen3-embedding 자동 설치)
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.5.7
     container_name: claude-flow-ollama
     ports:
       - "11434:11434"

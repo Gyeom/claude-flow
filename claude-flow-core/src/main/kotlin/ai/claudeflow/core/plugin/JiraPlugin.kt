@@ -127,6 +127,18 @@ class JiraPlugin : BasePlugin() {
     private lateinit var baseUrl: String
     private lateinit var authHeader: String
 
+    /**
+     * 토큰 마스킹 유틸리티
+     * 보안을 위해 토큰의 앞 4자리와 뒤 4자리만 표시
+     */
+    private fun maskToken(token: String): String {
+        return if (token.length > 8) {
+            "${token.take(4)}****${token.takeLast(4)}"
+        } else {
+            "****"
+        }
+    }
+
     override suspend fun initialize(config: Map<String, String>) {
         super.initialize(config)
         baseUrl = requireConfig("JIRA_URL").trimEnd('/')
@@ -137,7 +149,7 @@ class JiraPlugin : BasePlugin() {
         val credentials = "$email:$apiToken"
         authHeader = "Basic ${Base64.getEncoder().encodeToString(credentials.toByteArray())}"
 
-        logger.info { "Jira plugin initialized: $baseUrl" }
+        logger.info { "Jira plugin initialized: $baseUrl (email: $email, token: ${maskToken(apiToken)})" }
     }
 
     override fun shouldHandle(message: String): Boolean {

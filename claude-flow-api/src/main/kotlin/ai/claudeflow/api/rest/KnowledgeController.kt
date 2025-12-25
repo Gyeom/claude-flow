@@ -25,7 +25,8 @@ private val logger = KotlinLogging.logger {}
 @RequestMapping("/api/v1/knowledge")
 class KnowledgeController(
     private val knowledgeService: KnowledgeService,
-    private val knowledgeVectorService: KnowledgeVectorService?
+    private val knowledgeVectorService: KnowledgeVectorService?,
+    private val imageAnalysisService: ImageAnalysisService?
 ) {
     private val uploadDir = File(System.getProperty("java.io.tmpdir"), "claude-flow-uploads")
         .also { it.mkdirs() }
@@ -233,15 +234,17 @@ class KnowledgeController(
     fun analyzeImage(
         @RequestPart("file") filePart: FilePart
     ): Mono<ResponseEntity<ImageAnalysisResultDto>> {
+        if (imageAnalysisService == null) {
+            return Mono.just(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build())
+        }
+
         val tempFile = File(uploadDir, "${UUID.randomUUID()}_${filePart.filename()}")
 
         return filePart.transferTo(tempFile)
             .then(Mono.fromCallable {
                 runBlocking {
                     try {
-                        // ImageAnalysisService 직접 사용
-                        val imageService = ImageAnalysisService()
-                        val result = imageService.analyzeImage(tempFile)
+                        val result = imageAnalysisService.analyzeImage(tempFile)
                         ResponseEntity.ok(result.toDto())
                     } catch (e: Exception) {
                         logger.error(e) { "Failed to analyze image" }

@@ -9,6 +9,5 @@ dependencies {
     // JSON Serialization - Jackson
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.3")
 
-    // Process execution
-    implementation("org.zeroturnaround:zt-exec:1.12")
+    // 참고: zt-exec는 사용하지 않으므로 제거됨 (ProcessBuilder 사용 중)
 }

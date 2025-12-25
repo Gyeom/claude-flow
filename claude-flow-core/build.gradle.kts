@@ -28,8 +28,8 @@ dependencies {
     // Apache POI for Excel parsing (.xlsx)
     implementation("org.apache.poi:poi-ooxml:5.2.5")
 
-    // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    // Coroutines (버전 통일: root project와 동일하게 1.10.1 사용)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
 
     // Retry with Exponential Backoff
     implementation("com.michael-bull.kotlin-retry:kotlin-retry:2.0.2")

@@ -67,10 +67,22 @@ class GitHubPlugin : BasePlugin() {
     private lateinit var token: String
     private val baseUrl = "https://api.github.com"
 
+    /**
+     * 토큰 마스킹 유틸리티
+     * 보안을 위해 토큰의 앞 4자리와 뒤 4자리만 표시
+     */
+    private fun maskToken(token: String): String {
+        return if (token.length > 8) {
+            "${token.take(4)}****${token.takeLast(4)}"
+        } else {
+            "****"
+        }
+    }
+
     override suspend fun initialize(config: Map<String, String>) {
         super.initialize(config)
         token = requireConfig("GITHUB_TOKEN")
-        logger.info { "GitHub plugin initialized" }
+        logger.info { "GitHub plugin initialized (token: ${maskToken(token)})" }
     }
 
     override fun shouldHandle(message: String): Boolean {

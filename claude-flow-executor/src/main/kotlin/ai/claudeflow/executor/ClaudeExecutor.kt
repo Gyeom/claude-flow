@@ -28,10 +28,39 @@ private val logger = KotlinLogging.logger {}
  * - Session 지속성: --resume 플래그로 대화 이어가기 (토큰 30-40% 절감)
  * - 비동기 실행: Coroutine 기반 non-blocking 실행
  * - Session 캐시: 사용자/스레드별 세션 ID 관리
+ *
+ * 보안 기능:
+ * - Command Injection 방어: 쉘 메타문자 검증
+ * - Path Traversal 방어: 작업 디렉토리 정규화 및 허용 경로 검증
+ * - 환경변수 필터링: 필요한 환경변수만 명시적 전달
  */
 class ClaudeExecutor(
     private val defaultConfig: ClaudeConfig = ClaudeConfig()
 ) {
+    companion object {
+        // 쉘 메타문자 패턴 (Command Injection 방어)
+        private val SHELL_METACHAR_PATTERN = Regex("[;|&\$`\n\r]")
+
+        // 허용된 환경변수 목록 (Security: 최소 권한 원칙)
+        private val ALLOWED_ENV_VARS = setOf(
+            "PATH",
+            "HOME",
+            "CLAUDE_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "WORKSPACE_PATH",
+            "USER",
+            "LANG",
+            "LC_ALL"
+        )
+
+        /**
+         * 작업 디렉토리 기본 경로 (환경변수 WORKSPACE_PATH 또는 현재 디렉토리)
+         */
+        private fun getBaseWorkspacePath(): File {
+            val workspacePath = System.getenv("WORKSPACE_PATH") ?: System.getProperty("user.dir")
+            return File(workspacePath).canonicalFile
+        }
+    }
     private val objectMapper = jacksonObjectMapper().apply {
         configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
     }
@@ -64,6 +93,62 @@ class ClaudeExecutor(
     }
 
     /**
+     * 프롬프트 검증 (Command Injection 방어)
+     *
+     * 쉘 메타문자가 포함된 경우 에러 반환
+     */
+    private fun validatePrompt(prompt: String): String? {
+        if (SHELL_METACHAR_PATTERN.containsMatchIn(prompt)) {
+            return "프롬프트에 허용되지 않는 문자가 포함되어 있습니다. (쉘 메타문자: ; | & $ ` \\n \\r)"
+        }
+        return null
+    }
+
+    /**
+     * 작업 디렉토리 검증 (Path Traversal 방어)
+     *
+     * - 존재 여부 확인
+     * - Canonical Path로 정규화
+     * - 허용된 경로 내에 있는지 확인 (WORKSPACE_PATH 기준)
+     */
+    private fun validateWorkingDirectory(path: String): Pair<File?, String?> {
+        val file = File(path)
+
+        if (!file.exists()) {
+            return null to "작업 디렉토리가 존재하지 않습니다: $path"
+        }
+
+        if (!file.isDirectory) {
+            return null to "작업 디렉토리가 디렉토리가 아닙니다: $path"
+        }
+
+        // Canonical Path로 정규화 (심볼릭 링크, ../ 해결)
+        val canonicalFile = try {
+            file.canonicalFile
+        } catch (e: Exception) {
+            return null to "작업 디렉토리 경로를 정규화할 수 없습니다: ${e.message}"
+        }
+
+        // 허용된 경로 내에 있는지 확인
+        val basePath = getBaseWorkspacePath()
+        if (!canonicalFile.startsWith(basePath)) {
+            return null to "작업 디렉토리가 허용된 경로를 벗어났습니다. (허용: ${basePath.absolutePath})"
+        }
+
+        return canonicalFile to null
+    }
+
+    /**
+     * 환경변수 필터링 (보안: 최소 권한 원칙)
+     *
+     * 허용 목록(ALLOWED_ENV_VARS)에 있는 환경변수만 반환
+     */
+    private fun getFilteredEnvironment(): Map<String, String> {
+        return System.getenv()
+            .filterKeys { it in ALLOWED_ENV_VARS }
+    }
+
+    /**
      * Claude CLI 비동기 실행 (Coroutine 기반)
      *
      * 장점:
@@ -83,16 +168,30 @@ class ClaudeExecutor(
             "maxTurns" to request.maxTurns
         ))
 
-        // 작업 디렉토리 검증
-        val workingDir = request.workingDirectory?.let { File(it) }
-        if (workingDir != null && !workingDir.exists()) {
-            logManager.error(requestId, "Working directory does not exist: ${request.workingDirectory}")
+        // 프롬프트 검증 (Command Injection 방어)
+        validatePrompt(request.prompt)?.let { error ->
+            logManager.error(requestId, error)
             return@withContext ExecutionResult(
                 requestId = requestId,
                 status = ExecutionStatus.ERROR,
-                error = "Working directory does not exist: ${request.workingDirectory}",
+                error = error,
                 durationMs = System.currentTimeMillis() - startTime
             )
+        }
+
+        // 작업 디렉토리 검증 (Path Traversal 방어)
+        val workingDir = request.workingDirectory?.let { path ->
+            val (validatedDir, error) = validateWorkingDirectory(path)
+            if (error != null) {
+                logManager.error(requestId, error)
+                return@withContext ExecutionResult(
+                    requestId = requestId,
+                    status = ExecutionStatus.ERROR,
+                    error = error,
+                    durationMs = System.currentTimeMillis() - startTime
+                )
+            }
+            validatedDir
         }
 
         // Session 조회 또는 생성
@@ -195,14 +294,26 @@ class ClaudeExecutor(
 
         logManager.agentStart(requestId, request.agentId ?: "unknown", request.prompt)
 
-        // 작업 디렉토리 검증
-        val workingDir = request.workingDirectory?.let { File(it) }
-        if (workingDir != null && !workingDir.exists()) {
+        // 프롬프트 검증 (Command Injection 방어)
+        validatePrompt(request.prompt)?.let { error ->
             send(StreamingEvent.Error(
                 requestId = requestId,
-                message = "Working directory does not exist: ${request.workingDirectory}"
+                message = error
             ))
             return@channelFlow
+        }
+
+        // 작업 디렉토리 검증 (Path Traversal 방어)
+        val workingDir = request.workingDirectory?.let { path ->
+            val (validatedDir, error) = validateWorkingDirectory(path)
+            if (error != null) {
+                send(StreamingEvent.Error(
+                    requestId = requestId,
+                    message = error
+                ))
+                return@channelFlow
+            }
+            validatedDir
         }
 
         // Session 조회 또는 생성
@@ -222,7 +333,9 @@ class ClaudeExecutor(
                 .apply {
                     workingDir?.let { directory(it) }
                     redirectErrorStream(false)
-                    environment().putAll(System.getenv())
+                    // 환경변수 필터링 (보안: 최소 권한 원칙)
+                    environment().clear()
+                    environment().putAll(getFilteredEnvironment())
                 }
 
             val process = processBuilder.start()
@@ -514,8 +627,9 @@ class ClaudeExecutor(
             .apply {
                 workingDir?.let { directory(it) }
                 redirectErrorStream(false)
-                // 환경변수 상속
-                environment().putAll(System.getenv())
+                // 환경변수 필터링 (보안: 최소 권한 원칙)
+                environment().clear()
+                environment().putAll(getFilteredEnvironment())
             }
 
         val process = processBuilder.start()
