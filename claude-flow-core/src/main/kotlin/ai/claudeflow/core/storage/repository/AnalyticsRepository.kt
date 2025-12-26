@@ -286,15 +286,16 @@ class AnalyticsRepository(
         return executeQuery(
             """
             SELECT
-                COALESCE(
-                    (SELECT model FROM agents WHERE id = e.agent_id LIMIT 1),
-                    'claude-sonnet-4-20250514'
-                ) as model,
+                COALESCE(model, 'claude-sonnet-4-20250514') as model,
                 COALESCE(SUM(cost), 0) as cost,
-                COUNT(*) as requests
-            FROM executions e
+                COUNT(*) as requests,
+                COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
+                COALESCE(AVG(duration_ms), 0) as avg_duration,
+                CAST(SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS REAL) /
+                    CAST(NULLIF(COUNT(*), 0) AS REAL) as success_rate
+            FROM executions
             WHERE created_at BETWEEN ? AND ?
-            GROUP BY model
+            GROUP BY COALESCE(model, 'claude-sonnet-4-20250514')
             ORDER BY cost DESC
             """.trimIndent(),
             dateRange.from.toString(), dateRange.to.toString()
@@ -304,7 +305,10 @@ class AnalyticsRepository(
                 model = it.getString("model"),
                 cost = cost,
                 percentage = if (totalCost > 0) (cost / totalCost) * 100 else 0.0,
-                requests = it.getLong("requests")
+                requests = it.getLong("requests"),
+                totalTokens = it.getLong("total_tokens"),
+                avgDurationMs = it.getLong("avg_duration"),
+                successRate = it.getDouble("success_rate")
             )
         }
     }
@@ -524,7 +528,10 @@ data class CostBreakdown(
     val model: String,
     val cost: Double,
     val percentage: Double,
-    val requests: Long
+    val requests: Long,
+    val totalTokens: Long = 0,
+    val avgDurationMs: Long = 0,
+    val successRate: Double = 1.0
 )
 
 data class DashboardStats(
