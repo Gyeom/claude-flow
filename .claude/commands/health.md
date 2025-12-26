@@ -56,16 +56,18 @@ fi
 
 echo ""
 
-# Optional Services
-echo "🔧 Optional"
-echo "─────────────────"
-
 echo -n "  n8n (5678):     "
 if curl -s --max-time 2 http://localhost:5678/ >/dev/null 2>&1; then
   echo "✓ Running"
 else
-  echo "- Not running"
+  echo "✗ Not running → /infra start"
 fi
+
+echo ""
+
+# Optional Services
+echo "🔧 Optional"
+echo "─────────────────"
 
 echo -n "  Claude CLI:     "
 if command -v claude &> /dev/null; then
