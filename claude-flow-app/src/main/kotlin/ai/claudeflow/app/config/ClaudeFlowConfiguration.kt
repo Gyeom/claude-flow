@@ -17,6 +17,7 @@ import ai.claudeflow.core.routing.AgentRouter
 import ai.claudeflow.core.routing.SemanticRouter
 import ai.claudeflow.core.session.SessionManager
 import ai.claudeflow.core.plugin.PluginManager
+import ai.claudeflow.core.plugin.PluginRegistry
 import ai.claudeflow.core.plugin.GitLabPlugin
 import ai.claudeflow.core.plugin.GitHubPlugin
 import ai.claudeflow.core.plugin.JiraPlugin
@@ -327,6 +328,9 @@ class ClaudeFlowConfiguration(
         logger.info { "Initializing SessionManager (TTL: 60 min)" }
         return SessionManager(sessionTtlMinutes = 60, maxSessions = 1000)
     }
+
+    @Bean
+    fun pluginRegistry(pluginManager: PluginManager): PluginRegistry = pluginManager.registry
 
     @Bean
     fun pluginManager(): PluginManager {

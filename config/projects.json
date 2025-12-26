@@ -1,5 +1,6 @@
 {
   "defaultBranch": "develop",
+  "gitlabHost": "https://gitlab.42dot.ai",
   "projects": [
     {
       "id": "claude-flow",
@@ -14,6 +15,7 @@
       "name": "CCDS Server",
       "description": "Connected Car Data Service - 차량 데이터 수집 및 처리",
       "path": "ccds-server",
+      "gitlabPath": "sirius/ccds/ccds-server",
       "aliases": ["ccds", "CCDS", "차량 데이터", "connected car"]
     },
     {
@@ -21,6 +23,7 @@
       "name": "Authorization Server",
       "description": "인가 서버 - OpenFGA 기반 권한 관리",
       "path": "authorization-server",
+      "gitlabPath": "sirius/ccds/authorization-server",
       "aliases": ["인가", "인가서버", "auth", "authorization", "openfga", "권한"]
     },
     {
@@ -28,13 +31,15 @@
       "name": "AD Data Management Server",
       "description": "자율주행 데이터 관리 서버",
       "path": "ad-data-management-server",
+      "gitlabPath": "sirius/ad-data-management/ad-data-management-server",
       "aliases": ["ad-data", "자율주행", "AD", "AD Data"]
     },
     {
       "id": "vlc-gateway-server",
       "name": "VLC Gateway Server",
-        "description": "VLC 게이트웨이 서버 - VLC 게이트웨이",
+      "description": "VLC 게이트웨이 서버 - VLC 게이트웨이",
       "path": "vlc-gateway-server",
+      "gitlabPath": "sirius/ccds/vlc-gateway-server",
       "aliases": ["vlc", "VLC", "게이트웨이", "gateway"]
     }
   ]

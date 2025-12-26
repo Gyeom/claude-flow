@@ -211,6 +211,21 @@ export interface ErrorStats {
   lastOccurred: string
 }
 
+// Clarification Types (프로젝트 선택 등)
+export interface ClarificationOption {
+  id: string
+  label: string
+  description?: string
+  icon?: string
+}
+
+export interface ClarificationRequest {
+  type: 'project_selection' | 'confirmation' | 'options'
+  question: string
+  options: ClarificationOption[]
+  context?: Record<string, unknown>
+}
+
 // Project Types (멀티테넌시)
 export interface Project {
   id: string

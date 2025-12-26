@@ -29,6 +29,7 @@ data class Project(
     val description: String? = null,
     val workingDirectory: String,
     val gitRemote: String? = null,
+    val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "42dot/ccds-server")
     val defaultBranch: String = "main",
     val isDefault: Boolean = false,
     val enableUserContext: Boolean = true,

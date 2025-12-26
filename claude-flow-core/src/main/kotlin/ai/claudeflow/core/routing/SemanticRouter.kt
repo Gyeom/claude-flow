@@ -2,6 +2,7 @@ package ai.claudeflow.core.routing
 
 import ai.claudeflow.core.model.Agent
 import ai.claudeflow.core.model.AgentMatch
+import com.github.benmanes.caffeine.cache.Caffeine
 import mu.KotlinLogging
 import java.net.URI
 import java.net.http.HttpClient
@@ -9,6 +10,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
 
@@ -26,6 +29,79 @@ class SemanticRouter(
 ) {
     private val httpClient = HttpClient.newHttpClient()
     private val objectMapper = jacksonObjectMapper()
+
+    companion object {
+        /**
+         * 임베딩 캐시 - 동일한 텍스트의 임베딩 결과를 30분간 캐싱
+         * 성능 최적화: Ollama API 호출 회피 (가장 비싼 연산)
+         */
+        private val embeddingCache = Caffeine.newBuilder()
+            .maximumSize(1000)
+            .expireAfterWrite(30, TimeUnit.MINUTES)
+            .build<String, List<Double>>()
+
+        /**
+         * 벡터 검색 캐시 - 검색 결과를 10분간 캐싱
+         * 캐시 키: 임베딩 해시 + topK
+         */
+        private val searchCache = Caffeine.newBuilder()
+            .maximumSize(500)
+            .expireAfterWrite(10, TimeUnit.MINUTES)
+            .build<String, List<SearchResult>>()
+
+        // 캐시 통계
+        private val embeddingCacheHits = AtomicLong(0)
+        private val embeddingCacheMisses = AtomicLong(0)
+        private val searchCacheHits = AtomicLong(0)
+        private val searchCacheMisses = AtomicLong(0)
+
+        /**
+         * 시맨틱 라우터 캐시 통계 반환
+         */
+        fun getCacheStats(): Map<String, Any> {
+            val embeddingHits = embeddingCacheHits.get()
+            val embeddingMisses = embeddingCacheMisses.get()
+            val embeddingTotal = embeddingHits + embeddingMisses
+            val embeddingHitRate = if (embeddingTotal > 0)
+                "%.2f%%".format(embeddingHits.toDouble() / embeddingTotal * 100)
+            else "N/A"
+
+            val searchHits = searchCacheHits.get()
+            val searchMisses = searchCacheMisses.get()
+            val searchTotal = searchHits + searchMisses
+            val searchHitRate = if (searchTotal > 0)
+                "%.2f%%".format(searchHits.toDouble() / searchTotal * 100)
+            else "N/A"
+
+            return mapOf(
+                "embedding" to mapOf(
+                    "cacheHits" to embeddingHits,
+                    "cacheMisses" to embeddingMisses,
+                    "cacheSize" to embeddingCache.estimatedSize(),
+                    "hitRate" to embeddingHitRate
+                ),
+                "search" to mapOf(
+                    "cacheHits" to searchHits,
+                    "cacheMisses" to searchMisses,
+                    "cacheSize" to searchCache.estimatedSize(),
+                    "hitRate" to searchHitRate
+                )
+            )
+        }
+
+        /**
+         * 캐시 초기화
+         */
+        fun clearCache() {
+            embeddingCache.invalidateAll()
+            searchCache.invalidateAll()
+            embeddingCacheHits.set(0)
+            embeddingCacheMisses.set(0)
+            searchCacheHits.set(0)
+            searchCacheMisses.set(0)
+            logger.info { "Semantic router caches cleared" }
+        }
+    }
 
     /**
      * 시맨틱 검색으로 에이전트 분류
@@ -94,7 +170,22 @@ class SemanticRouter(
         }
     }
 
+    /**
+     * 임베딩 생성 (캐시 적용)
+     * 성능 최적화: 동일한 텍스트는 30분간 캐싱
+     */
     private fun getEmbedding(text: String): List<Double>? {
+        val cacheKey = text.trim().lowercase()
+
+        // 캐시 확인
+        val cached = embeddingCache.getIfPresent(cacheKey)
+        if (cached != null) {
+            embeddingCacheHits.incrementAndGet()
+            logger.debug { "Embedding cache hit: ${cacheKey.take(50)}..." }
+            return cached
+        }
+        embeddingCacheMisses.incrementAndGet()
+
         return try {
             val requestBody = mapOf(
                 "model" to "nomic-embed-text",
@@ -111,7 +202,13 @@ class SemanticRouter(
             if (response.statusCode() == 200) {
                 val result: Map<String, Any> = objectMapper.readValue(response.body())
                 @Suppress("UNCHECKED_CAST")
-                result["embedding"] as? List<Double>
+                val embedding = result["embedding"] as? List<Double>
+                // 캐시에 저장
+                if (embedding != null) {
+                    embeddingCache.put(cacheKey, embedding)
+                    logger.debug { "Embedding cached: ${cacheKey.take(50)}..." }
+                }
+                embedding
             } else {
                 logger.warn { "Embedding request failed: ${response.statusCode()}" }
                 null
@@ -130,9 +227,22 @@ class SemanticRouter(
     }
 
     /**
-     * 상위 N개 검색 결과 반환 (우선순위 보너스 적용용)
+     * 상위 N개 검색 결과 반환 (캐시 적용)
+     * 성능 최적화: 동일한 임베딩의 검색 결과를 10분간 캐싱
      */
     private fun searchSimilarMultiple(embedding: List<Double>, topK: Int = 5): List<SearchResult> {
+        // 캐시 키 생성 (임베딩의 해시 + topK)
+        val cacheKey = "${embedding.hashCode()}_$topK"
+
+        // 캐시 확인
+        val cached = searchCache.getIfPresent(cacheKey)
+        if (cached != null) {
+            searchCacheHits.incrementAndGet()
+            logger.debug { "Search cache hit" }
+            return cached
+        }
+        searchCacheMisses.incrementAndGet()
+
         return try {
             val requestBody = mapOf(
                 "vector" to embedding,
@@ -151,7 +261,7 @@ class SemanticRouter(
                 val result: Map<String, Any> = objectMapper.readValue(response.body())
                 @Suppress("UNCHECKED_CAST")
                 val hits = result["result"] as? List<Map<String, Any>> ?: emptyList()
-                hits.mapNotNull { hit ->
+                val searchResults = hits.mapNotNull { hit ->
                     val payload = hit["payload"] as? Map<String, Any>
                     val agentId = payload?.get("agent_id") as? String
                     val example = payload?.get("example") as? String
@@ -160,6 +270,12 @@ class SemanticRouter(
                         SearchResult(agentId, example, score)
                     } else null
                 }
+                // 캐시에 저장
+                if (searchResults.isNotEmpty()) {
+                    searchCache.put(cacheKey, searchResults)
+                    logger.debug { "Search results cached: ${searchResults.size} results" }
+                }
+                searchResults
             } else emptyList()
         } catch (e: Exception) {
             logger.warn(e) { "Vector search failed" }

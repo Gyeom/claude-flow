@@ -14,6 +14,7 @@ export function Chat() {
     setSelectedProject,
     setSelectedAgent,
     sendMessage,
+    sendClarificationResponse,
     stopStreaming,
   } = useChatContext()
 
@@ -64,6 +65,7 @@ export function Chat() {
           isStreaming={isStreaming}
           currentToolCalls={currentToolCalls}
           streamingContent={streamingContent}
+          onClarificationSelect={(option, context) => sendClarificationResponse(option, context)}
         />
 
         <ChatInput

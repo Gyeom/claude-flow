@@ -14,7 +14,23 @@ data class ChatRequest(
     val agentId: String? = null,
     val userId: String? = null,
     val model: String? = null,
-    val maxTurns: Int? = null
+    val maxTurns: Int? = null,
+    // 세션 컨텍스트 (후속 질문 시 에이전트 유지용)
+    val sessionContext: SessionContext? = null
+)
+
+/**
+ * 세션 컨텍스트
+ *
+ * 대화 세션의 상태를 유지하여 후속 질문 시 동일 에이전트 사용
+ */
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class SessionContext(
+    val lastAgentId: String? = null,       // 마지막 사용된 에이전트
+    val lastTopic: String? = null,          // 대화 주제 (mr-review, bug-fix 등)
+    val mrNumber: Int? = null,              // MR 리뷰 중인 MR 번호
+    val gitlabPath: String? = null,         // GitLab 프로젝트 경로
+    val projectId: String? = null           // 선택된 프로젝트 ID
 )
 
 /**

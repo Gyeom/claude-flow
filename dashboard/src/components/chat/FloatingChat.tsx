@@ -24,6 +24,8 @@ export function FloatingChat() {
     streamingContent,
     currentToolCalls,
     currentMetadata,
+    progressStatus,
+    // currentClarification is handled by messages with clarification field
     isPanelOpen,
     selectedProject,
     selectedAgent,
@@ -32,6 +34,7 @@ export function FloatingChat() {
     openPanel,
     closePanel,
     sendMessage,
+    sendClarificationResponse,
     stopStreaming,
     clearMessages,
   } = useChatContext()
@@ -290,6 +293,84 @@ export function FloatingChat() {
         </div>
       )}
 
+      {/* 진행 상황 표시 - 개선된 스텝퍼 UI */}
+      {isStreaming && (
+        <div className="border-b border-border bg-gradient-to-r from-blue-500/5 via-purple-500/5 to-blue-500/5">
+          {/* 스텝 인디케이터 */}
+          <div className="px-4 py-3">
+            <div className="flex items-center justify-between gap-1 mb-2">
+              {[
+                { step: 'rate_limit_check', icon: '🔐', label: '권한' },
+                { step: 'agent_routing', icon: '🔀', label: '라우팅' },
+                { step: 'context_enrichment', icon: '📚', label: '컨텍스트' },
+                { step: 'execution_start', icon: '🚀', label: '실행' },
+                { step: 'processing', icon: '✨', label: '생성' },
+              ].map((s, idx, arr) => {
+                const currentStepIdx = progressStatus ? arr.findIndex(x => x.step === progressStatus.step) : -1
+                const isCompleted = idx < currentStepIdx
+                const isCurrent = progressStatus?.step === s.step
+                const isPending = idx > currentStepIdx && currentStepIdx >= 0
+
+                return (
+                  <div key={s.step} className="flex items-center gap-1 flex-1">
+                    <div className={`
+                      w-6 h-6 rounded-full flex items-center justify-center text-xs
+                      transition-all duration-300
+                      ${isCompleted ? 'bg-green-500/20 text-green-600' : ''}
+                      ${isCurrent ? 'bg-blue-500/30 text-blue-600 ring-2 ring-blue-500/50 animate-pulse' : ''}
+                      ${isPending ? 'bg-muted text-muted-foreground' : ''}
+                      ${!progressStatus && idx === 0 ? 'bg-blue-500/30 text-blue-600 animate-pulse' : ''}
+                    `}>
+                      {isCompleted ? '✓' : s.icon}
+                    </div>
+                    {idx < arr.length - 1 && (
+                      <div className={`
+                        h-0.5 flex-1 rounded transition-all duration-300
+                        ${isCompleted ? 'bg-green-500/50' : 'bg-muted'}
+                      `} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            {/* 현재 상태 메시지 */}
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-ping" />
+              <span className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+                {progressStatus?.message || '요청 처리 중...'}
+              </span>
+              {progressStatus?.detail && Object.keys(progressStatus.detail).length > 0 && (
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {Object.entries(progressStatus.detail)
+                    .filter(([, v]) => v != null)
+                    .slice(0, 2)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(' • ')}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* 도구 호출 진행 표시 */}
+          {currentToolCalls.length > 0 && (
+            <div className="px-4 py-2 bg-amber-500/10 border-t border-amber-500/20">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-amber-600 dark:text-amber-400">🔧</span>
+                <span className="font-medium text-amber-700 dark:text-amber-300">
+                  {currentToolCalls.filter(t => t.status === 'running').length > 0
+                    ? `도구 실행 중: ${currentToolCalls.filter(t => t.status === 'running').map(t => t.toolName).join(', ')}`
+                    : `도구 ${currentToolCalls.length}개 완료`
+                  }
+                </span>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {currentToolCalls.filter(t => t.status === 'completed').length}/{currentToolCalls.length}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 메시지 영역 */}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <ChatMessages
@@ -297,6 +378,7 @@ export function FloatingChat() {
           isStreaming={isStreaming}
           currentToolCalls={currentToolCalls}
           streamingContent={streamingContent}
+          onClarificationSelect={(option, context) => sendClarificationResponse(option, context)}
         />
       </div>
 

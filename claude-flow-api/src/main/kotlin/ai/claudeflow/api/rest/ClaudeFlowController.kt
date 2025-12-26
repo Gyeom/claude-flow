@@ -60,28 +60,6 @@ class ClaudeFlowController(
     // Rate Limiter: null이면 기본 정책 적용 (보안 강화)
     private val rateLimiter: Any = rateLimiter ?: createDefaultRateLimiter()
 
-    companion object {
-        /**
-         * 기본 Rate Limiter 생성 (보안 강화)
-         * rateLimiter가 null일 경우 기본 정책 적용
-         */
-        private fun createDefaultRateLimiter(): AdvancedRateLimiter {
-            logger.warn { "RateLimiter not configured - using default policy (RPM: 60, RPH: 500, RPD: 5000)" }
-            return AdvancedRateLimiter(
-                policies = mutableListOf(
-                    RateLimitPolicy(
-                        id = "default-fallback",
-                        name = "Default Fallback Policy",
-                        description = "기본 보안 정책 - rateLimiter가 설정되지 않은 경우 자동 적용",
-                        requestsPerMinute = 60,
-                        requestsPerHour = 500,
-                        requestsPerDay = 5000,
-                        scope = ai.claudeflow.core.ratelimit.RateLimitScope.GLOBAL
-                    )
-                )
-            )
-        }
-    }
 
     /**
      * Claude 실행 API
@@ -567,7 +545,7 @@ class ClaudeFlowController(
             }
         }.takeIf { it.isNotBlank() }
 
-        // 8. 라우팅된 에이전트의 설정으로 실행 (blocking I/O는 Dispatchers.IO에서)
+        // 8. 라우팅된 에이전트의 설정으로 실행 (비동기 실행 - 성능 최적화)
         val executionRequest = ExecutionRequest(
             prompt = contextualPrompt,
             systemPrompt = finalSystemPrompt,
@@ -579,9 +557,8 @@ class ClaudeFlowController(
             agentId = match.agent.id
         )
 
-        val result = withContext(Dispatchers.IO) {
-            claudeExecutor.execute(executionRequest)
-        }
+        // 성능 최적화: executeAsync 직접 호출 (runBlocking 제거)
+        val result = claudeExecutor.executeAsync(executionRequest)
 
         // 9. 실행 결과 저장
         val executionRecord = ExecutionRecord(
@@ -677,8 +654,38 @@ class ClaudeFlowController(
         }
     }
 
+    companion object {
+        /**
+         * 대화 히스토리 최대 개수 (성능 최적화)
+         * 너무 긴 히스토리는 토큰 폭발을 야기하므로 최근 10개로 제한
+         */
+        private const val MAX_CONVERSATION_HISTORY = 10
+
+        /**
+         * 기본 Rate Limiter 생성 (보안 강화)
+         * rateLimiter가 null일 경우 기본 정책 적용
+         */
+        private fun createDefaultRateLimiter(): AdvancedRateLimiter {
+            logger.warn { "RateLimiter not configured - using default policy (RPM: 60, RPH: 500, RPD: 5000)" }
+            return AdvancedRateLimiter(
+                policies = mutableListOf(
+                    RateLimitPolicy(
+                        id = "default-fallback",
+                        name = "Default Fallback Policy",
+                        description = "기본 보안 정책 - rateLimiter가 설정되지 않은 경우 자동 적용",
+                        requestsPerMinute = 60,
+                        requestsPerHour = 500,
+                        requestsPerDay = 5000,
+                        scope = ai.claudeflow.core.ratelimit.RateLimitScope.GLOBAL
+                    )
+                )
+            )
+        }
+    }
+
     /**
      * 대화 히스토리를 포함한 프롬프트 생성
+     * 성능 최적화: 최근 MAX_CONVERSATION_HISTORY개로 제한하여 토큰 폭발 방지
      */
     private fun buildContextualPrompt(
         currentPrompt: String,
@@ -688,7 +695,11 @@ class ClaudeFlowController(
             return currentPrompt
         }
 
-        val historyText = history.joinToString("\n\n") { msg ->
+        // 성능 최적화: 최근 10개 메시지로 제한 (토큰 비용 절감)
+        val recentHistory = history.takeLast(MAX_CONVERSATION_HISTORY)
+        val truncatedCount = history.size - recentHistory.size
+
+        val historyText = recentHistory.joinToString("\n\n") { msg ->
             val roleLabel = when (msg.role) {
                 "user" -> msg.userName?.let { "사용자($it)" } ?: "사용자"
                 "assistant" -> "어시스턴트"
@@ -697,9 +708,13 @@ class ClaudeFlowController(
             "$roleLabel: ${msg.content}"
         }
 
+        val truncationNotice = if (truncatedCount > 0) {
+            "[참고: 이전 대화 ${truncatedCount}개가 생략되었습니다]\n\n"
+        } else ""
+
         return """
             |[이전 대화 내용]
-            |$historyText
+            |$truncationNotice$historyText
             |
             |[현재 질문]
             |$currentPrompt

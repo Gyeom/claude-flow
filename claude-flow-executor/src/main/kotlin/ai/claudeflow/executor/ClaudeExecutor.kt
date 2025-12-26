@@ -38,8 +38,9 @@ class ClaudeExecutor(
     private val defaultConfig: ClaudeConfig = ClaudeConfig()
 ) {
     companion object {
-        // 쉘 메타문자 패턴 (Command Injection 방어)
-        private val SHELL_METACHAR_PATTERN = Regex("[;|&\$`\n\r]")
+        // NOTE: ProcessBuilder를 사용하므로 쉘 메타문자 검증 불필요
+        // ProcessBuilder는 쉘을 거치지 않고 직접 프로세스에 인자를 전달하므로
+        // 쉘 메타문자(;|&$`)가 Command Injection으로 작동하지 않음
 
         // 허용된 환경변수 목록 (Security: 최소 권한 원칙)
         private val ALLOWED_ENV_VARS = setOf(
@@ -92,17 +93,8 @@ class ClaudeExecutor(
         }
     }
 
-    /**
-     * 프롬프트 검증 (Command Injection 방어)
-     *
-     * 쉘 메타문자가 포함된 경우 에러 반환
-     */
-    private fun validatePrompt(prompt: String): String? {
-        if (SHELL_METACHAR_PATTERN.containsMatchIn(prompt)) {
-            return "프롬프트에 허용되지 않는 문자가 포함되어 있습니다. (쉘 메타문자: ; | & $ ` \\n \\r)"
-        }
-        return null
-    }
+    // validatePrompt 제거 - ProcessBuilder 사용 시 쉘 메타문자 검증 불필요
+    // ProcessBuilder는 쉘을 거치지 않으므로 Command Injection 위험 없음
 
     /**
      * 작업 디렉토리 검증 (Path Traversal 방어)
@@ -167,17 +159,6 @@ class ClaudeExecutor(
             "model" to request.model,
             "maxTurns" to request.maxTurns
         ))
-
-        // 프롬프트 검증 (Command Injection 방어)
-        validatePrompt(request.prompt)?.let { error ->
-            logManager.error(requestId, error)
-            return@withContext ExecutionResult(
-                requestId = requestId,
-                status = ExecutionStatus.ERROR,
-                error = error,
-                durationMs = System.currentTimeMillis() - startTime
-            )
-        }
 
         // 작업 디렉토리 검증 (Path Traversal 방어)
         val workingDir = request.workingDirectory?.let { path ->
@@ -293,15 +274,6 @@ class ClaudeExecutor(
         val startTime = System.currentTimeMillis()
 
         logManager.agentStart(requestId, request.agentId ?: "unknown", request.prompt)
-
-        // 프롬프트 검증 (Command Injection 방어)
-        validatePrompt(request.prompt)?.let { error ->
-            send(StreamingEvent.Error(
-                requestId = requestId,
-                message = error
-            ))
-            return@channelFlow
-        }
 
         // 작업 디렉토리 검증 (Path Traversal 방어)
         val workingDir = request.workingDirectory?.let { path ->

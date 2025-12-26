@@ -5,6 +5,9 @@ import ai.claudeflow.core.clarification.ClarificationOption
 import ai.claudeflow.core.rag.CodeChunk
 import ai.claudeflow.core.rag.CodeKnowledgeService
 import ai.claudeflow.core.rag.ReviewGuideline
+import ai.claudeflow.core.review.MrAnalyzer
+import ai.claudeflow.core.review.MrAnalysisResult
+import ai.claudeflow.core.review.IssueSeverity
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import mu.KotlinLogging
@@ -23,7 +26,8 @@ private val logger = KotlinLogging.logger {}
  * RAG 기반 컨텍스트 인식 코드 리뷰 지원
  */
 class GitLabPlugin(
-    private val codeKnowledgeService: CodeKnowledgeService? = null
+    private val codeKnowledgeService: CodeKnowledgeService? = null,
+    private val mrAnalyzer: MrAnalyzer = MrAnalyzer()
 ) : BasePlugin() {
     override val id = "gitlab"
     override val name = "GitLab"
@@ -675,25 +679,24 @@ class GitLabPlugin(
     // ============================================================
 
     /**
-     * MR을 RAG 기반으로 컨텍스트 인식 리뷰
+     * MR을 2-Pass 아키텍처로 리뷰
      *
-     * 1. MR 변경사항(diff) 가져오기
-     * 2. 관련 코드베이스 검색 (벡터 유사도)
-     * 3. 리뷰 가이드라인 생성
-     * 4. 컨텍스트 기반 리뷰 포인트 반환
+     * Pass 1: 규칙 기반 빠른 분석 (MrAnalyzer)
+     *   - GitLab API 플래그 직접 활용 (renamed_file, new_file, deleted_file)
+     *   - diff 텍스트 파싱 불필요!
+     *   - 빠른 이슈 감지 (보안, Breaking Change, 네이밍 등)
+     *
+     * Pass 2: RAG 기반 심층 분석 (선택적)
+     *   - 관련 코드베이스 검색
+     *   - 리뷰 가이드라인 생성
      */
     private fun reviewMergeRequestWithRag(project: String, mrId: Int): PluginResult {
-        if (codeKnowledgeService == null) {
-            return PluginResult(
-                success = false,
-                error = "RAG 서비스가 비활성화되어 있습니다. Qdrant/Ollama가 실행 중인지 확인하세요."
-            )
-        }
-
         return try {
-            // 1. MR 정보 및 변경사항 가져오기
-            val mrInfo = getMergeRequestDetails(project, mrId)
-            val changes = getMergeRequestChanges(project, mrId)
+            // 단일 API 호출로 MR 정보 + 변경사항 모두 가져오기
+            val changesResponse = getChangesResponseFull(project, mrId)
+
+            @Suppress("UNCHECKED_CAST")
+            val changes = changesResponse["changes"] as? List<Map<String, Any>> ?: emptyList()
 
             if (changes.isEmpty()) {
                 return PluginResult(
@@ -703,39 +706,115 @@ class GitLabPlugin(
                 )
             }
 
-            // 2. 변경된 파일들의 diff 분석
-            val allDiffs = changes.map { change ->
-                "${change["old_path"]} -> ${change["new_path"]}\n${change["diff"]}"
-            }.joinToString("\n\n")
+            // ====== Pass 1: 규칙 기반 빠른 분석 (MrAnalyzer) ======
+            val analysisResult = mrAnalyzer.analyze(changesResponse, changesResponse)
 
-            // 3. 관련 코드베이스 검색 (RAG)
-            val relatedCode = mutableListOf<CodeChunk>()
-            for (change in changes.take(5)) {  // 최대 5개 파일만 분석
-                val filePath = change["new_path"] as? String ?: continue
-                val fileContext = codeKnowledgeService.findRelevantCode(
-                    query = "file: $filePath code changes",
-                    projectId = project,
-                    topK = 3,
-                    minScore = 0.5f
+            // 빠른 이슈 결과 (API 플래그 기반)
+            val quickIssuesFormatted = analysisResult.quickIssues.map { issue ->
+                val icon = when (issue.severity) {
+                    IssueSeverity.ERROR -> "🚨"
+                    IssueSeverity.WARNING -> "⚠️"
+                    IssueSeverity.INFO -> "ℹ️"
+                }
+                mapOf(
+                    "severity" to issue.severity.name,
+                    "category" to issue.category,
+                    "message" to "$icon [${issue.category}] ${issue.message}",
+                    "suggestion" to issue.suggestion
                 )
-                relatedCode.addAll(fileContext)
             }
 
-            // 4. 리뷰 가이드라인 생성
-            val guidelines = codeKnowledgeService.findReviewGuidelines(allDiffs, project)
+            // 파일 분석 결과 (API 플래그 기반 - diff 파싱 불필요!)
+            val fileAnalysisData = mapOf(
+                "renamed" to analysisResult.fileAnalysis.renamed.map {
+                    mapOf("oldPath" to it.oldPath, "newPath" to it.newPath, "additions" to it.additions, "deletions" to it.deletions)
+                },
+                "added" to analysisResult.fileAnalysis.added.map {
+                    mapOf("path" to it.newPath, "additions" to it.additions)
+                },
+                "deleted" to analysisResult.fileAnalysis.deleted.map {
+                    mapOf("path" to it.oldPath, "deletions" to it.deletions)
+                },
+                "modified" to analysisResult.fileAnalysis.modified.map {
+                    mapOf("path" to it.newPath, "additions" to it.additions, "deletions" to it.deletions)
+                },
+                "totalFiles" to analysisResult.fileAnalysis.totalFiles,
+                "totalAdditions" to analysisResult.fileAnalysis.totalAdditions,
+                "totalDeletions" to analysisResult.fileAnalysis.totalDeletions
+            )
 
-            // 5. 리뷰 결과 구성
-            val reviewResult = buildReviewResult(mrInfo, changes, relatedCode, guidelines)
+            // ====== Pass 2: RAG 기반 심층 분석 (선택적) ======
+            var relatedCode = emptyList<CodeChunk>()
+            var guidelines = emptyList<ReviewGuideline>()
+
+            if (codeKnowledgeService != null) {
+                // 우선순위 파일만 RAG 검색
+                for (filePath in analysisResult.reviewContext.priorityFiles.take(5)) {
+                    val fileContext = codeKnowledgeService.findRelevantCode(
+                        query = "file: $filePath code changes",
+                        projectId = project,
+                        topK = 3,
+                        minScore = 0.5f
+                    )
+                    relatedCode = relatedCode + fileContext
+                }
+
+                // 리뷰 가이드라인 생성
+                val allDiffs = changes.take(5).mapNotNull { it["diff"] as? String }.joinToString("\n")
+                guidelines = codeKnowledgeService.findReviewGuidelines(allDiffs, project)
+            }
+
+            // 통합 결과 구성
+            val reviewResult = mapOf(
+                "mr" to mapOf(
+                    "iid" to analysisResult.mrInfo.iid,
+                    "title" to analysisResult.mrInfo.title,
+                    "author" to analysisResult.mrInfo.author,
+                    "source_branch" to analysisResult.mrInfo.sourceBranch,
+                    "target_branch" to analysisResult.mrInfo.targetBranch,
+                    "web_url" to analysisResult.mrInfo.webUrl
+                ),
+                "summary" to analysisResult.summary,
+                "fileAnalysis" to fileAnalysisData,
+                "quickIssues" to quickIssuesFormatted,
+                "priorityFiles" to analysisResult.reviewContext.priorityFiles,
+                "guidelines" to guidelines.map { g ->
+                    mapOf("rule" to g.rule, "category" to g.category, "severity" to g.severity)
+                },
+                "related_code" to relatedCode.take(5).map { chunk ->
+                    mapOf(
+                        "file" to chunk.filePath,
+                        "lines" to "${chunk.startLine}-${chunk.endLine}",
+                        "type" to chunk.chunkType,
+                        "relevance" to "%.2f".format(chunk.score)
+                    )
+                },
+                "review_prompt" to analysisResult.reviewContext.formattedPrompt
+            )
+
+            val issueCount = analysisResult.quickIssues.size
+            val ragInfo = if (codeKnowledgeService != null) {
+                ", ${guidelines.size}개 가이드라인, ${relatedCode.size}개 관련 코드"
+            } else ""
 
             PluginResult(
                 success = true,
                 data = reviewResult,
-                message = "MR !$mrId 리뷰가 완료되었습니다. ${guidelines.size}개의 가이드라인, ${relatedCode.size}개의 관련 코드 발견."
+                message = "MR !$mrId 분석 완료: ${analysisResult.summary}. ${issueCount}개 이슈 감지$ragInfo"
             )
         } catch (e: Exception) {
-            logger.error(e) { "Failed to review MR !$mrId with RAG" }
+            logger.error(e) { "Failed to review MR !$mrId" }
             PluginResult(false, error = "MR 리뷰 실패: ${e.message}")
         }
+    }
+
+    /**
+     * /changes API 전체 응답 가져오기 (MR 정보 + 변경사항 포함)
+     */
+    private fun getChangesResponseFull(project: String, mrId: Int): Map<String, Any> {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId/changes"
+        val response = apiGet(url)
+        return mapper.readValue(response)
     }
 
     /**

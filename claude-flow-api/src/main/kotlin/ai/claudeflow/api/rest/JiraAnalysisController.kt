@@ -4,6 +4,7 @@ import ai.claudeflow.core.plugin.PluginManager
 import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
 import ai.claudeflow.executor.ExecutionStatus
+import com.github.benmanes.caffeine.cache.Caffeine
 import kotlinx.coroutines.reactor.mono
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -11,6 +12,7 @@ import mu.KotlinLogging
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 import reactor.core.publisher.Mono
+import java.util.concurrent.TimeUnit
 
 private val logger = KotlinLogging.logger {}
 
@@ -27,6 +29,152 @@ class JiraAnalysisController(
     private val pluginManager: PluginManager,
     private val claudeExecutor: ClaudeExecutor
 ) {
+    companion object {
+        /**
+         * JQL 파싱 결과 (캐시용)
+         */
+        data class CachedJqlResponse(
+            val jql: String,
+            val explanation: String?,
+            val confidence: Double,
+            val warnings: List<String>?
+        )
+
+        /**
+         * JQL 변환 캐시 - 유사한 쿼리 결과를 5분간 캐싱하여 토큰 비용 절감
+         */
+        private val jqlCache = Caffeine.newBuilder()
+            .maximumSize(100)
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .build<String, CachedJqlResponse>()
+
+        /**
+         * 이슈 필드 제안 (캐시용)
+         */
+        data class CachedIssueFieldSuggestion(
+            val summary: String,
+            val description: String,
+            val issueType: String,
+            val priority: String,
+            val labels: List<String>?
+        )
+
+        /**
+         * 이슈 텍스트 분석 캐시 - 유사한 텍스트 결과를 5분간 캐싱
+         */
+        private val issueTextCache = Caffeine.newBuilder()
+            .maximumSize(100)
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .build<String, CachedIssueFieldSuggestion>()
+
+        /**
+         * 정적 시스템 프롬프트: JQL 변환 규칙 (캐시 가능)
+         * Anthropic API의 system 필드에 전달하면 캐싱 혜택을 받음
+         */
+        val JQL_SYSTEM_PROMPT = """
+            |당신은 Jira JQL 변환 전문가입니다. 사용자의 자연어 검색 요청을 정확한 JQL로 변환해주세요.
+            |
+            |## JQL 변환 규칙
+            |
+            |### 프로젝트 (project)
+            |- 프로젝트 키가 언급되면 해당 프로젝트로 필터링
+            |- "XX 프로젝트", "XX 티켓", "XX 이슈" 패턴 → project = XX (대문자로 변환)
+            |- 예: "dc 티켓 조회해줘" → project = DC
+            |- 예: "ccdc 이슈" → project = CCDC
+            |- 예: "mpa 관련" → project = MPA
+            |- **중요**: 사용자가 입력한 프로젝트 키를 그대로 대문자로 변환하여 사용. 유사한 다른 프로젝트로 추측하거나 변경하지 말 것
+            |- 프로젝트 키는 정확히 사용자가 말한 것만 사용 (dc → DC, ccdc → CCDC)
+            |
+            |### 담당자 (assignee)
+            |- "내 이슈", "나한테 할당된", "내가 담당" → assignee = currentUser()
+            |- "미할당", "담당자 없는" → assignee is EMPTY
+            |- "홍길동이 담당" → assignee = "홍길동"
+            |
+            |### 상태 (status)
+            |- "진행중", "작업중" → status = "In Progress"
+            |- "완료", "끝난", "해결된" → status = "Done" OR status = "Resolved"
+            |- "할일", "해야할" → status = "To Do"
+            |- "리뷰", "검토중" → status = "In Review"
+            |- "백로그" → status = "Backlog"
+            |
+            |### 이슈 타입 (issuetype)
+            |- "버그", "오류" → issuetype = Bug
+            |- "스토리", "기능" → issuetype = Story
+            |- "작업", "태스크" → issuetype = Task
+            |- "에픽" → issuetype = Epic
+            |
+            |### 우선순위 (priority)
+            |- "긴급", "높은 우선순위" → priority in (Highest, High)
+            |- "낮은 우선순위" → priority in (Low, Lowest)
+            |
+            |### 날짜 (created, updated)
+            |- "오늘" → created >= startOfDay()
+            |- "이번주" → created >= startOfWeek()
+            |- "이번달" → created >= startOfMonth()
+            |- "지난 7일", "최근 일주일" → created >= -7d
+            |- "지난달" → created >= -30d
+            |
+            |### 텍스트 검색
+            |- "로그인 관련" → text ~ "로그인"
+            |- "API 에러" → text ~ "API 에러"
+            |
+            |### 리포터 (reporter)
+            |- "내가 등록한", "내가 만든" → reporter = currentUser()
+            |
+            |## 응답 형식
+            |반드시 다음 JSON 형식으로만 응답하세요:
+            |```json
+            |{
+            |  "jql": "변환된 JQL 쿼리 (ORDER BY updated DESC 포함)",
+            |  "explanation": "변환 설명 (한국어)",
+            |  "confidence": 0.0-1.0 사이의 신뢰도,
+            |  "warnings": ["주의사항이 있으면 여기에"]
+            |}
+            |```
+            |
+            |주의: JSON 외의 다른 텍스트를 출력하지 마세요.
+        """.trimMargin()
+
+        /**
+         * 정적 시스템 프롬프트: 이슈 텍스트 분석 규칙 (캐시 가능)
+         */
+        val ISSUE_TEXT_SYSTEM_PROMPT = """
+            |당신은 Jira 이슈 생성을 도와주는 AI 어시스턴트입니다.
+            |사용자가 입력한 자연어 텍스트를 분석하여 적절한 Jira 이슈 필드를 제안해주세요.
+            |
+            |## 분석 지침
+            |
+            |### 이슈 타입 판단 기준
+            |- **Bug**: 오류, 버그, 안됨, 동작하지 않음, 크래시, 에러, 문제 발생
+            |- **Story**: 기능 추가, 새 기능, ~하고 싶다, ~하면 좋겠다, 요청
+            |- **Task**: 작업, 구현, 개발, 수정, 변경, 업데이트, 리팩토링
+            |- **Epic**: 대규모 기능, 프로젝트, 전체 개편
+            |
+            |### 우선순위 판단 기준
+            |- **Highest**: 긴급, 장애, 서비스 불가, 즉시, critical, blocker
+            |- **High**: 중요, 심각, 빠른 대응 필요
+            |- **Medium**: 일반적인 요청, 개선 사항
+            |- **Low**: 낮은 우선순위, 나중에, 시간날 때
+            |- **Lowest**: 아이디어, 제안, 검토 필요
+            |
+            |## 응답 형식
+            |반드시 다음 JSON 형식으로만 응답하세요:
+            |```json
+            |{
+            |  "summary": "이슈 제목 (간결하고 명확하게, 50자 이내)",
+            |  "description": "이슈 상세 설명 (Markdown 형식, 문제/배경/예상결과 포함)",
+            |  "issueType": "Bug|Story|Task|Epic 중 하나",
+            |  "priority": "Highest|High|Medium|Low|Lowest 중 하나",
+            |  "labels": ["관련 라벨들", "최대 3개"]
+            |}
+            |```
+            |
+            |주의:
+            |- JSON 외의 다른 텍스트를 출력하지 마세요
+            |- summary는 명사형으로 간결하게 작성
+            |- description은 구조화된 형태로 작성 (## 섹션 사용)
+        """.trimMargin()
+    }
 
     /**
      * 이슈 분석 - Claude가 이슈를 분석하고 구현 방향 제안
@@ -52,11 +200,11 @@ class JiraAnalysisController(
             AnalyzeResponse(success = false, error = "Invalid issue data")
         )
 
-        // 2. Claude에게 분석 요청
+        // 2. Claude에게 분석 요청 (비동기 실행)
         val prompt = buildAnalysisPrompt(issueData, request?.context)
 
         try {
-            val result = claudeExecutor.execute(ExecutionRequest(
+            val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = prompt,
                 workingDirectory = request?.projectPath ?: System.getProperty("user.dir"),
                 model = "claude-sonnet-4-20250514"
@@ -139,7 +287,8 @@ class JiraAnalysisController(
         """.trimMargin()
 
         try {
-            val result = claudeExecutor.execute(ExecutionRequest(
+            // 비동기 실행
+            val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = prompt,
                 workingDirectory = request.projectPath,
                 model = "claude-sonnet-4-20250514"
@@ -212,7 +361,8 @@ class JiraAnalysisController(
         """.trimMargin()
 
         try {
-            val result = claudeExecutor.execute(ExecutionRequest(
+            // 비동기 실행
+            val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = prompt,
                 workingDirectory = System.getProperty("user.dir"),
                 model = "claude-sonnet-4-20250514"
@@ -238,6 +388,11 @@ class JiraAnalysisController(
      *
      * 사용자의 자연어 검색 쿼리를 JQL로 변환합니다.
      * 예: "내가 진행중인 CCDC 버그" → project = CCDC AND assignee = currentUser() AND status = "In Progress" AND issuetype = Bug
+     *
+     * 성능 최적화:
+     * - JQL 캐시: 동일한 쿼리는 5분간 캐싱
+     * - 시스템 프롬프트 분리: Anthropic API 캐싱 혜택
+     * - 비동기 실행: executeAsync() 사용
      */
     @PostMapping("/nl-to-jql")
     fun convertNaturalLanguageToJql(
@@ -245,7 +400,22 @@ class JiraAnalysisController(
     ): Mono<ResponseEntity<NlToJqlResponse>> = mono {
         logger.info { "Converting natural language to JQL: ${request.query}" }
 
-        // 사용 가능한 프로젝트 목록 가져오기 (컨텍스트 제공)
+        // 1. 캐시 확인 - 동일한 쿼리는 캐시에서 반환
+        val cacheKey = request.query.trim().lowercase()
+        val cachedResponse = jqlCache.getIfPresent(cacheKey)
+        if (cachedResponse != null) {
+            logger.debug { "JQL cache hit: $cacheKey" }
+            return@mono ResponseEntity.ok(NlToJqlResponse(
+                success = true,
+                jql = cachedResponse.jql,
+                explanation = cachedResponse.explanation,
+                confidence = cachedResponse.confidence,
+                warnings = cachedResponse.warnings,
+                cached = true  // 캐시에서 반환됨을 표시
+            ))
+        }
+
+        // 2. 사용 가능한 프로젝트 목록 가져오기 (컨텍스트 제공)
         val projectsInfo = if (request.includeProjects == true) {
             val projectsResult = pluginManager.execute("jira", "projects", emptyMap())
             if (projectsResult.success) {
@@ -254,74 +424,35 @@ class JiraAnalysisController(
             } else null
         } else null
 
-        val prompt = """
-            |당신은 Jira JQL 변환 전문가입니다. 사용자의 자연어 검색 요청을 정확한 JQL로 변환해주세요.
-            |
+        // 3. 사용자 프롬프트만 구성 (시스템 프롬프트는 분리됨)
+        val userPrompt = """
             |## 자연어 쿼리
             |"${request.query}"
             |
             |${projectsInfo?.let { "## 사용 가능한 프로젝트\n$it\n" } ?: ""}
-            |
-            |## JQL 변환 규칙
-            |
-            |### 담당자 (assignee)
-            |- "내 이슈", "나한테 할당된", "내가 담당" → assignee = currentUser()
-            |- "미할당", "담당자 없는" → assignee is EMPTY
-            |- "홍길동이 담당" → assignee = "홍길동"
-            |
-            |### 상태 (status)
-            |- "진행중", "작업중" → status = "In Progress"
-            |- "완료", "끝난", "해결된" → status = "Done" OR status = "Resolved"
-            |- "할일", "해야할" → status = "To Do"
-            |- "리뷰", "검토중" → status = "In Review"
-            |- "백로그" → status = "Backlog"
-            |
-            |### 이슈 타입 (issuetype)
-            |- "버그", "오류" → issuetype = Bug
-            |- "스토리", "기능" → issuetype = Story
-            |- "작업", "태스크" → issuetype = Task
-            |- "에픽" → issuetype = Epic
-            |
-            |### 우선순위 (priority)
-            |- "긴급", "높은 우선순위" → priority in (Highest, High)
-            |- "낮은 우선순위" → priority in (Low, Lowest)
-            |
-            |### 날짜 (created, updated)
-            |- "오늘" → created >= startOfDay()
-            |- "이번주" → created >= startOfWeek()
-            |- "이번달" → created >= startOfMonth()
-            |- "지난 7일", "최근 일주일" → created >= -7d
-            |- "지난달" → created >= -30d
-            |
-            |### 텍스트 검색
-            |- "로그인 관련" → text ~ "로그인"
-            |- "API 에러" → text ~ "API 에러"
-            |
-            |### 리포터 (reporter)
-            |- "내가 등록한", "내가 만든" → reporter = currentUser()
-            |
-            |## 응답 형식
-            |반드시 다음 JSON 형식으로만 응답하세요:
-            |```json
-            |{
-            |  "jql": "변환된 JQL 쿼리 (ORDER BY updated DESC 포함)",
-            |  "explanation": "변환 설명 (한국어)",
-            |  "confidence": 0.0-1.0 사이의 신뢰도,
-            |  "warnings": ["주의사항이 있으면 여기에"]
-            |}
-            |```
-            |
-            |주의: JSON 외의 다른 텍스트를 출력하지 마세요.
         """.trimMargin()
 
         try {
-            val result = claudeExecutor.execute(ExecutionRequest(
-                prompt = prompt,
+            // 4. 비동기 실행 + 시스템 프롬프트 분리
+            val result = claudeExecutor.executeAsync(ExecutionRequest(
+                prompt = userPrompt,
+                systemPrompt = JQL_SYSTEM_PROMPT,  // 캐시 가능한 시스템 프롬프트
                 workingDirectory = System.getProperty("user.dir"),
                 model = "claude-sonnet-4-20250514"
             ))
 
             val response = parseJqlResponse(result.result ?: "")
+
+            // 5. 성공 시 캐시에 저장
+            if (response != null) {
+                jqlCache.put(cacheKey, CachedJqlResponse(
+                    jql = response.jql,
+                    explanation = response.explanation,
+                    confidence = response.confidence,
+                    warnings = response.warnings
+                ))
+                logger.debug { "JQL cached: $cacheKey -> ${response.jql}" }
+            }
 
             ResponseEntity.ok(NlToJqlResponse(
                 success = response != null,
@@ -387,7 +518,8 @@ class JiraAnalysisController(
         """.trimMargin()
 
         try {
-            val result = claudeExecutor.execute(ExecutionRequest(
+            // 비동기 실행
+            val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = prompt,
                 workingDirectory = System.getProperty("user.dir"),
                 model = "claude-sonnet-4-20250514"
@@ -423,6 +555,11 @@ class JiraAnalysisController(
     /**
      * 자연어 텍스트를 분석하여 이슈 필드 제안
      * 예: "로그인 페이지에서 비밀번호 입력 후 Enter 키가 안 먹어요" → Bug, High, 제목, 설명 생성
+     *
+     * 성능 최적화:
+     * - 이슈 텍스트 캐시: 동일한 텍스트는 5분간 캐싱
+     * - 시스템 프롬프트 분리: Anthropic API 캐싱 혜택
+     * - 비동기 실행: executeAsync() 사용
      */
     @PostMapping("/analyze-text")
     fun analyzeTextForIssue(
@@ -430,54 +567,52 @@ class JiraAnalysisController(
     ): Mono<ResponseEntity<AnalyzeTextResponse>> = mono {
         logger.info { "Analyzing text for issue creation: ${request.text.take(100)}..." }
 
-        val prompt = """
-            |당신은 Jira 이슈 생성을 도와주는 AI 어시스턴트입니다.
-            |사용자가 입력한 자연어 텍스트를 분석하여 적절한 Jira 이슈 필드를 제안해주세요.
-            |
+        // 1. 캐시 확인 - 동일한 텍스트는 캐시에서 반환
+        val cacheKey = request.text.trim().lowercase()
+        val cachedResponse = issueTextCache.getIfPresent(cacheKey)
+        if (cachedResponse != null) {
+            logger.debug { "Issue text cache hit: ${cacheKey.take(50)}..." }
+            return@mono ResponseEntity.ok(AnalyzeTextResponse(
+                success = true,
+                data = IssueFieldSuggestion(
+                    summary = cachedResponse.summary,
+                    description = cachedResponse.description,
+                    issueType = cachedResponse.issueType,
+                    priority = cachedResponse.priority,
+                    labels = cachedResponse.labels
+                ),
+                cached = true
+            ))
+        }
+
+        // 2. 사용자 프롬프트만 구성 (시스템 프롬프트는 분리됨)
+        val userPrompt = """
             |## 사용자 입력
             |"${request.text}"
-            |
-            |## 분석 지침
-            |
-            |### 이슈 타입 판단 기준
-            |- **Bug**: 오류, 버그, 안됨, 동작하지 않음, 크래시, 에러, 문제 발생
-            |- **Story**: 기능 추가, 새 기능, ~하고 싶다, ~하면 좋겠다, 요청
-            |- **Task**: 작업, 구현, 개발, 수정, 변경, 업데이트, 리팩토링
-            |- **Epic**: 대규모 기능, 프로젝트, 전체 개편
-            |
-            |### 우선순위 판단 기준
-            |- **Highest**: 긴급, 장애, 서비스 불가, 즉시, critical, blocker
-            |- **High**: 중요, 심각, 빠른 대응 필요
-            |- **Medium**: 일반적인 요청, 개선 사항
-            |- **Low**: 낮은 우선순위, 나중에, 시간날 때
-            |- **Lowest**: 아이디어, 제안, 검토 필요
-            |
-            |## 응답 형식
-            |반드시 다음 JSON 형식으로만 응답하세요:
-            |```json
-            |{
-            |  "summary": "이슈 제목 (간결하고 명확하게, 50자 이내)",
-            |  "description": "이슈 상세 설명 (Markdown 형식, 문제/배경/예상결과 포함)",
-            |  "issueType": "Bug|Story|Task|Epic 중 하나",
-            |  "priority": "Highest|High|Medium|Low|Lowest 중 하나",
-            |  "labels": ["관련 라벨들", "최대 3개"]
-            |}
-            |```
-            |
-            |주의:
-            |- JSON 외의 다른 텍스트를 출력하지 마세요
-            |- summary는 명사형으로 간결하게 작성
-            |- description은 구조화된 형태로 작성 (## 섹션 사용)
         """.trimMargin()
 
         try {
-            val result = claudeExecutor.execute(ExecutionRequest(
-                prompt = prompt,
+            // 3. 비동기 실행 + 시스템 프롬프트 분리
+            val result = claudeExecutor.executeAsync(ExecutionRequest(
+                prompt = userPrompt,
+                systemPrompt = ISSUE_TEXT_SYSTEM_PROMPT,  // 캐시 가능한 시스템 프롬프트
                 workingDirectory = System.getProperty("user.dir"),
                 model = "claude-sonnet-4-20250514"
             ))
 
             val response = parseIssueTextResponse(result.result ?: "")
+
+            // 4. 성공 시 캐시에 저장
+            if (response != null) {
+                issueTextCache.put(cacheKey, CachedIssueFieldSuggestion(
+                    summary = response.summary,
+                    description = response.description,
+                    issueType = response.issueType,
+                    priority = response.priority,
+                    labels = response.labels
+                ))
+                logger.debug { "Issue text cached: ${cacheKey.take(50)}..." }
+            }
 
             ResponseEntity.ok(AnalyzeTextResponse(
                 success = response != null,
@@ -755,7 +890,8 @@ data class NlToJqlResponse(
     val explanation: String? = null,
     val confidence: Double = 0.0,
     val warnings: List<String>? = null,
-    val error: String? = null
+    val error: String? = null,
+    val cached: Boolean = false  // 캐시에서 반환됨을 표시
 )
 
 data class AnalyzeTextRequest(
@@ -773,5 +909,6 @@ data class IssueFieldSuggestion(
 data class AnalyzeTextResponse(
     val success: Boolean,
     val data: IssueFieldSuggestion? = null,
-    val error: String? = null
+    val error: String? = null,
+    val cached: Boolean = false  // 캐시에서 반환됨을 표시
 )

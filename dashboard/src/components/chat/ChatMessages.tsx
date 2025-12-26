@@ -3,6 +3,8 @@ import { User, Bot, Sparkles, Clock, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ToolCallsList } from './ToolCallDisplay'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { ClarificationButtons } from './ClarificationButtons'
+import type { ClarificationRequest, ClarificationOption } from '../../types'
 
 interface ToolCall {
   toolId: string
@@ -18,6 +20,7 @@ interface Message {
   role: 'user' | 'assistant' | 'system'
   content: string
   toolCalls?: ToolCall[]
+  clarification?: ClarificationRequest  // 프로젝트 선택 등 Clarification UI
   metadata?: {
     agentId?: string
     agentName?: string
@@ -32,6 +35,7 @@ interface ChatMessagesProps {
   isStreaming: boolean
   currentToolCalls?: ToolCall[]
   streamingContent?: string
+  onClarificationSelect?: (option: ClarificationOption, context?: Record<string, unknown>) => void
 }
 
 // 타이핑 인디케이터
@@ -125,7 +129,15 @@ function EmptyState() {
 }
 
 // 메시지 버블
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({
+  message,
+  onClarificationSelect,
+  isLatest = false
+}: {
+  message: Message
+  onClarificationSelect?: (option: ClarificationOption, context?: Record<string, unknown>) => void
+  isLatest?: boolean
+}) {
   const isUser = message.role === 'user'
 
   return (
@@ -196,6 +208,14 @@ function MessageBubble({ message }: { message: Message }) {
             <MarkdownRenderer content={message.content} />
           )}
         </div>
+
+        {/* Clarification 버튼 UI (프로젝트 선택 등) */}
+        {!isUser && message.clarification && onClarificationSelect && isLatest && (
+          <ClarificationButtons
+            clarification={message.clarification}
+            onSelect={(option) => onClarificationSelect(option, message.clarification?.context)}
+          />
+        )}
       </div>
     </div>
   )
@@ -259,7 +279,8 @@ export function ChatMessages({
   messages,
   isStreaming,
   currentToolCalls = [],
-  streamingContent
+  streamingContent,
+  onClarificationSelect
 }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -276,8 +297,13 @@ export function ChatMessages({
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto">
       <div className="divide-y divide-border/30">
-        {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} />
+        {messages.map((message, index) => (
+          <MessageBubble
+            key={message.id}
+            message={message}
+            onClarificationSelect={onClarificationSelect}
+            isLatest={index === messages.length - 1 && !isStreaming}
+          />
         ))}
 
         {/* 스트리밍 중인 응답 */}

@@ -101,7 +101,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     }
 
     /**
-     * config/projects.json에서 프로젝트 로드
+     * config/projects.json에서 프로젝트 로드 (Upsert)
+     *
+     * 설정 파일의 값이 항상 최신으로 반영됨 (DB 값 덮어쓰기)
      */
     private fun loadProjectsFromConfig(configFile: File, workspacePath: String) {
         try {
@@ -109,32 +111,41 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
             val config: ProjectsFileConfig = mapper.readValue(configFile)
             val defaultBranch = config.defaultBranch ?: "develop"
 
-            val existingProjectIds = projectRepository.findAll().map { it.id }.toSet()
-            val existingAliasIds = projectAliasRepository.findAll().map { it.projectId }.toSet()
+            // 환경변수에서 GitLab 기본 그룹 로드 (예: sirius/ccds)
+            val gitlabGroup = System.getenv("GITLAB_GROUP")
+
+            var inserted = 0
+            var updated = 0
 
             config.projects.forEach { entry ->
-                // 프로젝트 등록
-                if (entry.id !in existingProjectIds) {
-                    val project = Project(
-                        id = entry.id,
-                        name = entry.name,
-                        description = entry.description,
-                        workingDirectory = "$workspacePath/${entry.path}",
-                        gitRemote = entry.gitRemote,
-                        defaultBranch = entry.defaultBranch ?: defaultBranch,
-                        isDefault = entry.isDefault ?: false
-                    )
-                    try {
-                        projectRepository.save(project)
-                        logger.info { "Loaded project from config: ${project.id}" }
-                    } catch (e: Exception) {
-                        logger.warn { "Failed to load project ${entry.id}: ${e.message}" }
-                    }
+                // GitLab 경로 결정: 명시적 gitlabPath > gitlabGroup 기반 자동 생성
+                val resolvedGitlabPath = entry.gitlabPath
+                    ?: gitlabGroup?.let { "$it/${entry.path}" }
+
+                val project = Project(
+                    id = entry.id,
+                    name = entry.name,
+                    description = entry.description,
+                    workingDirectory = "$workspacePath/${entry.path}",
+                    gitRemote = entry.gitRemote,
+                    gitlabPath = resolvedGitlabPath,
+                    defaultBranch = entry.defaultBranch ?: defaultBranch,
+                    isDefault = entry.isDefault ?: false
+                )
+
+                try {
+                    // save()는 내부적으로 INSERT OR REPLACE 사용 (upsert)
+                    val isNew = projectRepository.findById(entry.id) == null
+                    projectRepository.save(project)
+                    if (isNew) inserted++ else updated++
+                    logger.debug { "${if (isNew) "Inserted" else "Updated"} project: ${project.id} (gitlab: ${project.gitlabPath})" }
+                } catch (e: Exception) {
+                    logger.warn { "Failed to upsert project ${entry.id}: ${e.message}" }
                 }
 
-                // Aliases 등록
+                // Aliases도 Upsert (save가 INSERT OR REPLACE 사용)
                 val aliases = entry.aliases
-                if (!aliases.isNullOrEmpty() && entry.id !in existingAliasIds) {
+                if (!aliases.isNullOrEmpty()) {
                     val aliasEntity = ProjectAliasEntity(
                         projectId = entry.id,
                         patterns = aliases,
@@ -142,14 +153,13 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     )
                     try {
                         projectAliasRepository.save(aliasEntity)
-                        logger.info { "Loaded aliases for: ${entry.id}" }
                     } catch (e: Exception) {
-                        logger.warn { "Failed to load aliases for ${entry.id}: ${e.message}" }
+                        logger.warn { "Failed to upsert aliases for ${entry.id}: ${e.message}" }
                     }
                 }
             }
 
-            logger.info { "Loaded ${config.projects.size} projects from config/projects.json" }
+            logger.info { "Synced ${config.projects.size} projects from config/projects.json (inserted: $inserted, updated: $updated)" }
         } catch (e: Exception) {
             logger.error { "Failed to load projects from config: ${e.message}" }
         }
@@ -782,6 +792,7 @@ typealias TimeGranularity = ai.claudeflow.core.storage.repository.TimeGranularit
  */
 data class ProjectsFileConfig(
     val defaultBranch: String? = "develop",
+    val gitlabHost: String? = null,  // GitLab 인스턴스 URL (예: "https://gitlab.42dot.ai")
     val projects: List<ProjectFileEntry>
 )
 
@@ -791,6 +802,7 @@ data class ProjectFileEntry(
     val description: String? = null,
     val path: String,
     val gitRemote: String? = null,
+    val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "42dot/ccds-server")
     val defaultBranch: String? = null,
     val isDefault: Boolean? = false,
     val aliases: List<String>? = null

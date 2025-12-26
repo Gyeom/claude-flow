@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, ReactNode } from 'react'
 import { toast } from 'sonner'
+import type { ClarificationRequest, ClarificationOption } from '../types'
 
 interface ToolCall {
   toolId: string
@@ -10,11 +11,22 @@ interface ToolCall {
   status: 'running' | 'completed' | 'error'
 }
 
+/**
+ * 진행 상황 정보
+ */
+interface ProgressStatus {
+  step: string
+  message: string
+  timestamp: number
+  detail?: Record<string, unknown>
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
   content: string
   toolCalls?: ToolCall[]
+  clarification?: ClarificationRequest  // 프로젝트 선택 등 Clarification UI
   metadata?: {
     agentId?: string
     agentName?: string
@@ -29,6 +41,8 @@ interface ChatContextType {
   streamingContent: string
   currentToolCalls: ToolCall[]
   currentMetadata: Message['metadata']
+  progressStatus: ProgressStatus | null
+  currentClarification: ClarificationRequest | null
   isPanelOpen: boolean
   selectedProject: string | null
   selectedAgent: string | null
@@ -38,6 +52,7 @@ interface ChatContextType {
   closePanel: () => void
   togglePanel: () => void
   sendMessage: (content: string) => Promise<void>
+  sendClarificationResponse: (option: ClarificationOption, originalContext?: Record<string, unknown>) => Promise<void>
   stopStreaming: () => void
   clearMessages: () => void
 }
@@ -56,15 +71,28 @@ interface ChatProviderProps {
   children: ReactNode
 }
 
+// 세션 컨텍스트 타입 (후속 질문 시 에이전트 유지용)
+interface SessionContext {
+  lastAgentId?: string
+  lastTopic?: string  // 'mr-review', 'bug-fix' 등
+  mrNumber?: number
+  gitlabPath?: string
+  projectId?: string
+}
+
 export function ChatProvider({ children }: ChatProviderProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCall[]>([])
   const [currentMetadata, setCurrentMetadata] = useState<Message['metadata']>()
+  const [progressStatus, setProgressStatus] = useState<ProgressStatus | null>(null)
+  const [currentClarification, setCurrentClarification] = useState<ClarificationRequest | null>(null)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  // 세션 컨텍스트 (후속 질문 시 동일 에이전트 유지)
+  const [sessionContext, setSessionContext] = useState<SessionContext>({})
 
   const abortControllerRef = useRef<AbortController | null>(null)
 
@@ -77,15 +105,47 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setStreamingContent('')
     setCurrentToolCalls([])
     setCurrentMetadata(undefined)
+    setProgressStatus(null)
+    setCurrentClarification(null)
+    // 세션 컨텍스트도 초기화
+    setSessionContext({})
   }, [])
 
   const stopStreaming = useCallback(() => {
     abortControllerRef.current?.abort()
   }, [])
 
+  // 에이전트와 메시지로부터 토픽 감지
+  const detectTopic = (agentId: string, message: string): string | undefined => {
+    if (agentId === 'code-reviewer') {
+      if (/mr|merge\s*request|리뷰/i.test(message)) return 'mr-review'
+      if (/pr|pull\s*request/i.test(message)) return 'pr-review'
+      return 'code-review'
+    }
+    if (agentId === 'bug-fixer') return 'bug-fix'
+    if (agentId === 'refactor') return 'refactor'
+    if (agentId === 'test-writer') return 'test-writing'
+    if (agentId === 'security-reviewer') return 'security-review'
+    return undefined
+  }
+
+  // 메시지에서 MR 번호 추출
+  const extractMrNumber = (message: string): number | undefined => {
+    // MR/MR!/!123 형식
+    const mrMatch = message.match(/(?:MR|mr|!)\s*#?(\d+)/i)
+    if (mrMatch) return parseInt(mrMatch[1], 10)
+    // "merge request 123" 형식
+    const fullMatch = message.match(/merge\s*request\s*#?(\d+)/i)
+    if (fullMatch) return parseInt(fullMatch[1], 10)
+    return undefined
+  }
+
   const sendMessage = useCallback(async (content: string) => {
     const userMessage = content.trim()
     if (!userMessage || isStreaming) return
+
+    // Clarification 초기화
+    setCurrentClarification(null)
 
     // 사용자 메시지 추가
     const userMessageObj: Message = {
@@ -98,6 +158,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setStreamingContent('')
     setCurrentToolCalls([])
     setCurrentMetadata(undefined)
+    setProgressStatus(null)
 
     // 대화 히스토리 구성
     const chatMessages = [...messages, userMessageObj].map(m => ({
@@ -118,6 +179,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
           messages: chatMessages,
           projectId: selectedProject,
           agentId: selectedAgent,
+          // 세션 컨텍스트 전송 (후속 질문 시 에이전트 유지)
+          sessionContext: Object.keys(sessionContext).length > 0 ? sessionContext : undefined,
         }),
         signal: abortControllerRef.current.signal,
       })
@@ -224,14 +287,58 @@ export function ChatProvider({ children }: ChatProviderProps) {
                 routingMethod: data.routingMethod,
               }
               setCurrentMetadata(metadata)
+
+              // 세션 컨텍스트 업데이트 (후속 질문 시 동일 에이전트 유지)
+              if (data.agentId) {
+                const topic = detectTopic(data.agentId, userMessage)
+                const mrNum = extractMrNumber(userMessage)
+                setSessionContext(prev => ({
+                  ...prev,
+                  lastAgentId: data.agentId,
+                  lastTopic: topic,
+                  mrNumber: mrNum ?? prev.mrNumber,
+                  projectId: selectedProject ?? prev.projectId,
+                }))
+              }
               return false
+
+            case 'progress':
+              // 진행 상황 업데이트
+              setProgressStatus({
+                step: data.step,
+                message: data.message,
+                timestamp: data.timestamp || Date.now(),
+                detail: data.detail,
+              })
+              return false
+
+            case 'clarification':
+              // Clarification 요청 (프로젝트 선택 등)
+              const clarificationRequest: ClarificationRequest = {
+                type: data.type || 'options',
+                question: data.question,
+                options: data.options || [],
+                context: data.context,
+              }
+              setCurrentClarification(clarificationRequest)
+              // Clarification을 assistant 메시지로 추가
+              const clarificationMessage: Message = {
+                id: `clarification-${Date.now()}`,
+                role: 'assistant',
+                content: data.question,
+                clarification: clarificationRequest,
+              }
+              setMessages(prev => [...prev, clarificationMessage])
+              return true  // 스트림 종료 - 사용자 선택 대기
 
             case 'done':
               // 스트림 완료 - 루프 종료
+              setProgressStatus(null)
               return true
 
             case 'error':
               toast.error(data.message || 'An error occurred')
+              setProgressStatus(null)
               return true  // 에러 시에도 스트림 종료
           }
         } catch (err) {
@@ -251,9 +358,31 @@ export function ChatProvider({ children }: ChatProviderProps) {
       setIsStreaming(false)
       setStreamingContent('')
       setCurrentToolCalls([])
+      setProgressStatus(null)
       abortControllerRef.current = null
     }
-  }, [isStreaming, messages, selectedProject, selectedAgent])
+  }, [isStreaming, messages, selectedProject, selectedAgent, sessionContext])
+
+  /**
+   * Clarification 응답 전송
+   * 프로젝트 선택 등의 버튼 클릭 시 호출
+   */
+  const sendClarificationResponse = useCallback(async (
+    option: ClarificationOption,
+    originalContext?: Record<string, unknown>
+  ) => {
+    // 현재 clarification 초기화
+    setCurrentClarification(null)
+
+    // 원본 요청 + 선택된 옵션을 결합하여 새 메시지 생성
+    const originalPrompt = originalContext?.originalPrompt as string || ''
+    const enhancedMessage = originalPrompt
+      ? `${originalPrompt} [프로젝트: ${option.id}]`
+      : `선택: ${option.label} (${option.id})`
+
+    // 새 메시지로 전송
+    await sendMessage(enhancedMessage)
+  }, [sendMessage])
 
   const value: ChatContextType = {
     messages,
@@ -261,6 +390,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
     streamingContent,
     currentToolCalls,
     currentMetadata,
+    progressStatus,
+    currentClarification,
     isPanelOpen,
     selectedProject,
     selectedAgent,
@@ -270,6 +401,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     closePanel,
     togglePanel,
     sendMessage,
+    sendClarificationResponse,
     stopStreaming,
     clearMessages,
   }

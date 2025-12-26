@@ -5,7 +5,10 @@ import ai.claudeflow.core.model.AgentMatch
 import ai.claudeflow.core.model.RoutingMethod
 import ai.claudeflow.core.rag.FeedbackLearningService
 import ai.claudeflow.core.rag.AgentRecommendation
+import com.github.benmanes.caffeine.cache.Caffeine
 import mu.KotlinLogging
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 private val logger = KotlinLogging.logger {}
 
@@ -42,19 +45,73 @@ class AgentRouter(
             Regex("(수정|fix|고쳐|patch|debug)", RegexOption.IGNORE_CASE) to "bug-fixer",
             Regex("(설명|explain|뭐야|무엇|어떻게|how|what|why)", RegexOption.IGNORE_CASE) to "general"
         )
+
+        /**
+         * 라우팅 결과 캐시 - 동일한 메시지는 5분간 캐싱
+         * 성능 최적화: 반복되는 라우팅 연산 회피
+         */
+        private val routingCache = Caffeine.newBuilder()
+            .maximumSize(500)
+            .expireAfterWrite(5, TimeUnit.MINUTES)
+            .build<String, AgentMatch>()
+
+        // 캐시 통계
+        private val cacheHits = AtomicLong(0)
+        private val cacheMisses = AtomicLong(0)
+
+        /**
+         * 라우팅 캐시 통계 반환
+         */
+        fun getCacheStats(): Map<String, Any> {
+            val hits = cacheHits.get()
+            val misses = cacheMisses.get()
+            val total = hits + misses
+            val hitRate = if (total > 0) (hits.toDouble() / total * 100).let { "%.2f%%".format(it) } else "N/A"
+            return mapOf(
+                "cacheHits" to hits,
+                "cacheMisses" to misses,
+                "cacheSize" to routingCache.estimatedSize(),
+                "hitRate" to hitRate
+            )
+        }
+
+        /**
+         * 라우팅 캐시 초기화
+         */
+        fun clearCache() {
+            routingCache.invalidateAll()
+            cacheHits.set(0)
+            cacheMisses.set(0)
+            logger.info { "Routing cache cleared" }
+        }
     }
 
     /**
      * 메시지를 분석하여 가장 적합한 에이전트 선택
      *
+     * 성능 최적화:
+     * - 라우팅 결과 캐싱: 동일한 메시지는 5분간 캐싱
+     * - 캐시 키: 정규화된 메시지
+     *
      * @param message 사용자 메시지
      * @param userId 사용자 ID (피드백 학습용, 선택적)
      */
     fun route(message: String, userId: String? = null): AgentMatch {
-        val normalizedMessage = message.lowercase()
+        val normalizedMessage = message.lowercase().trim()
         val enabledAgents = agents.filter { it.enabled }
 
-        // 0. 피드백 학습 기반 추천 (유사 쿼리 분석)
+        // 0. 캐시 확인 - userId가 없는 일반 라우팅만 캐싱 (피드백 학습은 사용자별로 다를 수 있음)
+        if (userId == null) {
+            val cached = routingCache.getIfPresent(normalizedMessage)
+            if (cached != null) {
+                cacheHits.incrementAndGet()
+                logger.debug { "Routing cache hit: ${cached.agent.id}" }
+                return cached
+            }
+            cacheMisses.incrementAndGet()
+        }
+
+        // 1. 피드백 학습 기반 추천 (유사 쿼리 분석)
         if (userId != null && feedbackLearningService != null) {
             feedbackLearningMatch(message, userId, enabledAgents)?.let {
                 logger.debug { "Feedback learning match: ${it.agent.id} (confidence: ${it.confidence})" }
@@ -62,39 +119,45 @@ class AgentRouter(
             }
         }
 
-        // 1. 키워드 매칭 (가장 빠름, 0.95 confidence)
+        // 2. 키워드 매칭 (가장 빠름, 0.95 confidence)
         keywordMatch(normalizedMessage, enabledAgents)?.let { match ->
             // 피드백으로 점수 조정
             val adjustedMatch = adjustMatchWithFeedback(match, userId)
             logger.debug { "Keyword match: ${adjustedMatch.agent.id}" }
+            // 캐시 저장 (userId가 없는 경우만)
+            if (userId == null) routingCache.put(normalizedMessage, adjustedMatch)
             return adjustedMatch
         }
 
-        // 2. 정규식 패턴 매칭 (0.85 confidence)
+        // 3. 정규식 패턴 매칭 (0.85 confidence)
         patternMatch(normalizedMessage, enabledAgents)?.let { match ->
             val adjustedMatch = adjustMatchWithFeedback(match, userId)
             logger.debug { "Pattern match: ${adjustedMatch.agent.id}" }
+            if (userId == null) routingCache.put(normalizedMessage, adjustedMatch)
             return adjustedMatch
         }
 
-        // 3. 시맨틱 검색 (벡터 유사도, 선택적)
+        // 4. 시맨틱 검색 (벡터 유사도, 선택적)
         semanticRouter?.classify(message, enabledAgents)?.let { match ->
             val adjustedMatch = adjustMatchWithFeedback(match, userId)
             logger.debug { "Semantic match: ${adjustedMatch.agent.id}" }
+            if (userId == null) routingCache.put(normalizedMessage, adjustedMatch)
             return adjustedMatch
         }
 
-        // 4. 기본 에이전트로 폴백
+        // 5. 기본 에이전트로 폴백
         val defaultAgent = enabledAgents.find { it.id == "general" }
             ?: enabledAgents.firstOrNull()
             ?: Agent.GENERAL
 
         logger.debug { "Fallback to default: ${defaultAgent.id}" }
-        return AgentMatch(
+        val fallbackMatch = AgentMatch(
             agent = defaultAgent,
             confidence = 0.5,
             matchedKeyword = null
         )
+        if (userId == null) routingCache.put(normalizedMessage, fallbackMatch)
+        return fallbackMatch
     }
 
     /**

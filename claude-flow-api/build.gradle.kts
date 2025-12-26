@@ -33,6 +33,9 @@ dependencies {
     // JSON
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 
+    // Caching
+    implementation("com.github.ben-manes.caffeine:caffeine:3.1.8")
+
     // DateTime
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.6.2")
 
