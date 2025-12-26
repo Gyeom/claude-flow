@@ -130,7 +130,8 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     gitRemote = entry.gitRemote,
                     gitlabPath = resolvedGitlabPath,
                     defaultBranch = entry.defaultBranch ?: defaultBranch,
-                    isDefault = entry.isDefault ?: false
+                    isDefault = entry.isDefault ?: false,
+                    aliases = entry.aliases ?: emptyList()
                 )
 
                 try {
@@ -187,6 +188,10 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     output_tokens INTEGER DEFAULT 0,
                     cost REAL,
                     error TEXT,
+                    model TEXT,
+                    source TEXT,
+                    routing_method TEXT,
+                    routing_confidence REAL,
                     created_at TEXT NOT NULL
                 )
             """)
@@ -223,6 +228,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     allowed_tools TEXT,
                     disallowed_tools TEXT,
                     fallback_agent_id TEXT DEFAULT 'general',
+                    aliases TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -403,7 +409,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 "disallowed_tools" to "TEXT",
                 "fallback_agent_id" to "TEXT DEFAULT 'general'",
                 "updated_at" to "TEXT",
-                "created_at" to "TEXT"
+                "created_at" to "TEXT",
+                "gitlab_path" to "TEXT",
+                "aliases" to "TEXT"
             )
 
             for ((column, definition) in newProjectColumns) {
@@ -411,6 +419,32 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     try {
                         stmt.executeUpdate("ALTER TABLE projects ADD COLUMN $column $definition")
                         logger.info { "Migrated: Added column $column to projects table" }
+                    } catch (e: Exception) {
+                        logger.warn { "Migration skipped for $column: ${e.message}" }
+                    }
+                }
+            }
+
+            // executions 테이블에 새 컬럼 추가 (기존 테이블에 없을 경우)
+            val executionColumns = mutableSetOf<String>()
+            stmt.executeQuery("PRAGMA table_info(executions)").use { rs ->
+                while (rs.next()) {
+                    executionColumns.add(rs.getString("name"))
+                }
+            }
+
+            val newExecutionColumns = mapOf(
+                "model" to "TEXT",
+                "source" to "TEXT",
+                "routing_method" to "TEXT",
+                "routing_confidence" to "REAL"
+            )
+
+            for ((column, definition) in newExecutionColumns) {
+                if (!executionColumns.contains(column)) {
+                    try {
+                        stmt.executeUpdate("ALTER TABLE executions ADD COLUMN $column $definition")
+                        logger.info { "Migrated: Added column $column to executions table" }
                     } catch (e: Exception) {
                         logger.warn { "Migration skipped for $column: ${e.message}" }
                     }

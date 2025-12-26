@@ -161,8 +161,10 @@ class KnowledgeVectorService(
                 "doc_id" to project.id,
                 "name" to project.name,
                 "description" to (project.description ?: ""),
+                "aliases" to project.aliases,
                 "working_directory" to project.workingDirectory,
                 "git_remote" to (project.gitRemote ?: ""),
+                "gitlab_path" to (project.gitlabPath ?: ""),
                 "default_branch" to project.defaultBranch,
                 "is_default" to project.isDefault,
                 "content" to content,
@@ -548,8 +550,12 @@ class KnowledgeVectorService(
             appendLine("프로젝트: ${project.name}")
             appendLine("프로젝트 ID: ${project.id}")
             project.description?.let { appendLine("설명: $it") }
+            if (project.aliases.isNotEmpty()) {
+                appendLine("별칭: ${project.aliases.joinToString(", ")}")
+            }
             appendLine("작업 디렉토리: ${project.workingDirectory}")
             project.gitRemote?.let { appendLine("Git 리포지토리: $it") }
+            project.gitlabPath?.let { appendLine("GitLab 경로: $it") }
             appendLine("기본 브랜치: ${project.defaultBranch}")
             if (project.isDefault) appendLine("기본 프로젝트입니다.")
         }
@@ -565,6 +571,9 @@ class KnowledgeVectorService(
                 if (project.isDefault) append(" [기본]")
                 appendLine()
                 project.description?.let { appendLine("   - $it") }
+                if (project.aliases.isNotEmpty()) {
+                    appendLine("   - 별칭: ${project.aliases.joinToString(", ")}")
+                }
             }
             appendLine()
             appendLine("프로젝트 관련 질문: 어떤 프로젝트, 프로젝트 목록, 관리하는 프로젝트, 등록된 프로젝트")

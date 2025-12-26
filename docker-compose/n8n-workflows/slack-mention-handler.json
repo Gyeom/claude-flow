@@ -166,7 +166,7 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/execute-with-routing",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, maxTurns: 50, conversationHistory: $json.conversationHistory, channel: $json.channel, threadTs: $json.threadTs, userId: $json.user }) }}",
+        "jsonBody": "={{ JSON.stringify({ prompt: $json.text, maxTurns: 50, conversationHistory: $json.conversationHistory, channel: $json.channel, threadTs: $json.threadTs, userId: $json.user, source: 'slack' }) }}",
         "options": { "timeout": 900000 }
       },
       "id": "execute-claude",

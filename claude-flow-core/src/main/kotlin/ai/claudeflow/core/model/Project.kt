@@ -39,6 +39,7 @@ data class Project(
     val allowedTools: List<String> = emptyList(),
     val disallowedTools: List<String> = emptyList(),
     val fallbackAgentId: String = "general",
+    val aliases: List<String> = emptyList(),  // 프로젝트 별칭 (RAG 검색용)
     val createdAt: String? = null,
     val updatedAt: String? = null
 ) {

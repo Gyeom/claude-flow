@@ -575,7 +575,15 @@ class ClaudeFlowController(
             durationMs = result.durationMs,
             inputTokens = result.usage?.inputTokens ?: 0,
             outputTokens = result.usage?.outputTokens ?: 0,
-            error = result.error
+            error = result.error,
+            model = request.model ?: match.agent.model,
+            source = request.source ?: if (request.channel != null) "slack" else "api",
+            cost = result.usage?.let { usage ->
+                // Sonnet 4 기준 비용 계산 (input: $0.003/1K, output: $0.015/1K)
+                (usage.inputTokens * 0.000003) + (usage.outputTokens * 0.000015)
+            },
+            routingMethod = match.method.name.lowercase(),
+            routingConfidence = match.confidence
         )
 
         storage?.let { store ->
@@ -913,7 +921,8 @@ data class ExecuteRequest(
     val conversationHistory: List<ConversationMessage>? = null,
     val channel: String? = null,
     val userId: String? = null,
-    val threadTs: String? = null
+    val threadTs: String? = null,
+    val source: String? = null  // slack, webhook, api, etc.
 )
 
 data class ConversationMessage(

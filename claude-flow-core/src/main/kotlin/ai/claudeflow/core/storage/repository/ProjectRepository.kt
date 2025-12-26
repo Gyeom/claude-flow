@@ -44,6 +44,9 @@ class ProjectRepository(
                 objectMapper.readValue(it)
             } ?: emptyList(),
             fallbackAgentId = rs.getString("fallback_agent_id") ?: "general",
+            aliases = rs.getString("aliases")?.let {
+                objectMapper.readValue(it)
+            } ?: emptyList(),
             createdAt = rs.getString("created_at"),
             updatedAt = rs.getString("updated_at")
         )
@@ -70,6 +73,7 @@ class ProjectRepository(
                 "allowed_tools" to objectMapper.writeValueAsString(entity.allowedTools),
                 "disallowed_tools" to objectMapper.writeValueAsString(entity.disallowedTools),
                 "fallback_agent_id" to entity.fallbackAgentId,
+                "aliases" to objectMapper.writeValueAsString(entity.aliases),
                 "created_at" to (entity.createdAt ?: now),
                 "updated_at" to now
             )

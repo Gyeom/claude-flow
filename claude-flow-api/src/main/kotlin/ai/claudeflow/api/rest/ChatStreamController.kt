@@ -12,11 +12,15 @@ import ai.claudeflow.core.ratelimit.RateLimiter
 import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.core.routing.AgentRouter
 import ai.claudeflow.core.storage.Storage
+import ai.claudeflow.core.storage.ExecutionRecord
 import ai.claudeflow.executor.*
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.reactor.mono
+import kotlinx.coroutines.CoroutineScope
 import mu.KotlinLogging
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -328,15 +332,39 @@ class ChatStreamController(
                         "응답 생성 중..."
                     ))
 
-                    // 스트리밍 실행
+                    // 스트리밍 실행 (실행 기록 저장 포함)
+                    val usedModel = request.model ?: agentMatch.agent.model
                     claudeExecutor.executeStreaming(executionRequest)
                         .onEach { event ->
                             val sseEvent = when (event) {
                                 is StreamingEvent.Text -> buildTextEvent(event.content)
                                 is StreamingEvent.ToolStart -> buildToolStartEvent(event)
                                 is StreamingEvent.ToolEnd -> buildToolEndEvent(event)
-                                is StreamingEvent.Done -> buildDoneEvent(event, agentMatch.agent.id)
-                                is StreamingEvent.Error -> buildErrorEvent(event.message)
+                                is StreamingEvent.Done -> {
+                                    // 📊 ExecutionRecord 저장 (통계용)
+                                    saveExecutionRecord(
+                                        event = event,
+                                        prompt = lastUserMessage,
+                                        agentMatch = agentMatch,
+                                        projectId = projectId,
+                                        userId = request.userId,
+                                        model = usedModel
+                                    )
+                                    buildDoneEvent(event, agentMatch.agent.id)
+                                }
+                                is StreamingEvent.Error -> {
+                                    // 에러도 기록
+                                    saveExecutionRecordOnError(
+                                        requestId = event.requestId,
+                                        prompt = lastUserMessage,
+                                        error = event.message,
+                                        agentMatch = agentMatch,
+                                        projectId = projectId,
+                                        userId = request.userId,
+                                        model = usedModel
+                                    )
+                                    buildErrorEvent(event.message)
+                                }
                             }
                             sink.next(sseEvent)
                         }
@@ -620,6 +648,101 @@ class ChatStreamController(
             .event("error")
             .data(data)
             .build()
+    }
+
+    /**
+     * 실행 기록 저장 (성공 시) - 비동기
+     * Chat 스트리밍 완료 후 통계용으로 ExecutionRecord 저장
+     * 스트리밍 응답에 영향을 주지 않도록 백그라운드에서 처리
+     */
+    private fun saveExecutionRecord(
+        event: StreamingEvent.Done,
+        prompt: String,
+        agentMatch: AgentMatch,
+        projectId: String,
+        userId: String?,
+        model: String
+    ) {
+        storage?.let { store ->
+            // 비동기로 저장 (스트리밍 블로킹 방지)
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val record = ExecutionRecord(
+                        id = event.requestId,
+                        prompt = prompt.take(1000),
+                        result = event.result?.take(5000),
+                        status = "SUCCESS",
+                        agentId = agentMatch.agent.id,
+                        projectId = projectId.takeIf { it != "default" },
+                        userId = userId,
+                        channel = null,  // Chat은 channel 없음
+                        threadTs = null,
+                        replyTs = null,
+                        durationMs = event.durationMs,
+                        inputTokens = event.usage?.inputTokens ?: 0,
+                        outputTokens = event.usage?.outputTokens ?: 0,
+                        cost = event.cost ?: event.usage?.let { usage ->
+                            (usage.inputTokens * 0.000003) + (usage.outputTokens * 0.000015)
+                        },
+                        error = null,
+                        model = model,
+                        source = "chat",  // Chat 페이지에서의 요청
+                        routingMethod = agentMatch.method.name.lowercase(),
+                        routingConfidence = agentMatch.confidence
+                    )
+                    store.saveExecution(record)
+                    logger.debug { "Chat execution saved: ${event.requestId}" }
+                } catch (e: Exception) {
+                    logger.warn { "Failed to save chat execution: ${e.message}" }
+                }
+            }
+        }
+    }
+
+    /**
+     * 실행 기록 저장 (에러 시) - 비동기
+     */
+    private fun saveExecutionRecordOnError(
+        requestId: String,
+        prompt: String,
+        error: String,
+        agentMatch: AgentMatch,
+        projectId: String,
+        userId: String?,
+        model: String
+    ) {
+        storage?.let { store ->
+            // 비동기로 저장 (스트리밍 블로킹 방지)
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val record = ExecutionRecord(
+                        id = requestId,
+                        prompt = prompt.take(1000),
+                        result = null,
+                        status = "ERROR",
+                        agentId = agentMatch.agent.id,
+                        projectId = projectId.takeIf { it != "default" },
+                        userId = userId,
+                        channel = null,
+                        threadTs = null,
+                        replyTs = null,
+                        durationMs = 0,
+                        inputTokens = 0,
+                        outputTokens = 0,
+                        cost = null,
+                        error = error,
+                        model = model,
+                        source = "chat",
+                        routingMethod = agentMatch.method.name.lowercase(),
+                        routingConfidence = agentMatch.confidence
+                    )
+                    store.saveExecution(record)
+                    logger.debug { "Chat error execution saved: $requestId" }
+                } catch (e: Exception) {
+                    logger.warn { "Failed to save chat error execution: ${e.message}" }
+                }
+            }
+        }
     }
 
     /**

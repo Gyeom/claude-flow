@@ -9,6 +9,7 @@ import {
   TrendingDown,
   RefreshCw,
   Shield,
+  Hourglass,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { ChartContainer } from '@/components/Chart'
@@ -38,22 +39,26 @@ const PERIODS = [
 ]
 
 const ERROR_COLORS: Record<string, string> = {
-  TIMEOUT: '#f59e0b',
-  RATE_LIMIT: '#8b5cf6',
-  INVALID_REQUEST: '#ef4444',
-  NETWORK_ERROR: '#3b82f6',
-  AUTHENTICATION: '#ec4899',
-  INTERNAL_ERROR: '#6b7280',
+  timeout: '#f59e0b',
+  rate_limit: '#8b5cf6',
+  max_turns: '#f97316',
+  network_error: '#3b82f6',
+  invalid_request: '#ef4444',
+  authentication: '#ec4899',
+  internal_error: '#6b7280',
+  other: '#94a3b8',
   default: '#94a3b8',
 }
 
 const ERROR_ICONS: Record<string, typeof AlertTriangle> = {
-  TIMEOUT: Clock,
-  RATE_LIMIT: RefreshCw,
-  INVALID_REQUEST: XCircle,
-  NETWORK_ERROR: AlertCircle,
-  AUTHENTICATION: Shield,
-  INTERNAL_ERROR: AlertTriangle,
+  timeout: Clock,
+  rate_limit: RefreshCw,
+  max_turns: Hourglass,
+  network_error: AlertCircle,
+  invalid_request: XCircle,
+  authentication: Shield,
+  internal_error: AlertTriangle,
+  other: AlertTriangle,
 }
 
 export function Errors() {

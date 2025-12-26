@@ -351,22 +351,25 @@ class AnalyticsRepository(
     // ==================== Time Series APIs ====================
 
     /**
-     * Get request source statistics (Slack, API, etc.)
-     * Uses channel field to determine source type
+     * Get request source statistics (Slack, API, webhook, n8n, etc.)
+     * Uses source field if available, otherwise infers from channel field
      */
     fun getSourceStats(dateRange: DateRange): List<SourceStats> {
         return executeQuery(
             """
             SELECT
-                CASE
-                    WHEN channel IS NOT NULL AND channel != '' THEN 'slack'
-                    ELSE 'api'
-                END as source,
+                COALESCE(
+                    NULLIF(source, ''),
+                    CASE
+                        WHEN channel IS NOT NULL AND channel != '' THEN 'slack'
+                        ELSE 'api'
+                    END
+                ) as source_type,
                 COUNT(*) as requests,
                 SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful
             FROM executions
             WHERE created_at BETWEEN ? AND ?
-            GROUP BY source
+            GROUP BY source_type
             ORDER BY requests DESC
             """.trimIndent(),
             dateRange.from.toString(), dateRange.to.toString()
@@ -374,7 +377,7 @@ class AnalyticsRepository(
             val requests = it.getLong("requests")
             val successful = it.getLong("successful")
             SourceStats(
-                source = it.getString("source"),
+                source = it.getString("source_type"),
                 requests = requests,
                 successRate = if (requests > 0) successful.toDouble() / requests else 0.0
             )

@@ -35,6 +35,10 @@ class ExecutionRepository(
             outputTokens = rs.getInt("output_tokens"),
             cost = rs.getObject("cost") as? Double,
             error = rs.getString("error"),
+            model = rs.getString("model"),
+            source = rs.getString("source"),
+            routingMethod = rs.getString("routing_method"),
+            routingConfidence = rs.getObject("routing_confidence") as? Double,
             createdAt = Instant.parse(rs.getString("created_at"))
         )
     }
@@ -59,6 +63,10 @@ class ExecutionRepository(
                 "output_tokens" to entity.outputTokens,
                 "cost" to entity.cost,
                 "error" to entity.error,
+                "model" to entity.model,
+                "source" to entity.source,
+                "routing_method" to entity.routingMethod,
+                "routing_confidence" to entity.routingConfidence,
                 "created_at" to entity.createdAt.toString()
             )
             .execute()
@@ -230,7 +238,10 @@ class ExecutionRepository(
                     WHEN error LIKE '%timeout%' THEN 'timeout'
                     WHEN error LIKE '%rate limit%' THEN 'rate_limit'
                     WHEN error LIKE '%max_turns%' THEN 'max_turns'
-                    WHEN error LIKE '%connection%' THEN 'connection'
+                    WHEN error LIKE '%network%' OR error LIKE '%connection%' THEN 'network_error'
+                    WHEN error LIKE '%invalid%' OR error LIKE '%bad request%' THEN 'invalid_request'
+                    WHEN error LIKE '%auth%' OR error LIKE '%unauthorized%' OR error LIKE '%forbidden%' THEN 'authentication'
+                    WHEN error LIKE '%internal%' OR error LIKE '%server error%' THEN 'internal_error'
                     ELSE 'other'
                 END as error_type,
                 COUNT(*) as count
