@@ -1268,12 +1268,15 @@ export const knowledgeApi = {
     return response.json()
   },
 
-  // Fetch URL
-  fetchUrl: (url: string, title?: string, projectId?: string, autoSync = false) =>
-    fetchApi<KnowledgeDocument>('/knowledge/url', {
+  // Fetch URL (자동으로 Figma URL 감지)
+  fetchUrl: (url: string, title?: string, projectId?: string, autoSync = false) => {
+    // Figma URL 자동 감지
+    const sourceType = url.includes('figma.com') ? 'FIGMA' : undefined
+    return fetchApi<KnowledgeDocument>('/knowledge/url', {
       method: 'POST',
-      body: JSON.stringify({ url, title, projectId, autoSync }),
-    }),
+      body: JSON.stringify({ url, title, projectId, autoSync, sourceType }),
+    })
+  },
 
   // Re-index document
   reindexDocument: (id: string) =>

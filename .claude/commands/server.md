@@ -14,7 +14,14 @@ Claude Flow 백엔드 서버를 관리합니다.
 ## Instructions
 
 ### 1. 환경 변수 로드
-docker-compose/.env 파일에서 환경 변수를 읽어서 사용하세요:
+두 개의 .env 파일에서 환경 변수를 읽어서 사용하세요:
+
+**프로젝트 루트 .env** (API 키)
+- FIGMA_ACCESS_TOKEN
+- GITLAB_TOKEN
+- JIRA_API_TOKEN
+
+**docker-compose/.env** (Slack/워크스페이스)
 - SLACK_APP_TOKEN
 - SLACK_BOT_TOKEN
 - WORKSPACE_PATH (기본값: <project-root>/data)
@@ -29,8 +36,15 @@ lsof -i :8080 | head -3
 
 **start**
 ```bash
-# 환경 변수를 인라인으로 전달해야 함
-SLACK_APP_TOKEN="..." SLACK_BOT_TOKEN="..." WORKSPACE_PATH="..." ./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
+# 두 .env 파일에서 환경 변수 로드 후 인라인 전달
+# 1. 루트 .env와 docker-compose/.env 모두 읽기
+# 2. export로 변환하여 Gradle에 전달
+
+# 예시 (실제 실행 시):
+cd /path/to/claude-flow
+eval $(grep -v '^#' .env | xargs -I {} echo export {})
+eval $(grep -v '^#' docker-compose/.env | xargs -I {} echo export {})
+./gradlew :claude-flow-app:bootRun > /tmp/claude-flow-server.log 2>&1 &
 ```
 
 **stop**

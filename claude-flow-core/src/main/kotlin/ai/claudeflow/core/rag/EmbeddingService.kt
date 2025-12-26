@@ -58,6 +58,30 @@ class EmbeddingService(
         .build()
     private val objectMapper = jacksonObjectMapper()
 
+    init {
+        // 서버 시작 시 모델 워밍업 (백그라운드)
+        Thread {
+            try {
+                logger.info { "Warming up embedding model: $model" }
+                val warmupRequest = mapOf(
+                    "model" to model,
+                    "input" to "warmup",
+                    "keep_alive" to "24h"
+                )
+                val request = HttpRequest.newBuilder()
+                    .uri(URI.create("$ollamaUrl/api/embed"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(warmupRequest)))
+                    .timeout(Duration.ofSeconds(60))
+                    .build()
+                httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+                logger.info { "Embedding model warmed up successfully" }
+            } catch (e: Exception) {
+                logger.warn { "Failed to warm up embedding model: ${e.message}" }
+            }
+        }.start()
+    }
+
     companion object {
         // 모델별 차원
         val MODEL_DIMENSIONS = mapOf(
@@ -324,7 +348,7 @@ class EmbeddingService(
         val requestBody = mapOf(
             "model" to model,
             "input" to texts,
-            "keep_alive" to "5m",  // 모델 언로딩 방지 (5분)
+            "keep_alive" to "24h",  // 모델 언로딩 방지 (24시간)
             "truncate" to true     // 컨텍스트 초과 시 자동 자르기
         )
 
@@ -359,7 +383,7 @@ class EmbeddingService(
         val requestBody = mapOf(
             "model" to model,
             "prompt" to text,
-            "keep_alive" to "5m"  // 모델 언로딩 방지
+            "keep_alive" to "24h"  // 모델 언로딩 방지 (24시간)
         )
 
         val request = HttpRequest.newBuilder()

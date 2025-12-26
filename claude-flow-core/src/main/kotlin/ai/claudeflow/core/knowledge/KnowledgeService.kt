@@ -497,7 +497,7 @@ class KnowledgeService(
         // 3. 모든 Frame 이미지 export (배치 처리, Figma API 제한 고려)
         // Figma Images API는 한 번에 최대 500개 노드 지원
         val frameImages = mutableMapOf<String, String>()
-        val batchSize = 50  // 안정적인 배치 크기
+        val batchSize = 10  // Figma Render timeout 방지 (큰 파일용)
         val frameBatches = topLevelFrames.chunked(batchSize)
 
         logger.info { "Exporting ${topLevelFrames.size} frames in ${frameBatches.size} batches..." }
