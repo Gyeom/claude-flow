@@ -16,8 +16,8 @@ RAG 인프라(Qdrant, Ollama)를 관리합니다. 거의 재시작할 일 없음
 ### status (기본)
 ```bash
 echo "=== Qdrant (6333) ==="
-if curl -s http://localhost:6333/collections >/dev/null 2>&1; then
-  collections=$(curl -s http://localhost:6333/collections | jq -r '.result.collections | length')
+if curl -s --max-time 2 http://localhost:6333/collections >/dev/null 2>&1; then
+  collections=$(curl -s --max-time 2 http://localhost:6333/collections | jq -r '.result.collections | length')
   echo "✓ Running ($collections collections)"
 else
   echo "✗ Not running"
@@ -25,8 +25,8 @@ fi
 
 echo ""
 echo "=== Ollama (11434) ==="
-if curl -s http://localhost:11434/api/tags >/dev/null 2>&1; then
-  models=$(curl -s http://localhost:11434/api/tags | jq -r '.models | length')
+if curl -s --max-time 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
+  models=$(curl -s --max-time 2 http://localhost:11434/api/tags | jq -r '.models | length')
   echo "✓ Running ($models models)"
 else
   echo "✗ Not running"
@@ -34,7 +34,11 @@ fi
 
 echo ""
 echo "=== n8n (5678) ==="
-curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:5678/ 2>/dev/null && echo " ✓" || echo "✗ Not running"
+if curl -s --max-time 2 http://localhost:5678/ >/dev/null 2>&1; then
+  echo "✓ Running"
+else
+  echo "- Not running (optional)"
+fi
 ```
 
 ### start

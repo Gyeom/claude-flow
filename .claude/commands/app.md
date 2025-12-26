@@ -16,11 +16,22 @@ Backend + Dashboard를 관리합니다. (인프라는 `/infra` 참조)
 ### status (기본)
 ```bash
 echo "=== Backend (8080) ==="
-curl -s http://localhost:8080/api/v1/health 2>/dev/null && echo "" || echo "Not running"
+if curl -s --max-time 2 http://localhost:8080/api/v1/health >/dev/null 2>&1; then
+  curl -s http://localhost:8080/api/v1/health
+  echo ""
+else
+  echo "✗ Not running"
+fi
 
 echo ""
-echo "=== Dashboard (3000) ==="
-curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:3000/ 2>/dev/null && echo " OK" || echo "Not running"
+echo "=== Dashboard ==="
+if curl -s --max-time 2 http://localhost:3000/ >/dev/null 2>&1; then
+  echo "✓ Running (port 3000)"
+elif curl -s --max-time 2 http://localhost:5173/ >/dev/null 2>&1; then
+  echo "✓ Running (port 5173)"
+else
+  echo "✗ Not running"
+fi
 ```
 
 ### start
