@@ -99,6 +99,12 @@ class GitLabPlugin(
             description = "프로젝트 RAG 인덱싱 통계 조회",
             usage = "/gitlab knowledge-stats <project>",
             examples = listOf("/gitlab knowledge-stats my-project")
+        ),
+        PluginCommand(
+            name = "mr-comment",
+            description = "MR에 코멘트 작성",
+            usage = "/gitlab mr-comment <mr_id> <comment>",
+            examples = listOf("/gitlab mr-comment 123 \"리뷰 완료\"")
         )
     )
 
@@ -401,6 +407,19 @@ class GitLabPlugin(
             "knowledge-stats" -> getKnowledgeStats(
                 args["project"] as? String ?: return PluginResult(false, error = "Project required")
             )
+            // MR 코멘트 작성
+            "mr-comment" -> {
+                val mrId = args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+                val comment = args["comment"] as? String ?: return PluginResult(false, error = "Comment required")
+                val project = args["project"] as? String ?: run {
+                    when (val result = findProjectByMrIid(mrId)) {
+                        is MrSearchResult.Found -> result.project
+                        is MrSearchResult.MultipleFound -> return createMrSelectionRequest(mrId, result.matches)
+                        is MrSearchResult.NotFound -> return PluginResult(false, error = "MR !$mrId not found")
+                    }
+                }
+                postMrComment(project, mrId, comment)
+            }
             else -> PluginResult(false, error = "Unknown command: $command")
         }
     }
@@ -1122,6 +1141,39 @@ class GitLabPlugin(
         }
 
         return response.body()
+    }
+
+    /**
+     * MR에 코멘트 작성
+     * POST /api/v4/projects/:id/merge_requests/:merge_request_iid/notes
+     */
+    private fun postMrComment(project: String, mrId: Int, comment: String): PluginResult {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId/notes"
+        val body = mapOf("body" to comment)
+
+        return try {
+            val response = apiPost(url, body)
+            val note = mapper.readValue<Map<String, Any>>(response)
+
+            val result = mapOf(
+                "id" to note["id"],
+                "body" to (note["body"] as? String)?.take(100),
+                "author" to (note["author"] as? Map<*, *>)?.get("name"),
+                "created_at" to note["created_at"],
+                "mr_iid" to mrId,
+                "project" to project
+            )
+
+            logger.info { "Posted comment to MR !$mrId in $project" }
+            PluginResult(
+                success = true,
+                data = result,
+                message = "MR !${mrId}에 코멘트가 작성되었습니다."
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to post comment to MR !$mrId" }
+            PluginResult(false, error = "코멘트 작성 실패: ${e.message}")
+        }
     }
 
     /**

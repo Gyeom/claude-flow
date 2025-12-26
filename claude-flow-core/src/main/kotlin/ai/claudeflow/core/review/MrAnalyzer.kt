@@ -103,6 +103,14 @@ class MrAnalyzer {
             "${deleted.size} deleted, ${modified.size} modified"
         }
 
+        // 디버그: 각 카테고리의 파일명 출력
+        if (renamed.isNotEmpty()) {
+            logger.info { "Renamed files: ${renamed.map { "${it.oldPath} → ${it.newPath}" }}" }
+        }
+        if (added.isNotEmpty()) {
+            logger.info { "Added files: ${added.map { it.newPath }}" }
+        }
+
         return FileAnalysis(
             renamed = renamed,
             added = added,
@@ -194,7 +202,7 @@ class MrAnalyzer {
             }
         }
 
-        // 5. 파일명/폴더명 일관성 검사 (예: Diagnosis vs Diagnostic)
+        // 5. 파일명/폴더명 일관성 검사 (유사 용어 혼용 검사)
         val allPaths = (analysis.renamed.map { it.newPath } +
                        analysis.added.map { it.newPath } +
                        analysis.modified.map { it.newPath })
@@ -207,6 +215,39 @@ class MrAnalyzer {
                 message = "네이밍 불일치: $inconsistency",
                 suggestion = "파일명/폴더명의 일관성을 확인하세요"
             ))
+        }
+
+        // 5-1. 파일명 변경 누락 검사 (리네임 패턴 vs modified 파일)
+        if (analysis.renamed.isNotEmpty()) {
+            // 리네임된 파일에서 변경 패턴 추출 (oldName → newName)
+            val renamePatterns = analysis.renamed.mapNotNull { renamed ->
+                val oldName = renamed.oldPath.substringAfterLast("/").substringBefore(".")
+                val newName = renamed.newPath.substringAfterLast("/").substringBefore(".")
+                if (oldName != newName) {
+                    extractChangedPart(oldName, newName)
+                } else null
+            }.filterNotNull().distinct()
+
+            if (renamePatterns.isNotEmpty()) {
+                logger.info { "Rename patterns detected: $renamePatterns" }
+            }
+
+            // modified 파일 중 이전 패턴을 사용하는 파일 검사
+            for (modified in analysis.modified) {
+                val fileName = modified.newPath.substringAfterLast("/")
+                for ((oldPattern, newPattern) in renamePatterns) {
+                    if (fileName.contains(oldPattern, ignoreCase = true) &&
+                        !fileName.contains(newPattern, ignoreCase = true)) {
+                        logger.warn { "파일명 변경 누락 감지: $fileName (패턴: $oldPattern → $newPattern)" }
+                        issues.add(ReviewIssue(
+                            severity = IssueSeverity.WARNING,
+                            category = "naming",
+                            message = "파일명 변경 누락: ${modified.newPath}",
+                            suggestion = "다른 파일들이 '$oldPattern' → '$newPattern'으로 변경되었으므로 이 파일도 변경이 필요할 수 있습니다"
+                        ))
+                    }
+                }
+            }
         }
 
         // 6. 대규모 변경 경고
@@ -349,21 +390,53 @@ class MrAnalyzer {
     }
 
     /**
-     * 네이밍 불일치 찾기
+     * 파일명에서 변경된 단어 추출 (CamelCase/snake_case/kebab-case 지원)
+     * 예: "OldNameController" → "NewNameController" => Pair("oldname", "newname")
      */
+    private fun extractChangedPart(oldName: String, newName: String): Pair<String, String>? {
+        // 파일명을 단어로 분리 (CamelCase, snake_case, kebab-case 모두 지원)
+        val oldWords = splitIntoWords(oldName)
+        val newWords = splitIntoWords(newName)
+
+        // 변경된 단어 쌍 찾기
+        for (i in oldWords.indices) {
+            if (i < newWords.size && oldWords[i] != newWords[i]) {
+                val oldWord = oldWords[i]
+                val newWord = newWords[i]
+                // 최소 3글자 이상이고, 유사한 단어인 경우만 (완전히 다른 단어 제외)
+                if (oldWord.length >= 3 && newWord.length >= 3 &&
+                    (oldWord.startsWith(newWord.take(3)) || newWord.startsWith(oldWord.take(3)))) {
+                    return Pair(oldWord, newWord)
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * 파일명을 단어로 분리
+     */
+    private fun splitIntoWords(name: String): List<String> {
+        // CamelCase를 먼저 분리하고, 그 다음 구분자로 분리
+        return name
+            .replace(Regex("([a-z])([A-Z])"), "$1_$2")  // CamelCase → snake_case
+            .split(Regex("[_\\-.]"))  // 구분자로 분리
+            .filter { it.isNotEmpty() }
+            .map { it.lowercase() }
+    }
+
     private fun findNamingInconsistencies(paths: List<String>): List<String> {
         val issues = mutableListOf<String>()
 
-        // 유사 단어 패턴 검사 (예: Diagnosis vs Diagnostic)
+        // 유사 단어 패턴 검사 (혼용되면 안되는 용어들)
         val words = paths.flatMap { path ->
             path.split("/", ".", "_", "-")
                 .filter { it.length > 3 }
                 .map { it.lowercase() }
         }.toSet()
 
-        // 유사어 그룹
+        // 유사어 그룹 (일반적인 프로그래밍 용어만)
         val similarGroups = listOf(
-            setOf("diagnosis", "diagnostic", "diagnostics"),
             setOf("auth", "authentication", "authorize", "authorization"),
             setOf("config", "configuration", "configure"),
             setOf("util", "utility", "utilities"),

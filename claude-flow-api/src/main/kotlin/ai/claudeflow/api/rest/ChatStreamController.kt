@@ -897,17 +897,24 @@ class ChatStreamController(
 
                 // 빠른 이슈 (Quick Issues)
                 if (quickIssues.isNotEmpty()) {
-                    appendLine("### 자동 감지된 이슈")
+                    appendLine("### 🚨 자동 감지된 이슈 (반드시 리뷰에 포함!)")
                     quickIssues.forEach { issue ->
                         val severity = issue["severity"] as? String ?: "INFO"
                         val category = issue["category"] as? String ?: ""
-                        val description = issue["description"] as? String ?: ""
+                        // message 또는 description 필드 지원
+                        val message = issue["message"] as? String
+                            ?: issue["description"] as? String
+                            ?: ""
+                        val suggestion = issue["suggestion"] as? String ?: ""
                         val icon = when (severity) {
                             "ERROR" -> "🚨"
                             "WARNING" -> "⚠️"
                             else -> "ℹ️"
                         }
-                        appendLine("- $icon [$severity] $category: $description")
+                        appendLine("- $icon **[$severity]** $message")
+                        if (suggestion.isNotEmpty()) {
+                            appendLine("  - 권장: $suggestion")
+                        }
                     }
                     appendLine()
                 }
