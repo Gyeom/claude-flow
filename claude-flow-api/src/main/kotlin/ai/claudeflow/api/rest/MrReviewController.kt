@@ -1,5 +1,7 @@
 package ai.claudeflow.api.rest
 
+import ai.claudeflow.core.knowledge.FigmaApiSpecService
+import ai.claudeflow.core.knowledge.ScreenApiSpec
 import ai.claudeflow.core.plugin.GitLabPlugin
 import ai.claudeflow.core.plugin.PluginRegistry
 import ai.claudeflow.core.review.MrAnalyzer
@@ -22,7 +24,8 @@ private val logger = KotlinLogging.logger {}
 @RestController
 @RequestMapping("/api/v1/mr-review")
 class MrReviewController(
-    private val pluginRegistry: PluginRegistry
+    private val pluginRegistry: PluginRegistry,
+    private val figmaApiSpecService: FigmaApiSpecService?
 ) {
     private val mrAnalyzer = MrAnalyzer()
 
@@ -255,5 +258,144 @@ class MrReviewController(
                 "error" to "프롬프트 생성 실패: ${e.message}"
             ))
         }
+    }
+
+    // ==================== Design-Aware Code Review ====================
+
+    /**
+     * Design-Aware MR 리뷰 (기획서 스펙 연동)
+     *
+     * MR 변경사항과 관련된 Figma 기획서 API 스펙을 검색하고
+     * 기획서 준수 여부를 함께 리뷰합니다.
+     *
+     * @param project GitLab 프로젝트 경로
+     * @param mrId MR 번호
+     * @param projectId 프로젝트 ID (기획서 검색 필터용)
+     * @return 리뷰 결과 + 관련 기획서 스펙
+     */
+    @GetMapping("/design-aware/{project}/{mrId}")
+    fun designAwareReview(
+        @PathVariable project: String,
+        @PathVariable mrId: Int,
+        @RequestParam(required = false) projectId: String?
+    ): ResponseEntity<Map<String, Any>> {
+        logger.info { "Design-aware review for MR !$mrId in project $project (projectId: $projectId)" }
+
+        val gitlabPlugin = pluginRegistry.get("gitlab") as? GitLabPlugin
+        if (gitlabPlugin == null) {
+            return ResponseEntity.badRequest().body(mapOf<String, Any>(
+                "success" to false,
+                "error" to "GitLab 플러그인이 초기화되지 않았습니다"
+            ))
+        }
+
+        return runBlocking {
+            try {
+                // 1. MR 분석 수행
+                val result = gitlabPlugin.execute("mr-review", mapOf(
+                    "project" to project,
+                    "mr_id" to mrId
+                ))
+
+                if (!result.success || result.data == null) {
+                    return@runBlocking ResponseEntity.badRequest().body(mapOf<String, Any>(
+                        "success" to false,
+                        "error" to (result.error ?: "MR 분석 실패")
+                    ))
+                }
+
+                @Suppress("UNCHECKED_CAST")
+                val mrData = result.data as Map<String, Any>
+
+                // 2. Design Spec 검색 (FigmaApiSpecService 사용)
+                val designSpecs = mutableListOf<ScreenApiSpec>()
+                if (figmaApiSpecService != null) {
+                    // MR 제목, 변경 파일 경로로 관련 기획서 검색
+                    val mrTitle = (mrData["mr"] as? Map<*, *>)?.get("title") as? String ?: ""
+                    val priorityFiles = mrData["priorityFiles"] as? List<*> ?: emptyList<String>()
+
+                    // 제목으로 검색
+                    val titleSpecs = figmaApiSpecService.searchApiSpecs(
+                        query = mrTitle,
+                        projectId = projectId,
+                        topK = 3
+                    )
+                    designSpecs.addAll(titleSpecs)
+
+                    // 파일 경로 키워드로 검색 (예: auth, login, user 등)
+                    val keywords = extractKeywordsFromFiles(priorityFiles.filterIsInstance<String>())
+                    for (keyword in keywords.take(3)) {
+                        val keywordSpecs = figmaApiSpecService.searchApiSpecs(
+                            query = keyword,
+                            projectId = projectId,
+                            topK = 2
+                        )
+                        designSpecs.addAll(keywordSpecs)
+                    }
+
+                    logger.info { "Found ${designSpecs.size} related design specs for MR !$mrId" }
+                }
+
+                // 3. 결과 통합
+                val response = mrData.toMutableMap()
+                response["designSpecs"] = designSpecs.distinctBy { it.screenId }.map { spec ->
+                    mapOf(
+                        "screenId" to spec.screenId,
+                        "screenName" to spec.screenName,
+                        "imageUrl" to spec.imageUrl,
+                        "apis" to spec.apis.map { api ->
+                            mapOf(
+                                "method" to api.method,
+                                "path" to api.path,
+                                "description" to api.description
+                            )
+                        },
+                        "businessRules" to spec.businessRules,
+                        "validations" to spec.validations.map { v ->
+                            mapOf(
+                                "field" to v.field,
+                                "rules" to v.rules
+                            )
+                        }
+                    )
+                }
+                response["designAware"] = figmaApiSpecService != null
+                response["designSpecsCount"] = designSpecs.distinctBy { it.screenId }.size
+
+                ResponseEntity.ok(mapOf<String, Any>(
+                    "success" to true,
+                    "data" to response
+                ))
+
+            } catch (e: Exception) {
+                logger.error(e) { "Failed design-aware review for MR !$mrId" }
+                ResponseEntity.internalServerError().body(mapOf<String, Any>(
+                    "success" to false,
+                    "error" to "Design-aware 리뷰 실패: ${e.message}"
+                ))
+            }
+        }
+    }
+
+    /**
+     * 파일 경로에서 검색 키워드 추출
+     * 예: src/auth/LoginController.kt -> ["auth", "login"]
+     */
+    private fun extractKeywordsFromFiles(filePaths: List<String>): List<String> {
+        val keywords = mutableSetOf<String>()
+
+        for (path in filePaths) {
+            // 경로와 파일명 분리
+            val parts = path.lowercase()
+                .replace("\\", "/")
+                .split("/")
+                .flatMap { it.split("_", "-", ".") }
+                .filter { it.length in 3..20 }
+                .filter { it !in listOf("src", "main", "kotlin", "java", "test", "impl", "controller", "service", "repository", "kt", "java", "ts", "tsx", "js") }
+
+            keywords.addAll(parts)
+        }
+
+        return keywords.toList().take(10)
     }
 }

@@ -1,15 +1,21 @@
 package ai.claudeflow.api.rest
 
 import ai.claudeflow.core.knowledge.*
+import ai.claudeflow.core.rag.EmbeddingService
 import ai.claudeflow.core.rag.KnowledgeVectorService
 import ai.claudeflow.core.rag.KnowledgeResult
+import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.reactive.asPublisher
 import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.http.codec.ServerSentEvent
 import org.springframework.http.codec.multipart.FilePart
 import org.springframework.web.bind.annotation.*
+import reactor.core.publisher.Flux
 import reactor.core.publisher.Mono
 import java.io.File
 import java.util.UUID
@@ -26,10 +32,12 @@ private val logger = KotlinLogging.logger {}
 class KnowledgeController(
     private val knowledgeService: KnowledgeService,
     private val knowledgeVectorService: KnowledgeVectorService?,
-    private val imageAnalysisService: ImageAnalysisService?
+    private val imageAnalysisService: ImageAnalysisService?,
+    private val figmaApiSpecService: FigmaApiSpecService?
 ) {
     private val uploadDir = File(System.getProperty("java.io.tmpdir"), "claude-flow-uploads")
         .also { it.mkdirs() }
+    private val objectMapper = ObjectMapper()
 
     /**
      * 문서 목록 조회
@@ -255,6 +263,170 @@ class KnowledgeController(
                 }
             })
     }
+
+    // ==================== Figma API Spec (Design-Aware Code Review) ====================
+
+    /**
+     * Figma 분석 Job 시작 (비동기)
+     *
+     * 전체 프레임을 백그라운드에서 배치 분석합니다.
+     * Job ID를 즉시 반환하고, 진행 상황은 별도 API로 조회합니다.
+     */
+    @PostMapping("/figma/extract-api-specs")
+    fun startFigmaAnalysisJob(
+        @RequestBody request: FigmaApiSpecRequestDto
+    ): ResponseEntity<FigmaJobDto> {
+        if (figmaApiSpecService == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(null)
+        }
+
+        return try {
+            val job = figmaApiSpecService.startAnalysisJob(
+                figmaUrl = request.figmaUrl,
+                projectId = request.projectId,
+                indexToKnowledgeBase = request.indexToKnowledgeBase ?: true
+            )
+
+            ResponseEntity.accepted().body(job.toDto())
+        } catch (e: IllegalArgumentException) {
+            logger.warn { "Invalid Figma URL: ${request.figmaUrl}" }
+            ResponseEntity.badRequest().build()
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to start Figma analysis job: ${request.figmaUrl}" }
+            ResponseEntity.internalServerError().build()
+        }
+    }
+
+    /**
+     * Figma 분석 Job 상태 조회
+     */
+    @GetMapping("/figma/jobs/{jobId}")
+    fun getFigmaJob(@PathVariable jobId: String): ResponseEntity<FigmaJobDto> {
+        if (figmaApiSpecService == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build()
+        }
+
+        val job = figmaApiSpecService.getJob(jobId)
+            ?: return ResponseEntity.notFound().build()
+
+        return ResponseEntity.ok(job.toDto())
+    }
+
+    /**
+     * Figma 분석 Job 목록 조회
+     */
+    @GetMapping("/figma/jobs")
+    fun listFigmaJobs(
+        @RequestParam(defaultValue = "20") limit: Int
+    ): ResponseEntity<List<FigmaJobDto>> {
+        if (figmaApiSpecService == null) {
+            return ResponseEntity.ok(emptyList())
+        }
+
+        val jobs = figmaApiSpecService.listJobs(limit)
+        return ResponseEntity.ok(jobs.map { it.toDto() })
+    }
+
+    /**
+     * Figma 분석 Job 삭제
+     */
+    @DeleteMapping("/figma/jobs/{jobId}")
+    fun deleteFigmaJob(@PathVariable jobId: String): ResponseEntity<Void> {
+        if (figmaApiSpecService == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build()
+        }
+
+        return if (figmaApiSpecService.deleteJob(jobId)) {
+            ResponseEntity.noContent().build()
+        } else {
+            ResponseEntity.notFound().build()
+        }
+    }
+
+    /**
+     * Figma 분석 Job 진행 상황 스트리밍 (SSE)
+     *
+     * EventSource를 통해 실시간 진행 상황을 받습니다.
+     * Job이 완료되거나 실패하면 스트림이 종료됩니다.
+     */
+    @GetMapping("/figma/jobs/{jobId}/stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun streamFigmaJobProgress(@PathVariable jobId: String): Flux<ServerSentEvent<String>> {
+        if (figmaApiSpecService == null) {
+            return Flux.just(
+                ServerSentEvent.builder<String>()
+                    .event("error")
+                    .data("""{"message": "Service unavailable"}""")
+                    .build()
+            )
+        }
+
+        val job = figmaApiSpecService.getJob(jobId)
+        if (job == null) {
+            return Flux.just(
+                ServerSentEvent.builder<String>()
+                    .event("error")
+                    .data("""{"message": "Job not found"}""")
+                    .build()
+            )
+        }
+
+        // Job이 이미 완료/실패 상태면 즉시 반환
+        if (job.status in listOf(FigmaJobStatus.COMPLETED, FigmaJobStatus.FAILED)) {
+            return Flux.just(
+                ServerSentEvent.builder<String>()
+                    .event("job")
+                    .data(objectMapper.writeValueAsString(job.toDto()))
+                    .build()
+            )
+        }
+
+        // Flow를 Flux로 변환하여 SSE 스트리밍
+        return Flux.from(
+            figmaApiSpecService.getJobUpdates(jobId)
+                .map { updatedJob ->
+                    ServerSentEvent.builder<String>()
+                        .event("job")
+                        .data(objectMapper.writeValueAsString(updatedJob.toDto()))
+                        .build()
+                }
+                .asPublisher()
+        ).doOnCancel {
+            logger.info { "SSE stream cancelled for job: $jobId" }
+        }.doOnComplete {
+            logger.info { "SSE stream completed for job: $jobId" }
+        }
+    }
+
+    /**
+     * API 스펙 검색 (MR 리뷰용)
+     *
+     * 코드 변경과 관련된 기획서 스펙을 검색합니다.
+     */
+    @GetMapping("/figma/search-api-specs")
+    fun searchApiSpecs(
+        @RequestParam query: String,
+        @RequestParam(required = false) projectId: String?,
+        @RequestParam(defaultValue = "5") topK: Int
+    ): ResponseEntity<List<ScreenApiSpecDto>> {
+        if (figmaApiSpecService == null) {
+            return ResponseEntity.ok(emptyList())
+        }
+
+        return runBlocking {
+            try {
+                val results = figmaApiSpecService.searchApiSpecs(
+                    query = query,
+                    projectId = projectId,
+                    topK = topK
+                )
+                ResponseEntity.ok(results.map { it.toDto() })
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to search API specs: $query" }
+                ResponseEntity.ok(emptyList())
+            }
+        }
+    }
 }
 
 // ==================== DTOs ====================
@@ -412,5 +584,189 @@ data class VectorStatsDto(
     val system: Map<String, Int>,
     val user: Map<String, Int>,
     val total: Int
+)
+
+// ==================== Figma API Spec DTOs ====================
+
+data class FigmaApiSpecRequestDto(
+    val figmaUrl: String,
+    val projectId: String? = null,
+    val indexToKnowledgeBase: Boolean? = true
+)
+
+data class FigmaJobDto(
+    val id: String,
+    val figmaUrl: String,
+    val figmaFileKey: String,
+    val fileName: String,
+    val projectId: String?,
+    val status: String,
+    val progress: JobProgressDto,
+    val result: EnhancedFigmaAnalysisResultDto?,
+    val errorMessage: String?,
+    val createdAt: String,
+    val startedAt: String?,
+    val completedAt: String?
+)
+
+data class JobProgressDto(
+    val totalFrames: Int,
+    val analyzedFrames: Int,
+    val currentFrame: String?,
+    val percentage: Int
+)
+
+data class EnhancedFigmaAnalysisResultDto(
+    val fileName: String,
+    val fileKey: String,
+    val lastModified: String,
+    val totalFrames: Int,
+    val screenSpecs: List<ScreenApiSpecDto>,
+    val comments: List<String>,
+    val stats: FigmaAnalysisStatsDto,
+    val processingTimeMs: Long
+)
+
+data class FigmaAnalysisStatsDto(
+    val totalApis: Int,
+    val totalValidations: Int,
+    val totalBusinessRules: Int,
+    val analyzedFrames: Int,
+    val skippedFrames: Int
+)
+
+data class ScreenApiSpecDto(
+    val screenId: String,
+    val screenName: String,
+    val imageUrl: String?,
+    val figmaFileKey: String,
+    val projectId: String?,
+    val apis: List<ApiEndpointSpecDto>,
+    val businessRules: List<String>,
+    val validations: List<ValidationRuleDto>,
+    val uiStates: List<String>,
+    val relatedScreens: List<String>,
+    val analyzedAt: String
+)
+
+data class ApiEndpointSpecDto(
+    val method: String,
+    val path: String,
+    val description: String,
+    val requestFields: List<FieldSpecDto>,
+    val responseFields: List<FieldSpecDto>,
+    val errorCases: List<ErrorCaseDto>,
+    val authRequired: Boolean,
+    val notes: List<String>
+)
+
+data class FieldSpecDto(
+    val name: String,
+    val type: String,
+    val required: Boolean,
+    val description: String?,
+    val validations: List<String>,
+    val example: String?
+)
+
+data class ValidationRuleDto(
+    val field: String,
+    val rules: List<String>,
+    val errorMessage: String?
+)
+
+data class ErrorCaseDto(
+    val code: Int,
+    val errorCode: String?,
+    val condition: String,
+    val message: String?
+)
+
+// ==================== Figma Extensions ====================
+
+private fun EnhancedFigmaAnalysisResult.toDto() = EnhancedFigmaAnalysisResultDto(
+    fileName = fileName,
+    fileKey = fileKey,
+    lastModified = lastModified,
+    totalFrames = totalFrames,
+    screenSpecs = screenSpecs.map { it.toDto() },
+    comments = comments,
+    stats = FigmaAnalysisStatsDto(
+        totalApis = totalApis,
+        totalValidations = totalValidations,
+        totalBusinessRules = totalBusinessRules,
+        analyzedFrames = analyzedFrames,
+        skippedFrames = skippedFrames
+    ),
+    processingTimeMs = processingTimeMs
+)
+
+private fun ScreenApiSpec.toDto() = ScreenApiSpecDto(
+    screenId = screenId,
+    screenName = screenName,
+    imageUrl = imageUrl,
+    figmaFileKey = figmaFileKey,
+    projectId = projectId,
+    apis = apis.map { it.toDto() },
+    businessRules = businessRules,
+    validations = validations.map { it.toDto() },
+    uiStates = uiStates,
+    relatedScreens = relatedScreens,
+    analyzedAt = analyzedAt.toString()
+)
+
+private fun ApiEndpointSpec.toDto() = ApiEndpointSpecDto(
+    method = method,
+    path = path,
+    description = description,
+    requestFields = requestFields.map { it.toDto() },
+    responseFields = responseFields.map { it.toDto() },
+    errorCases = errorCases.map { it.toDto() },
+    authRequired = authRequired,
+    notes = notes
+)
+
+private fun FieldSpec.toDto() = FieldSpecDto(
+    name = name,
+    type = type,
+    required = required,
+    description = description,
+    validations = validations,
+    example = example
+)
+
+private fun ValidationRule.toDto() = ValidationRuleDto(
+    field = field,
+    rules = rules,
+    errorMessage = errorMessage
+)
+
+private fun ErrorCase.toDto() = ErrorCaseDto(
+    code = code,
+    errorCode = errorCode,
+    condition = condition,
+    message = message
+)
+
+private fun FigmaAnalysisJob.toDto() = FigmaJobDto(
+    id = id,
+    figmaUrl = figmaUrl,
+    figmaFileKey = figmaFileKey,
+    fileName = fileName,
+    projectId = projectId,
+    status = status.name,
+    progress = progress.toDto(),
+    result = result?.toDto(),
+    errorMessage = errorMessage,
+    createdAt = createdAt.toString(),
+    startedAt = startedAt?.toString(),
+    completedAt = completedAt?.toString()
+)
+
+private fun JobProgress.toDto() = JobProgressDto(
+    totalFrames = totalFrames,
+    analyzedFrames = analyzedFrames,
+    currentFrame = currentFrame,
+    percentage = percentage
 )
 

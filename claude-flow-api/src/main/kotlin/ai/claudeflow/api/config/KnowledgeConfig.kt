@@ -1,5 +1,6 @@
 package ai.claudeflow.api.config
 
+import ai.claudeflow.core.knowledge.FigmaApiSpecService
 import ai.claudeflow.core.knowledge.ImageAnalysisService
 import ai.claudeflow.core.knowledge.KnowledgeService
 import ai.claudeflow.core.rag.EmbeddingService
@@ -50,14 +51,16 @@ class KnowledgeConfig {
         storage: Storage,
         knowledgeVectorService: KnowledgeVectorService?,
         imageAnalysisService: ImageAnalysisService?,
-        embeddingService: EmbeddingService?
+        embeddingService: EmbeddingService?,
+        @Value("\${claude-flow.figma.access-token:}") figmaToken: String
     ): KnowledgeService {
-        val figmaToken = System.getenv("FIGMA_ACCESS_TOKEN")
+        // Spring 설정에서 읽되, 없으면 System.getenv 폴백
+        val token = figmaToken.ifBlank { System.getenv("FIGMA_ACCESS_TOKEN") }
 
         logger.info {
             "Creating KnowledgeService (vector: ${knowledgeVectorService != null}, " +
             "image: ${imageAnalysisService != null}, embedding: ${embeddingService != null}, " +
-            "figma: ${!figmaToken.isNullOrBlank()})"
+            "figma: ${!token.isNullOrBlank()})"
         }
 
         return KnowledgeService(
@@ -65,7 +68,44 @@ class KnowledgeConfig {
             knowledgeVectorService = knowledgeVectorService,
             imageAnalysisService = imageAnalysisService,
             embeddingService = embeddingService,
-            figmaAccessToken = figmaToken
+            figmaAccessToken = token
+        )
+    }
+
+    /**
+     * Figma API Spec 추출 서비스
+     * Vision AI를 사용하여 Figma 기획서에서 백엔드 API 스펙을 추출
+     */
+    @Bean
+    fun figmaApiSpecService(
+        imageAnalysisService: ImageAnalysisService?,
+        knowledgeVectorService: KnowledgeVectorService?,
+        embeddingService: EmbeddingService?,
+        @Value("\${claude-flow.figma.access-token:}") figmaToken: String
+    ): FigmaApiSpecService? {
+        // Spring 설정에서 읽되, 없으면 System.getenv 폴백
+        val token = figmaToken.ifBlank { System.getenv("FIGMA_ACCESS_TOKEN") }
+
+        if (token.isNullOrBlank()) {
+            logger.info { "FigmaApiSpecService disabled (FIGMA_ACCESS_TOKEN not set)" }
+            return null
+        }
+
+        if (imageAnalysisService == null) {
+            logger.info { "FigmaApiSpecService disabled (ImageAnalysisService not available)" }
+            return null
+        }
+
+        logger.info {
+            "Creating FigmaApiSpecService (vision: true, " +
+            "vector: ${knowledgeVectorService != null}, embedding: ${embeddingService != null})"
+        }
+
+        return FigmaApiSpecService(
+            figmaAccessToken = token,
+            imageAnalysisService = imageAnalysisService,
+            knowledgeVectorService = knowledgeVectorService,
+            embeddingService = embeddingService
         )
     }
 }

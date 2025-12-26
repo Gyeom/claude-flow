@@ -40,15 +40,33 @@ tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
     doFirst {
         val envFile = file("${rootProject.projectDir}/docker-compose/.env")
         if (envFile.exists()) {
+            val loadedVars = mutableSetOf<String>()
             envFile.readLines()
                 .filter { it.isNotBlank() && !it.startsWith("#") && it.contains("=") }
                 .forEach { line ->
                     val (key, value) = line.split("=", limit = 2)
-                    if (System.getenv(key) == null) {
-                        environment(key.trim(), value.trim())
+                    val trimmedKey = key.trim()
+                    val trimmedValue = value.trim()
+                    if (System.getenv(trimmedKey) == null) {
+                        environment(trimmedKey, trimmedValue)
+                        loadedVars.add(trimmedKey)
                     }
                 }
-            println("✓ Loaded environment variables from docker-compose/.env")
+            println("✓ Loaded ${loadedVars.size} vars from docker-compose/.env")
+
+            // 필수/선택 환경변수 상태 출력
+            val checkVars = mapOf(
+                "SLACK_APP_TOKEN" to "Slack",
+                "FIGMA_ACCESS_TOKEN" to "Figma",
+                "GITLAB_TOKEN" to "GitLab",
+                "JIRA_API_TOKEN" to "Jira"
+            )
+            checkVars.forEach { (key, name) ->
+                val status = if (environment[key] != null || System.getenv(key) != null) "✓" else "✗"
+                println("  $status $name")
+            }
+        } else {
+            println("⚠️  docker-compose/.env not found")
         }
     }
 }

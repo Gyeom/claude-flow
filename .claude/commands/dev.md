@@ -43,10 +43,9 @@ curl -s -o /dev/null -w "HTTP %{http_code}" http://localhost:5678/ 2>/dev/null |
 인프라, 백엔드, 대시보드를 순차적으로 시작합니다:
 
 1. RAG 인프라 시작 (Qdrant via Docker, Ollama via brew - Metal GPU 지원)
-2. 환경 변수 로드 (.env + docker-compose/.env)
-3. 백엔드 서버 시작 (./gradlew :claude-flow-app:bootRun)
-4. 백엔드 준비 대기 (health check)
-5. 대시보드 시작 (npm run dev)
+2. 백엔드 서버 시작 (Gradle이 .env 자동 로드)
+3. 백엔드 준비 대기 (health check)
+4. 대시보드 시작 (npm run dev)
 
 ```bash
 # 1. Qdrant 시작 (Docker)
@@ -68,24 +67,18 @@ for i in {1..30}; do
   sleep 2
 done
 
-# 4. 환경 변수 읽기 (루트 .env 우선, docker-compose/.env 폴백)
-[ -f .env ] && export $(grep -v '^#' .env | xargs)
-[ -f docker-compose/.env ] && source docker-compose/.env
+# 4. 백엔드 시작 (Gradle이 .env + docker-compose/.env 자동 로드)
+# ⚠️ 환경변수 수동 전달 불필요 - build.gradle.kts에서 자동 처리
+./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
 
-# 5. 백엔드 시작
-SLACK_APP_TOKEN="$SLACK_APP_TOKEN" SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
-FIGMA_ACCESS_TOKEN="$FIGMA_ACCESS_TOKEN" \
-QDRANT_URL="http://localhost:6333" OLLAMA_URL="http://localhost:11434" \
-RAG_ENABLED="true" \
-  ./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
-
-# 6. 백엔드 대기
+# 5. 백엔드 대기
+echo "Waiting for backend..."
 for i in {1..30}; do
   curl -s http://localhost:8080/api/v1/health && break
   sleep 2
 done
 
-# 7. 대시보드 시작
+# 6. 대시보드 시작
 cd dashboard && npm run dev &
 ```
 
@@ -128,21 +121,14 @@ for i in {1..30}; do curl -s http://localhost:6333/collections && break; sleep 2
 echo "Waiting for Ollama..."
 for i in {1..30}; do curl -s http://localhost:11434/api/tags && break; sleep 2; done
 
-# 5. 환경 변수 로드
-[ -f .env ] && export $(grep -v '^#' .env | xargs)
-[ -f docker-compose/.env ] && source docker-compose/.env
+# 5. 백엔드 시작 (Gradle이 .env 자동 로드)
+./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
 
-# 6. 백엔드 시작
-SLACK_APP_TOKEN="$SLACK_APP_TOKEN" SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
-FIGMA_ACCESS_TOKEN="$FIGMA_ACCESS_TOKEN" \
-QDRANT_URL="http://localhost:6333" OLLAMA_URL="http://localhost:11434" \
-RAG_ENABLED="true" \
-  ./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
-
-# 7. 백엔드 대기
+# 6. 백엔드 대기
+echo "Waiting for backend..."
 for i in {1..30}; do curl -s http://localhost:8080/api/v1/health && break; sleep 2; done
 
-# 8. 대시보드 시작
+# 7. 대시보드 시작
 cd dashboard && npm run dev &
 ```
 

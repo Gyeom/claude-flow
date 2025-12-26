@@ -1334,6 +1334,143 @@ export const knowledgeApi = {
 
   getVectorStats: () =>
     fetchApi<VectorStats>('/knowledge/vectors/stats'),
+
+  // ==================== Figma API Spec (Design-Aware Code Review) ====================
+
+  /**
+   * Figma 분석 Job 시작 (비동기 배치 처리)
+   * 전체 프레임을 백그라운드에서 분석하고 Job ID를 반환합니다.
+   */
+  startFigmaAnalysisJob: (
+    figmaUrl: string,
+    options?: {
+      projectId?: string
+      indexToKnowledgeBase?: boolean
+    }
+  ) =>
+    fetchApi<FigmaAnalysisJob>('/knowledge/figma/extract-api-specs', {
+      method: 'POST',
+      body: JSON.stringify({
+        figmaUrl,
+        projectId: options?.projectId,
+        indexToKnowledgeBase: options?.indexToKnowledgeBase ?? true,
+      }),
+    }),
+
+  /**
+   * Figma 분석 Job 상태 조회
+   */
+  getFigmaJob: (jobId: string) =>
+    fetchApi<FigmaAnalysisJob>(`/knowledge/figma/jobs/${jobId}`),
+
+  /**
+   * Figma 분석 Job 목록 조회
+   */
+  listFigmaJobs: (limit = 20) =>
+    fetchApi<FigmaAnalysisJob[]>(`/knowledge/figma/jobs?limit=${limit}`),
+
+  /**
+   * Figma 분석 Job 삭제
+   */
+  deleteFigmaJob: (jobId: string) =>
+    fetchApi<void>(`/knowledge/figma/jobs/${jobId}`, { method: 'DELETE' }),
+
+  /**
+   * API 스펙 검색 (MR 리뷰용)
+   */
+  searchApiSpecs: (query: string, projectId?: string, topK = 5) => {
+    const params = new URLSearchParams({ query, topK: topK.toString() })
+    if (projectId) params.set('projectId', projectId)
+    return fetchApi<ScreenApiSpec[]>(`/knowledge/figma/search-api-specs?${params}`)
+  },
+}
+
+// ==================== Figma API Spec Types ====================
+
+export type FigmaJobStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
+
+export interface FigmaAnalysisJob {
+  id: string
+  figmaUrl: string
+  figmaFileKey: string
+  fileName: string
+  projectId: string | null
+  status: FigmaJobStatus
+  progress: {
+    totalFrames: number
+    analyzedFrames: number
+    currentFrame: string | null
+    percentage: number
+  }
+  result: FigmaApiSpecResult | null
+  errorMessage: string | null
+  createdAt: string
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface FigmaApiSpecResult {
+  fileName: string
+  fileKey: string
+  lastModified: string
+  totalFrames: number
+  screenSpecs: ScreenApiSpec[]
+  comments: string[]
+  stats: {
+    totalApis: number
+    totalValidations: number
+    totalBusinessRules: number
+    analyzedFrames: number
+    skippedFrames: number
+  }
+  processingTimeMs: number
+}
+
+export interface ScreenApiSpec {
+  screenId: string
+  screenName: string
+  imageUrl: string | null
+  figmaFileKey: string
+  projectId: string | null
+  apis: ApiEndpointSpec[]
+  businessRules: string[]
+  validations: ValidationRule[]
+  uiStates: string[]
+  relatedScreens: string[]
+  analyzedAt: string
+}
+
+export interface ApiEndpointSpec {
+  method: string
+  path: string
+  description: string
+  requestFields: FieldSpec[]
+  responseFields: FieldSpec[]
+  errorCases: ErrorCase[]
+  authRequired: boolean
+  notes: string[]
+}
+
+export interface FieldSpec {
+  name: string
+  type: string
+  required: boolean
+  description: string | null
+  validations: string[]
+  example: string | null
+}
+
+export interface ValidationRule {
+  field: string
+  rules: string[]
+  errorMessage: string | null
+}
+
+export interface ErrorCase {
+  code: number
+  errorCode: string | null
+  condition: string
+  message: string | null
 }
 
 // Extended Analytics API (Verified Feedback)

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react'
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   BookOpen,
@@ -30,7 +30,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
-import { knowledgeApi, type KnowledgeDocument, type KnowledgeSearchResult, type VectorItem } from '@/lib/api'
+import { knowledgeApi, type KnowledgeDocument, type KnowledgeSearchResult, type VectorItem, type FigmaApiSpecResult, type ScreenApiSpec, type FigmaAnalysisJob } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export function Knowledge() {
@@ -39,6 +39,8 @@ export function Knowledge() {
   const [selectedVectorItem, setSelectedVectorItem] = useState<VectorItem | null>(null)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showUrlModal, setShowUrlModal] = useState(false)
+  const [showApiSpecModal, setShowApiSpecModal] = useState(false)
+  const [apiSpecResult, setApiSpecResult] = useState<FigmaApiSpecResult | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<KnowledgeSearchResult[] | null>(null)
   const [isSearching, setIsSearching] = useState(false)
@@ -189,6 +191,13 @@ export function Knowledge() {
           >
             <Link className="h-4 w-4" />
             Add URL
+          </button>
+          <button
+            onClick={() => setShowApiSpecModal(true)}
+            className="flex items-center gap-2 px-4 py-2 border border-[#F24E1E] text-[#F24E1E] rounded-lg hover:bg-[#F24E1E]/10 transition-colors"
+          >
+            <Figma className="h-4 w-4" />
+            Extract API Specs
           </button>
           <button
             onClick={() => setShowUploadModal(true)}
@@ -637,6 +646,25 @@ export function Knowledge() {
           }}
         />
       )}
+
+      {/* Figma API Spec Modal */}
+      {showApiSpecModal && (
+        <FigmaApiSpecModal
+          onClose={() => setShowApiSpecModal(false)}
+          onResult={(result) => {
+            setApiSpecResult(result)
+            queryClient.invalidateQueries({ queryKey: ['knowledge-vectors'] })
+          }}
+        />
+      )}
+
+      {/* API Spec Result Modal */}
+      {apiSpecResult && (
+        <ApiSpecResultModal
+          result={apiSpecResult}
+          onClose={() => setApiSpecResult(null)}
+        />
+      )}
     </div>
   )
 }
@@ -1056,6 +1084,426 @@ function UrlModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () =
               <Link className="h-4 w-4" />
             )}
             Add URL
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Figma API Spec Modal (Design-Aware Code Review) - Job-based Background Processing with SSE
+function FigmaApiSpecModal({
+  onClose,
+  onResult,
+}: {
+  onClose: () => void
+  onResult: (result: FigmaApiSpecResult) => void
+}) {
+  const [figmaUrl, setFigmaUrl] = useState('')
+  const [projectId, setProjectId] = useState('')
+  const [isStarting, setIsStarting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [currentJob, setCurrentJob] = useState<FigmaAnalysisJob | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+
+  // SSE로 Job 진행 상황 스트리밍
+  useEffect(() => {
+    if (!currentJob || currentJob.status === 'COMPLETED' || currentJob.status === 'FAILED') {
+      return
+    }
+
+    // 기존 EventSource 정리
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+    }
+
+    const eventSource = new EventSource(`/api/v1/knowledge/figma/jobs/${currentJob.id}/stream`)
+    eventSourceRef.current = eventSource
+
+    eventSource.addEventListener('job', (event) => {
+      try {
+        const updatedJob = JSON.parse(event.data) as FigmaAnalysisJob
+        setCurrentJob(updatedJob)
+
+        if (updatedJob.status === 'COMPLETED' && updatedJob.result) {
+          eventSource.close()
+          onResult(updatedJob.result)
+          onClose()
+        } else if (updatedJob.status === 'FAILED') {
+          eventSource.close()
+        }
+      } catch (err) {
+        console.error('Failed to parse job update:', err)
+      }
+    })
+
+    eventSource.addEventListener('error', (event) => {
+      console.error('SSE error:', event)
+      // 연결 끊김 시 상태 확인을 위해 폴백
+      eventSource.close()
+    })
+
+    return () => {
+      eventSource.close()
+      eventSourceRef.current = null
+    }
+  }, [currentJob?.id, currentJob?.status, onResult, onClose])
+
+  const handleSubmit = async () => {
+    if (!figmaUrl.trim()) return
+    setIsStarting(true)
+    setError(null)
+
+    try {
+      const job = await knowledgeApi.startFigmaAnalysisJob(figmaUrl, {
+        projectId: projectId || undefined,
+        indexToKnowledgeBase: true,
+      })
+      setCurrentJob(job)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Job 시작 실패')
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const isFigmaUrl = figmaUrl.includes('figma.com')
+  const isProcessing = !!(currentJob && (currentJob.status === 'PENDING' || currentJob.status === 'PROCESSING'))
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-xl p-6 w-full max-w-lg">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Figma className="h-6 w-6 text-[#F24E1E]" />
+            <h2 className="text-xl font-bold">Extract API Specs</h2>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-lg" disabled={isProcessing}>
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <p className="text-sm text-muted-foreground mb-4">
+          Figma 기획서를 Vision AI로 분석하여 백엔드 API 스펙을 추출합니다.
+          전체 프레임을 백그라운드에서 분석합니다. (시간이 오래 걸릴 수 있습니다)
+        </p>
+
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Figma URL *</label>
+            <input
+              type="url"
+              value={figmaUrl}
+              onChange={(e) => setFigmaUrl(e.target.value)}
+              placeholder="https://www.figma.com/file/xxx..."
+              disabled={isProcessing}
+              className={cn(
+                'w-full px-4 py-2.5 rounded-lg border bg-background focus:ring-2 focus:ring-primary/50 disabled:opacity-50',
+                isFigmaUrl ? 'border-[#F24E1E]' : 'border-border'
+              )}
+            />
+            {figmaUrl && !isFigmaUrl && (
+              <p className="text-xs text-yellow-500 mt-1">Figma URL을 입력해주세요</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Project ID (optional)</label>
+            <input
+              type="text"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              placeholder="e.g., ccds, sirius"
+              disabled={isProcessing}
+              className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+            />
+            <p className="text-xs text-muted-foreground mt-1">MR 리뷰 시 검색 필터로 사용됩니다</p>
+          </div>
+        </div>
+
+        {/* Job Progress Display */}
+        {currentJob && (
+          <div className="mt-4 p-4 rounded-lg bg-muted/50 border border-border">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                {currentJob.status === 'PENDING' && (
+                  <Clock className="h-4 w-4 text-yellow-500" />
+                )}
+                {currentJob.status === 'PROCESSING' && (
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                )}
+                {currentJob.status === 'COMPLETED' && (
+                  <CheckCircle className="h-4 w-4 text-green-500" />
+                )}
+                {currentJob.status === 'FAILED' && (
+                  <AlertCircle className="h-4 w-4 text-red-500" />
+                )}
+                <span className={cn(
+                  'text-sm font-medium',
+                  currentJob.status === 'PENDING' && 'text-yellow-500',
+                  currentJob.status === 'PROCESSING' && 'text-blue-500',
+                  currentJob.status === 'COMPLETED' && 'text-green-500',
+                  currentJob.status === 'FAILED' && 'text-red-500'
+                )}>
+                  {currentJob.status === 'PENDING' && '대기 중...'}
+                  {currentJob.status === 'PROCESSING' && '분석 중...'}
+                  {currentJob.status === 'COMPLETED' && '완료!'}
+                  {currentJob.status === 'FAILED' && '실패'}
+                </span>
+              </div>
+              <span className="text-sm text-muted-foreground">
+                {currentJob.progress.percentage}%
+              </span>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className={cn(
+                  'h-full transition-all duration-300',
+                  currentJob.status === 'FAILED' ? 'bg-red-500' : 'bg-[#F24E1E]'
+                )}
+                style={{ width: `${currentJob.progress.percentage}%` }}
+              />
+            </div>
+
+            {/* Progress Details */}
+            <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
+              <span>
+                {currentJob.progress.analyzedFrames} / {currentJob.progress.totalFrames} frames
+              </span>
+              {currentJob.progress.currentFrame && (
+                <span className="truncate max-w-[200px]">
+                  {currentJob.progress.currentFrame}
+                </span>
+              )}
+            </div>
+
+            {/* File Name */}
+            {currentJob.fileName && (
+              <p className="text-xs text-muted-foreground mt-2 truncate">
+                📄 {currentJob.fileName}
+              </p>
+            )}
+          </div>
+        )}
+
+        {currentJob?.status === 'FAILED' && currentJob.errorMessage && (
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-500">{currentJob.errorMessage}</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+            <p className="text-sm text-red-500">{error}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 mt-6">
+          <button
+            onClick={onClose}
+            disabled={isProcessing}
+            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+          >
+            {isProcessing ? 'Processing...' : 'Cancel'}
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!figmaUrl.trim() || !isFigmaUrl || isStarting || isProcessing}
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-[#F24E1E] text-white rounded-lg hover:bg-[#F24E1E]/90 disabled:opacity-50 transition-colors"
+          >
+            {isStarting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isProcessing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Figma className="h-4 w-4" />
+            )}
+            {isProcessing ? 'Analyzing...' : 'Start Analysis'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// API Spec Result Modal
+function ApiSpecResultModal({
+  result,
+  onClose,
+}: {
+  result: FigmaApiSpecResult
+  onClose: () => void
+}) {
+  const [selectedScreen, setSelectedScreen] = useState<ScreenApiSpec | null>(
+    result.screenSpecs[0] || null
+  )
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-card rounded-xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-border">
+          <div>
+            <div className="flex items-center gap-3">
+              <Figma className="h-6 w-6 text-[#F24E1E]" />
+              <h2 className="text-xl font-bold">{result.fileName}</h2>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              {result.stats.analyzedFrames} frames analyzed •{' '}
+              {result.stats.totalApis} APIs •{' '}
+              {result.stats.totalValidations} validations •{' '}
+              {result.stats.totalBusinessRules} business rules
+            </p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-muted rounded-lg">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Left: Screen List */}
+          <div className="w-64 border-r border-border overflow-y-auto">
+            <div className="p-2">
+              {result.screenSpecs.map((spec) => (
+                <button
+                  key={spec.screenId}
+                  onClick={() => setSelectedScreen(spec)}
+                  className={cn(
+                    'w-full text-left p-3 rounded-lg mb-1 transition-colors',
+                    selectedScreen?.screenId === spec.screenId
+                      ? 'bg-primary/10 border border-primary/30'
+                      : 'hover:bg-muted'
+                  )}
+                >
+                  <p className="font-medium truncate">{spec.screenName}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {spec.apis.length} APIs • {spec.validations.length} validations
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: Screen Details */}
+          <div className="flex-1 overflow-y-auto p-6">
+            {selectedScreen ? (
+              <div className="space-y-6">
+                {/* Screen Image */}
+                {selectedScreen.imageUrl && (
+                  <div className="flex justify-center">
+                    <a
+                      href={selectedScreen.imageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block max-w-md"
+                    >
+                      <img
+                        src={selectedScreen.imageUrl}
+                        alt={selectedScreen.screenName}
+                        className="rounded-lg border border-border max-h-48 object-contain"
+                      />
+                    </a>
+                  </div>
+                )}
+
+                {/* APIs */}
+                {selectedScreen.apis.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                      <Server className="h-5 w-5" /> APIs
+                    </h3>
+                    <div className="space-y-3">
+                      {selectedScreen.apis.map((api, idx) => (
+                        <div key={idx} className="p-4 rounded-lg bg-muted/50 border border-border">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className={cn(
+                              'px-2 py-0.5 text-xs font-mono rounded',
+                              api.method === 'GET' && 'bg-green-500/20 text-green-500',
+                              api.method === 'POST' && 'bg-blue-500/20 text-blue-500',
+                              api.method === 'PUT' && 'bg-yellow-500/20 text-yellow-500',
+                              api.method === 'PATCH' && 'bg-orange-500/20 text-orange-500',
+                              api.method === 'DELETE' && 'bg-red-500/20 text-red-500'
+                            )}>
+                              {api.method}
+                            </span>
+                            <code className="text-sm font-mono">{api.path}</code>
+                          </div>
+                          <p className="text-sm text-muted-foreground">{api.description}</p>
+                          {api.requestFields.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium text-muted-foreground">Request:</p>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {api.requestFields.map((f, i) => (
+                                  <span key={i} className="px-2 py-0.5 text-xs bg-background rounded">
+                                    {f.name}: {f.type}{f.required && '*'}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Validations */}
+                {selectedScreen.validations.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">Validations</h3>
+                    <div className="space-y-2">
+                      {selectedScreen.validations.map((v, idx) => (
+                        <div key={idx} className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+                          <p className="font-medium text-sm">{v.field}</p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {v.rules.map((rule, i) => (
+                              <span key={i} className="px-2 py-0.5 text-xs bg-yellow-500/20 rounded">
+                                {rule}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Business Rules */}
+                {selectedScreen.businessRules.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">Business Rules</h3>
+                    <ul className="space-y-2">
+                      {selectedScreen.businessRules.map((rule, idx) => (
+                        <li key={idx} className="flex items-start gap-2 text-sm">
+                          <span className="text-primary">•</span>
+                          {rule}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Select a screen to view details
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-between items-center p-4 border-t border-border">
+          <p className="text-xs text-muted-foreground">
+            Processing time: {(result.processingTimeMs / 1000).toFixed(1)}s
+          </p>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
+          >
+            Close
           </button>
         </div>
       </div>

@@ -334,7 +334,7 @@ class GitLabPlugin(
             // 조회 명령어
             "mr-list" -> listMergeRequests(args["project"] as? String)
             "mr-info" -> {
-                val mrId = args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
                 val project = args["project"] as? String ?: run {
                     // 프로젝트 없으면 MR 번호로 검색
                     when (val result = findProjectByMrIid(mrId)) {
@@ -381,7 +381,7 @@ class GitLabPlugin(
             )
             // RAG 기반 명령어
             "mr-review" -> {
-                val mrId = args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
                 val project = args["project"] as? String ?: run {
                     // 프로젝트 없으면 MR 번호로 검색
                     when (val result = findProjectByMrIid(mrId)) {
@@ -409,7 +409,7 @@ class GitLabPlugin(
             )
             // MR 코멘트 작성
             "mr-comment" -> {
-                val mrId = args["mr_id"] as? Int ?: return PluginResult(false, error = "MR ID required")
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
                 val comment = args["comment"] as? String ?: return PluginResult(false, error = "Comment required")
                 val project = args["project"] as? String ?: run {
                     when (val result = findProjectByMrIid(mrId)) {

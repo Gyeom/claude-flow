@@ -48,6 +48,10 @@ claude-flow:
     email: ${JIRA_EMAIL:}
     api-token: ${JIRA_API_TOKEN:}
 
+  # Figma 연동
+  figma:
+    access-token: ${FIGMA_ACCESS_TOKEN:}
+
   # RAG 설정
   qdrant:
     url: ${QDRANT_URL:http://localhost:6333}
