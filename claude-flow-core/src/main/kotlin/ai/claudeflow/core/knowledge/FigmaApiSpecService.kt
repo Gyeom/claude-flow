@@ -128,14 +128,18 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
      * 비동기 분석 Job 시작
      *
      * @param figmaUrl Figma 파일 URL
+     * @param title 문서 제목 (null이면 Figma에서 조회한 파일명 사용)
      * @param projectId 프로젝트 ID
      * @param indexToKnowledgeBase 완료 시 Knowledge Base에 인덱싱
+     * @param description Figma 파일 설명 (AI 분석 컨텍스트로 활용)
      * @return Job ID
      */
     fun startAnalysisJob(
         figmaUrl: String,
+        title: String? = null,
         projectId: String? = null,
-        indexToKnowledgeBase: Boolean = true
+        indexToKnowledgeBase: Boolean = true,
+        description: String? = null
     ): FigmaAnalysisJob {
         // Figma 파일 키 추출
         val fileKey = extractFigmaFileKey(figmaUrl)
@@ -149,6 +153,7 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
             figmaUrl = figmaUrl,
             figmaFileKey = fileKey,
             fileName = "Loading...",
+            title = title,  // 사용자 지정 제목
             projectId = projectId,
             status = FigmaJobStatus.PENDING,
             progress = JobProgress(totalFrames = 0, analyzedFrames = 0),
@@ -161,10 +166,11 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
 
         // 백그라운드에서 분석 시작
         jobScope.launch {
-            runAnalysisJob(jobId, indexToKnowledgeBase)
+            runAnalysisJob(jobId, indexToKnowledgeBase, description)
         }
 
-        logger.info { "Started Figma analysis job: $jobId for $figmaUrl" }
+        logger.info { "Started Figma analysis job: $jobId for $figmaUrl" +
+            (description?.let { ", description: $it" } ?: "") }
         return job
     }
 
@@ -221,7 +227,7 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
     /**
      * 백그라운드에서 실제 분석 수행
      */
-    private suspend fun runAnalysisJob(jobId: String, indexToKnowledgeBase: Boolean) {
+    private suspend fun runAnalysisJob(jobId: String, indexToKnowledgeBase: Boolean, description: String? = null) {
         val job = jobs[jobId] ?: return
 
         try {
@@ -236,6 +242,7 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
                 figmaUrl = job.figmaUrl,
                 options = FigmaAnalysisOptions(),
                 projectId = job.projectId,
+                description = description,
                 onProgress = { current, total, frameName ->
                     // 진행 상황을 SSE로 스트리밍
                     jobScope.launch {
@@ -307,6 +314,7 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
      * @param figmaUrl Figma 파일 URL
      * @param options 분석 옵션
      * @param projectId 프로젝트 ID (검색 필터용)
+     * @param description Figma 파일 설명 (AI 분석 컨텍스트로 활용)
      * @param onProgress 진행률 콜백
      * @return 분석 결과
      */
@@ -314,26 +322,40 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
         figmaUrl: String,
         options: FigmaAnalysisOptions = FigmaAnalysisOptions(),
         projectId: String? = null,
+        description: String? = null,
         onProgress: ((current: Int, total: Int, frameName: String) -> Unit)? = null
     ): EnhancedFigmaAnalysisResult = coroutineScope {
         val startTime = System.currentTimeMillis()
 
-        // 1. Figma 파일 키 추출
+        // 1. Figma 파일 키 및 노드 ID 추출
         val fileKey = extractFigmaFileKey(figmaUrl)
             ?: throw IllegalArgumentException("Invalid Figma URL: $figmaUrl")
+        val targetNodeId = extractFigmaNodeId(figmaUrl)
 
-        logger.info { "Starting API spec extraction for Figma file: $fileKey" }
+        logger.info { "Starting API spec extraction for Figma file: $fileKey" +
+            (targetNodeId?.let { ", target node: $it" } ?: " (full file)") }
 
         // 2. 파일 메타데이터 가져오기
         val fileData = fetchFigmaApi("/files/$fileKey?depth=2")
         val fileName = fileData.optString("name", "Untitled")
         val lastModified = fileData.optString("lastModified", "")
 
-        // 3. 최상위 Frame 추출 (전체 분석)
+        // 3. Frame 추출 (node-id가 있으면 해당 노드 하위만, 없으면 전체)
         val document = fileData.optJSONObject("document")
-        val frames = extractTopLevelFrames(document)
+        val frames = if (targetNodeId != null) {
+            // 특정 노드 하위의 Frame만 추출
+            logger.info { "Fetching frames under node: $targetNodeId" }
+            val nodeData = fetchFigmaApi("/files/$fileKey/nodes?ids=$targetNodeId&depth=2")
+            val nodes = nodeData.optJSONObject("nodes")
+            val targetNode = nodes?.optJSONObject(targetNodeId)?.optJSONObject("document")
+            extractFramesFromNode(targetNode)
+        } else {
+            // 전체 파일에서 Frame 추출
+            extractTopLevelFrames(document)
+        }
 
-        logger.info { "Found ${frames.size} frames to analyze" }
+        logger.info { "Found ${frames.size} frames" +
+            (description?.let { " (context: $it)" } ?: "") }
 
         // 4. Frame 이미지 Export (배치 처리)
         val frameImages = exportFrameImages(fileKey, frames.map { it.first })
@@ -342,7 +364,6 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
         val screenSpecs = mutableListOf<ScreenApiSpec>()
         var analyzedCount = 0
         var skippedCount = 0
-
         frames.chunked(MAX_CONCURRENT_ANALYSIS).forEach { chunk ->
             val results = chunk.map { (frameId, frameName) ->
                 async(Dispatchers.IO) {
@@ -356,7 +377,8 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
                                 imageUrl = imageUrl,
                                 fileKey = fileKey,
                                 projectId = projectId,
-                                includeRaw = options.includeRawAnalysis
+                                includeRaw = options.includeRawAnalysis,
+                                description = description
                             )
                             spec
                         } catch (e: Exception) {
@@ -416,6 +438,8 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
 
     /**
      * Vision AI로 단일 프레임 분석
+     *
+     * @param description Figma 파일 설명 (AI 분석 컨텍스트)
      */
     private suspend fun analyzeFrameWithVision(
         frameId: String,
@@ -423,12 +447,31 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
         imageUrl: String,
         fileKey: String,
         projectId: String?,
-        includeRaw: Boolean
+        includeRaw: Boolean,
+        description: String? = null
     ): ScreenApiSpec = withContext(Dispatchers.IO) {
         logger.debug { "Analyzing frame: $frameName ($frameId)" }
 
+        // Figma 프레임 이름과 컨텍스트를 프롬프트에 명시하여 hallucination 방지
+        val contextSection = if (description != null) {
+            """
+## 도메인 컨텍스트
+이 Figma 파일은 다음과 관련된 화면들입니다: **$description**
+분석 시 이 컨텍스트를 고려하여 관련 도메인 용어와 기능을 사용하세요.
+
+"""
+        } else ""
+
+        val promptWithFrameName = """
+$contextSection## 화면 정보
+- **Figma 프레임 이름**: $frameName
+- 아래 분석 결과의 screen_name은 반드시 "$frameName"을 사용하세요.
+
+$serverDevAnalysisPrompt
+""".trimIndent()
+
         // Vision AI로 이미지 분석
-        val analysisResult = imageAnalysisService!!.analyzeImageUrl(imageUrl)
+        val analysisResult = imageAnalysisService!!.analyzeImageUrl(imageUrl, promptWithFrameName)
 
         // JSON 파싱 시도
         val parsed = parseApiSpecJson(analysisResult.rawAnalysis, frameName)
@@ -631,8 +674,20 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
 
         result.screenSpecs.forEach { spec ->
             try {
+                // Vision AI 분석 결과가 없으면 스킵 (의미없는 청크 방지)
+                if (spec.apis.isEmpty() && spec.businessRules.isEmpty() && spec.validations.isEmpty()) {
+                    logger.debug { "Skipping ${spec.screenName}: no API specs extracted" }
+                    return@forEach
+                }
+
                 // 검색 가능한 텍스트로 변환
                 val searchableText = buildSearchableText(spec)
+
+                // 최소 길이 검증 (제목만 있는 경우 스킵)
+                if (searchableText.length < 100) {
+                    logger.debug { "Skipping ${spec.screenName}: content too short (${searchableText.length} chars)" }
+                    return@forEach
+                }
 
                 // 임베딩 생성
                 val embedding = embeddingService.embed(searchableText)
@@ -756,6 +811,9 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
 
     // ===== Figma API Helper Methods =====
 
+    /**
+     * Figma URL에서 파일 키 추출
+     */
     private fun extractFigmaFileKey(url: String): String? {
         val patterns = listOf(
             """figma\.com/(?:file|design)/([a-zA-Z0-9]+)""".toRegex(),
@@ -765,6 +823,18 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
             pattern.find(url)?.let { return it.groupValues[1] }
         }
         return null
+    }
+
+    /**
+     * Figma URL에서 node-id 추출
+     *
+     * URL 예시: https://www.figma.com/design/xxx?node-id=11250-126016
+     * 반환: "11250:126016" (Figma API 형식으로 변환)
+     */
+    private fun extractFigmaNodeId(url: String): String? {
+        // node-id 파라미터 추출 (URL에서는 - 사용, API에서는 : 사용)
+        val nodeIdPattern = """[?&]node-id=([0-9]+-[0-9]+)""".toRegex()
+        return nodeIdPattern.find(url)?.groupValues?.get(1)?.replace("-", ":")
     }
 
     private fun fetchFigmaApi(path: String): JSONObject {
@@ -788,6 +858,9 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
         return JSONObject(response.body())
     }
 
+    /**
+     * 전체 문서에서 최상위 Frame 추출 (기존 방식)
+     */
     private fun extractTopLevelFrames(document: JSONObject?): List<Pair<String, String>> {
         if (document == null) return emptyList()
 
@@ -807,6 +880,36 @@ JSON만 출력하세요. 추가 설명은 불필요합니다.
                 if (nodeType in listOf("FRAME", "COMPONENT_SET", "COMPONENT") && nodeId.isNotBlank()) {
                     frames.add(nodeId to nodeName)
                 }
+            }
+        }
+
+        return frames
+    }
+
+    /**
+     * 특정 노드 하위에서 Frame 추출 (node-id 지정 시 사용)
+     *
+     * 재귀적으로 하위 노드를 탐색하여 FRAME, COMPONENT_SET, COMPONENT 타입 노드를 수집합니다.
+     */
+    private fun extractFramesFromNode(node: JSONObject?): List<Pair<String, String>> {
+        if (node == null) return emptyList()
+
+        val frames = mutableListOf<Pair<String, String>>()
+        val nodeType = node.optString("type")
+        val nodeName = node.optString("name", "Untitled")
+        val nodeId = node.optString("id")
+
+        // 현재 노드가 Frame 타입이면 추가
+        if (nodeType in listOf("FRAME", "COMPONENT_SET", "COMPONENT") && nodeId.isNotBlank()) {
+            frames.add(nodeId to nodeName)
+        }
+
+        // 하위 노드 재귀 탐색
+        val children = node.optJSONArray("children")
+        if (children != null) {
+            for (i in 0 until children.length()) {
+                val child = children.getJSONObject(i)
+                frames.addAll(extractFramesFromNode(child))
             }
         }
 

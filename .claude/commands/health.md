@@ -1,64 +1,102 @@
 ---
-description: Check Claude Flow system health status
+description: "Check all services status"
 ---
 
-# Claude Flow Health Check
+# Health Check
 
-Check the health of all Claude Flow components.
+전체 서비스 상태를 한눈에 확인합니다.
+
+## Instructions
 
 ```bash
-echo "=== Claude Flow Health Check ==="
+echo "╔═══════════════════════════════════════════╗"
+echo "║        Claude Flow Health Check           ║"
+echo "╚═══════════════════════════════════════════╝"
 echo ""
 
-# API Server
-echo -n "API Server (8080): "
-if curl -s --max-time 5 "http://localhost:8080/api/v1/health" > /dev/null 2>&1; then
-  echo "✓ Healthy"
-else
-  echo "✗ Unreachable"
-fi
+# Infrastructure
+echo "📦 Infrastructure"
+echo "─────────────────"
 
-# n8n Workflow Engine
-echo -n "n8n Engine (5678): "
-if curl -s --max-time 5 "http://localhost:5678/healthz" > /dev/null 2>&1; then
-  echo "✓ Healthy"
-else
-  echo "✗ Unreachable"
-fi
-
-# Dashboard (if running)
-echo -n "Dashboard (5173):  "
-if curl -s --max-time 2 "http://localhost:5173" > /dev/null 2>&1; then
+echo -n "  Qdrant (6333):  "
+if curl -s --max-time 2 http://localhost:6333/collections >/dev/null 2>&1; then
   echo "✓ Running"
 else
-  echo "- Not running (optional)"
+  echo "✗ Not running → /infra start"
 fi
 
-# Claude CLI
-echo -n "Claude CLI:        "
+echo -n "  Ollama (11434): "
+if curl -s --max-time 2 http://localhost:11434/api/tags >/dev/null 2>&1; then
+  echo "✓ Running"
+else
+  echo "✗ Not running → /infra start"
+fi
+
+echo ""
+
+# Application
+echo "🚀 Application"
+echo "─────────────────"
+
+echo -n "  Backend (8080): "
+if curl -s --max-time 2 http://localhost:8080/api/v1/health >/dev/null 2>&1; then
+  echo "✓ Running"
+else
+  echo "✗ Not running → /app start"
+fi
+
+echo -n "  Dashboard:      "
+if curl -s --max-time 2 http://localhost:3000/ >/dev/null 2>&1; then
+  echo "✓ Running (port 3000)"
+elif curl -s --max-time 2 http://localhost:5173/ >/dev/null 2>&1; then
+  echo "✓ Running (port 5173)"
+else
+  echo "✗ Not running → /app start"
+fi
+
+echo ""
+
+# Optional Services
+echo "🔧 Optional"
+echo "─────────────────"
+
+echo -n "  n8n (5678):     "
+if curl -s --max-time 2 http://localhost:5678/ >/dev/null 2>&1; then
+  echo "✓ Running"
+else
+  echo "- Not running"
+fi
+
+echo -n "  Claude CLI:     "
 if command -v claude &> /dev/null; then
-  echo "✓ Installed ($(claude --version 2>/dev/null | head -1 || echo 'unknown version'))"
+  echo "✓ Installed"
 else
   echo "✗ Not installed"
 fi
 
-# Docker containers
 echo ""
-echo "=== Docker Containers ==="
-docker ps --filter "name=claude-flow" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "Docker not available"
 
-# Database
-echo ""
-echo "=== Database Stats ==="
-PROJECT_ROOT="${CLAUDE_FLOW_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
-DB_PATH="${CLAUDE_FLOW_DB:-$PROJECT_ROOT/data/claude-flow.db}"
-if [ -f "$DB_PATH" ]; then
-  echo "Executions: $(sqlite3 "$DB_PATH" 'SELECT COUNT(*) FROM executions' 2>/dev/null || echo 'N/A')"
-  echo "Users: $(sqlite3 "$DB_PATH" 'SELECT COUNT(*) FROM user_contexts' 2>/dev/null || echo 'N/A')"
-  echo "Agents: $(sqlite3 "$DB_PATH" 'SELECT COUNT(*) FROM agents' 2>/dev/null || echo 'N/A')"
+# Environment
+echo "🔑 Environment"
+echo "─────────────────"
+PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+ENV_FILE="$PROJECT_ROOT/docker-compose/.env"
+if [ -f "$ENV_FILE" ]; then
+  vars=$(grep -v "^#" "$ENV_FILE" | grep -c "=" 2>/dev/null || echo 0)
+  echo "  .env: $vars vars loaded"
 else
-  echo "Database not found at $DB_PATH"
+  echo "  .env: ✗ Not found"
 fi
+
+echo ""
+echo "💡 Commands: /infra, /app, /health"
 ```
 
-Report the overall system status and any issues detected.
+## Quick Commands
+
+| 문제 | 해결 |
+|------|------|
+| Qdrant/Ollama not running | `/infra start` |
+| Backend/Dashboard not running | `/app start` |
+| Backend restart needed | `/app restart` |
+| View backend logs | `/app logs` |

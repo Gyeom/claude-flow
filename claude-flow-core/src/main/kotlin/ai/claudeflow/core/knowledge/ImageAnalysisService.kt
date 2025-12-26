@@ -2,6 +2,7 @@ package ai.claudeflow.core.knowledge
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import kotlin.reflect.full.primaryConstructor
 import mu.KotlinLogging
 import java.io.File
 import java.net.URI
@@ -57,9 +58,12 @@ JSON 형식으로만 응답해주세요 (마크다운 코드 블록 없이):
 }
         """.trimIndent()
 
-        // 임시 파일 디렉토리
-        private val TEMP_DIR = File(System.getProperty("java.io.tmpdir"), "claude-flow-images").apply {
-            if (!exists()) mkdirs()
+        // 임시 파일 디렉토리 (WORKSPACE_PATH 내에 위치해야 Claude CLI가 접근 가능)
+        private val TEMP_DIR: File by lazy {
+            val workspacePath = System.getenv("WORKSPACE_PATH") ?: System.getProperty("user.dir")
+            File(workspacePath, ".claude-flow-images").apply {
+                if (!exists()) mkdirs()
+            }
         }
     }
 
@@ -83,15 +87,18 @@ JSON 형식으로만 응답해주세요 (마크다운 코드 블록 없이):
      * 1. URL에서 이미지를 다운로드하여 임시 파일로 저장
      * 2. Claude Code CLI로 분석
      * 3. 임시 파일 삭제
+     *
+     * @param imageUrl 분석할 이미지 URL
+     * @param customPrompt 커스텀 프롬프트 (null이면 기본 ANALYSIS_PROMPT 사용)
      */
-    suspend fun analyzeImageUrl(imageUrl: String): ImageAnalysisResult {
+    suspend fun analyzeImageUrl(imageUrl: String, customPrompt: String? = null): ImageAnalysisResult {
         logger.info { "Downloading image from URL: ${imageUrl.take(80)}..." }
 
         // 임시 파일로 다운로드
         val tempFile = downloadImage(imageUrl)
 
         return try {
-            executeClaudeAnalysis(tempFile.absolutePath)
+            executeClaudeAnalysis(tempFile.absolutePath, customPrompt)
         } finally {
             // 임시 파일 정리
             tempFile.delete()
@@ -132,8 +139,11 @@ JSON 형식으로만 응답해주세요 (마크다운 코드 블록 없이):
 
     /**
      * Claude Code CLI로 이미지 분석 실행
+     *
+     * @param imagePath 이미지 파일 경로
+     * @param customPrompt 커스텀 프롬프트 (null이면 기본 ANALYSIS_PROMPT 사용)
      */
-    private suspend fun executeClaudeAnalysis(imagePath: String): ImageAnalysisResult {
+    private suspend fun executeClaudeAnalysis(imagePath: String, customPrompt: String? = null): ImageAnalysisResult {
         // ClaudeExecutor가 주입되지 않은 경우 기본 결과 반환
         if (claudeExecutor == null) {
             logger.warn { "ClaudeExecutor not available, returning basic result" }
@@ -147,42 +157,57 @@ JSON 형식으로만 응답해주세요 (마크다운 코드 블록 없이):
             )
         }
 
-        val prompt = """
+        val analysisPrompt = customPrompt ?: ANALYSIS_PROMPT
+        val promptText = """
 다음 이미지 파일을 읽고 분석해주세요: $imagePath
 
-$ANALYSIS_PROMPT
+$analysisPrompt
         """.trimIndent()
 
+        logger.info { "Prompt text length: ${promptText.length}, first 100 chars: ${promptText.take(100)}" }
+
         try {
-            // 리플렉션으로 ClaudeExecutor.execute 호출 (순환 의존 방지)
-            val executeMethod = claudeExecutor.javaClass.getMethod("execute", Class.forName("ai.claudeflow.executor.ExecutionRequest"))
-            val requestClass = Class.forName("ai.claudeflow.executor.ExecutionRequest")
-            val requestConstructor = requestClass.constructors.first()
+            // Kotlin 리플렉션으로 ExecutionRequest 생성 (파라미터 이름 기반)
+            val requestClass = Class.forName("ai.claudeflow.executor.ExecutionRequest").kotlin
+            val constructor = requestClass.primaryConstructor
+                ?: throw IllegalStateException("ExecutionRequest has no primary constructor")
 
-            // ExecutionRequest 생성 (prompt만 필수, 나머지 기본값)
-            val request = requestConstructor.newInstance(
-                prompt,      // prompt
-                null,        // systemPrompt
-                null,        // workingDirectory
-                "sonnet",    // model
-                3,           // maxTurns
-                listOf("Read"),  // allowedTools - Read만 허용
-                null,        // deniedTools
-                null,        // config
-                null,        // userId
-                null,        // threadTs
-                false,       // forceNewSession
-                "image-analysis"  // agentId
-            )
+            // workingDirectory 설정 (WORKSPACE_PATH 사용)
+            val workspaceDir = System.getenv("WORKSPACE_PATH") ?: System.getProperty("user.dir")
+            logger.info { "WorkspaceDir: $workspaceDir" }
 
+            // 파라미터 이름으로 값 매핑 (callBy에서 null을 전달하면 default 사용이 아닌 null 설정이 됨)
+            // 따라서 설정하지 않을 파라미터는 맵에서 제외해야 함
+            val params = constructor.parameters.mapNotNull { param ->
+                logger.debug { "Parameter: ${param.name}, type: ${param.type}" }
+                when (param.name) {
+                    "prompt" -> param to promptText
+                    "model" -> param to "sonnet"
+                    "maxTurns" -> param to 3
+                    "allowedTools" -> param to listOf("Read")
+                    "workingDirectory" -> param to workspaceDir
+                    "agentId" -> param to "image-analysis"
+                    "forceNewSession" -> param to false
+                    else -> null  // 맵에서 제외하여 default 값 사용
+                }
+            }.toMap()
+
+            logger.info { "Params map keys: ${params.keys.map { it.name }}" }
+            val request = constructor.callBy(params)
+
+            // 생성된 request의 prompt 필드 확인
+            val promptField = request.javaClass.getDeclaredField("prompt")
+            promptField.isAccessible = true
+            val actualPrompt = promptField.get(request) as? String
+            logger.info { "ExecutionRequest created - prompt length: ${actualPrompt?.length ?: 0}, first 50: ${actualPrompt?.take(50)}" }
+
+            // execute 메소드 호출
+            val executeMethod = claudeExecutor.javaClass.methods.first { it.name == "execute" }
             val result = executeMethod.invoke(claudeExecutor, request)
 
             // ExecutionResult에서 결과 추출
-            val statusMethod = result.javaClass.getMethod("getStatus")
-            val resultMethod = result.javaClass.getMethod("getResult")
-
-            val status = statusMethod.invoke(result).toString()
-            val responseText = resultMethod.invoke(result) as? String ?: ""
+            val status = result.javaClass.getMethod("getStatus").invoke(result).toString()
+            val responseText = result.javaClass.getMethod("getResult").invoke(result) as? String ?: ""
 
             if (status != "SUCCESS") {
                 logger.error { "Claude Code CLI analysis failed: $status" }
@@ -215,28 +240,52 @@ $ANALYSIS_PROMPT
      * Claude 응답 파싱
      */
     private fun parseAnalysisResponse(responseText: String): ImageAnalysisResult {
-        // JSON 블록 추출
-        val jsonMatch = Regex("```json\\s*([\\s\\S]*?)\\s*```").find(responseText)
-            ?: Regex("\\{[\\s\\S]*?\\}").find(responseText)
+        logger.debug { "Parsing response (${responseText.length} chars): ${responseText.take(200)}..." }
 
-        val jsonString = jsonMatch?.groupValues?.getOrNull(1)
-            ?: jsonMatch?.value
-            ?: responseText
-
-        return try {
-            val parsed: Map<String, Any> = mapper.readValue(jsonString)
-            mapToAnalysisResult(parsed, responseText)
-        } catch (e: Exception) {
-            logger.warn(e) { "Failed to parse JSON, using raw text" }
-            ImageAnalysisResult(
-                description = responseText.take(500),
-                extractedText = null,
-                uiComponents = emptyList(),
-                designSpecs = null,
-                functionalSpecs = emptyList(),
-                rawAnalysis = responseText
-            )
+        // 1. 먼저 전체 응답을 JSON으로 파싱 시도 (Claude가 순수 JSON 반환 시)
+        try {
+            val parsed: Map<String, Any> = mapper.readValue(responseText.trim())
+            logger.debug { "Direct JSON parsing successful" }
+            return mapToAnalysisResult(parsed, responseText)
+        } catch (_: Exception) {
+            logger.debug { "Direct JSON parsing failed, trying regex extraction" }
         }
+
+        // 2. ```json ... ``` 코드 블록에서 추출
+        val codeBlockMatch = Regex("```json\\s*([\\s\\S]*?)\\s*```").find(responseText)
+        if (codeBlockMatch != null) {
+            val jsonContent = codeBlockMatch.groupValues[1].trim()
+            try {
+                val parsed: Map<String, Any> = mapper.readValue(jsonContent)
+                logger.debug { "Code block JSON parsing successful" }
+                return mapToAnalysisResult(parsed, responseText)
+            } catch (e: Exception) {
+                logger.debug { "Code block JSON parsing failed: ${e.message}" }
+            }
+        }
+
+        // 3. 전체 JSON 객체 추출 (중첩 지원 - greedy 매칭)
+        val jsonObjectMatch = Regex("\\{[\\s\\S]*\\}").find(responseText)
+        if (jsonObjectMatch != null) {
+            try {
+                val parsed: Map<String, Any> = mapper.readValue(jsonObjectMatch.value)
+                logger.debug { "Greedy JSON extraction successful" }
+                return mapToAnalysisResult(parsed, responseText)
+            } catch (e: Exception) {
+                logger.debug { "Greedy JSON extraction failed: ${e.message}" }
+            }
+        }
+
+        // 4. 파싱 실패 시 원문 반환
+        logger.warn { "All JSON parsing attempts failed, using raw text" }
+        return ImageAnalysisResult(
+            description = responseText.take(500),
+            extractedText = null,
+            uiComponents = emptyList(),
+            designSpecs = null,
+            functionalSpecs = emptyList(),
+            rawAnalysis = responseText
+        )
     }
 
     @Suppress("UNCHECKED_CAST")

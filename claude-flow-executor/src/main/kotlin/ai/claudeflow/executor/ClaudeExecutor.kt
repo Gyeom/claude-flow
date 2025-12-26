@@ -179,9 +179,9 @@ class ClaudeExecutor(
         val sessionKey = buildSessionKey(request)
         val existingSession = sessionKey?.let { getValidSession(it) }
 
-        // CLI 인자 구성
-        val args = buildArgs(request, existingSession?.sessionId)
-        logManager.info(requestId, "CLI args prepared", mapOf("args" to args.take(10).joinToString(" ")))
+        // CLI 인자 구성 (프롬프트는 stdin으로 전달)
+        val (args, prompt) = buildArgsWithPrompt(request, existingSession?.sessionId)
+        logManager.info(requestId, "CLI args prepared", mapOf("args" to args.joinToString(" ")))
         if (existingSession != null) {
             logManager.info(requestId, "Resuming session: ${existingSession.sessionId}")
         }
@@ -191,7 +191,7 @@ class ClaudeExecutor(
 
         try {
             val result = withTimeoutOrNull(timeoutSeconds * 1000L) {
-                runProcessAsync(args, workingDir, requestId, timeoutSeconds)
+                runProcessAsync(args, prompt, workingDir, requestId, timeoutSeconds)
             } ?: run {
                 logManager.error(requestId, "Execution timed out after ${timeoutSeconds}s")
                 ExecutionResult(
@@ -496,7 +496,12 @@ class ClaudeExecutor(
         return args
     }
 
-    private fun buildArgs(request: ExecutionRequest, resumeSessionId: String? = null): List<String> {
+    /**
+     * CLI 인자 빌드 (프롬프트는 별도로 stdin으로 전달)
+     *
+     * @return Pair<args, prompt> - CLI 인자 리스트와 stdin으로 전달할 프롬프트
+     */
+    private fun buildArgsWithPrompt(request: ExecutionRequest, resumeSessionId: String? = null): Pair<List<String>, String> {
         val config = request.config ?: defaultConfig
         val args = mutableListOf<String>()
 
@@ -504,7 +509,7 @@ class ClaudeExecutor(
         if (resumeSessionId != null) {
             args.addAll(listOf("--resume", resumeSessionId))
         } else {
-            // 새 세션: 프롬프트 모드
+            // 새 세션: 프롬프트 모드 (stdin에서 프롬프트 읽음)
             args.add("-p")
         }
 
@@ -553,10 +558,17 @@ class ClaudeExecutor(
             }
         }
 
-        // 프롬프트 (마지막에 추가)
-        args.add(request.prompt)
+        // 프롬프트는 stdin으로 전달 (위치 인자 대신)
+        logger.info { "Prompt will be passed via stdin, length: ${request.prompt.length}, first 50: ${request.prompt.take(50)}" }
+        logger.info { "CLI args: $args" }
 
-        return args
+        return args to request.prompt
+    }
+
+    @Deprecated("Use buildArgsWithPrompt instead - prompt should be passed via stdin")
+    private fun buildArgs(request: ExecutionRequest, resumeSessionId: String? = null): List<String> {
+        val (args, _) = buildArgsWithPrompt(request, resumeSessionId)
+        return args + request.prompt  // 기존 호환성을 위해 프롬프트 추가
     }
 
     private fun findClaudePath(): String {
@@ -584,16 +596,21 @@ class ClaudeExecutor(
      * 비동기 프로세스 실행 (suspend 함수)
      *
      * stream-json 형식일 경우 실시간으로 도구 호출을 로깅
+     *
+     * @param args CLI 인자 목록 (프롬프트 제외)
+     * @param prompt stdin으로 전달할 프롬프트
      */
     private suspend fun runProcessAsync(
         args: List<String>,
+        prompt: String,
         workingDir: File?,
         requestId: String,
         timeoutSeconds: Long
     ): ExecutionResult = withContext(Dispatchers.IO) {
         val claudePath = findClaudePath()
         val isStreamJson = args.contains("stream-json")
-        logger.info { "[$requestId] Running (async): $claudePath ${args.take(5).joinToString(" ")}... (streaming: $isStreamJson)" }
+        logger.info { "[$requestId] Running (async): $claudePath ${args.joinToString(" ")} (streaming: $isStreamJson)" }
+        logger.info { "[$requestId] Prompt (stdin): ${prompt.take(100)}... (${prompt.length} chars)" }
 
         val processBuilder = ProcessBuilder(listOf(claudePath) + args)
             .apply {
@@ -606,8 +623,21 @@ class ClaudeExecutor(
 
         val process = processBuilder.start()
 
-        // stdin 닫기 (non-interactive 모드)
-        process.outputStream.close()
+        // 프롬프트를 stdin으로 전달
+        try {
+            process.outputStream.bufferedWriter().use { writer ->
+                writer.write(prompt)
+                writer.flush()
+            }
+            logger.info { "[$requestId] Prompt written to stdin successfully" }
+        } catch (e: Exception) {
+            logger.error(e) { "[$requestId] Failed to write prompt to stdin" }
+            return@withContext ExecutionResult(
+                requestId = requestId,
+                status = ExecutionStatus.ERROR,
+                error = "Failed to write prompt to stdin: ${e.message}"
+            )
+        }
 
         // 스트리밍 모드: 실시간으로 읽으면서 로깅
         val stdoutDeferred = if (isStreamJson) {
@@ -757,12 +787,13 @@ class ClaudeExecutor(
      */
     private fun runProcess(
         args: List<String>,
+        prompt: String,
         workingDir: File?,
         requestId: String,
         timeoutSeconds: Long
     ): ExecutionResult {
         return runBlocking {
-            runProcessAsync(args, workingDir, requestId, timeoutSeconds)
+            runProcessAsync(args, prompt, workingDir, requestId, timeoutSeconds)
         }
     }
 

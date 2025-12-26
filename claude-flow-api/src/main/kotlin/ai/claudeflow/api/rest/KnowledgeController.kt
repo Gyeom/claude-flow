@@ -284,8 +284,10 @@ class KnowledgeController(
         return try {
             val job = figmaApiSpecService.startAnalysisJob(
                 figmaUrl = request.figmaUrl,
+                title = request.title,
                 projectId = request.projectId,
-                indexToKnowledgeBase = request.indexToKnowledgeBase ?: true
+                indexToKnowledgeBase = request.indexToKnowledgeBase ?: true,
+                description = request.description
             )
 
             ResponseEntity.accepted().body(job.toDto())
@@ -590,8 +592,10 @@ data class VectorStatsDto(
 
 data class FigmaApiSpecRequestDto(
     val figmaUrl: String,
+    val title: String? = null,        // 문서 제목 (e.g., "CCDC Figma 기획 문서 (v0.6)")
     val projectId: String? = null,
-    val indexToKnowledgeBase: Boolean? = true
+    val indexToKnowledgeBase: Boolean? = true,
+    val description: String? = null   // Figma 파일 설명 - AI 분석 컨텍스트로 활용 (e.g., "차량 관리, 진단 시나리오, 데이터 수집 정책 관련 화면")
 )
 
 data class FigmaJobDto(
@@ -599,6 +603,7 @@ data class FigmaJobDto(
     val figmaUrl: String,
     val figmaFileKey: String,
     val fileName: String,
+    val title: String?,               // 사용자 지정 제목
     val projectId: String?,
     val status: String,
     val progress: JobProgressDto,
@@ -753,6 +758,7 @@ private fun FigmaAnalysisJob.toDto() = FigmaJobDto(
     figmaUrl = figmaUrl,
     figmaFileKey = figmaFileKey,
     fileName = fileName,
+    title = title,
     projectId = projectId,
     status = status.name,
     progress = progress.toDto(),

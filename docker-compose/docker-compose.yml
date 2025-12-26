@@ -110,11 +110,9 @@ services:
     networks:
       - claude-flow-network
     restart: unless-stopped
+    # healthcheck 비활성화 (curl/wget 없음, /health 명령어로 수동 확인)
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      disable: true
 
   # Ollama 임베딩 서비스 (qwen3-embedding 자동 설치)
   ollama:

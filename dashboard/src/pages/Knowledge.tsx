@@ -30,7 +30,8 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
-import { knowledgeApi, type KnowledgeDocument, type KnowledgeSearchResult, type VectorItem, type FigmaApiSpecResult, type ScreenApiSpec, type FigmaAnalysisJob } from '@/lib/api'
+import { knowledgeApi, projectsApi, type KnowledgeDocument, type KnowledgeSearchResult, type VectorItem, type FigmaApiSpecResult, type ScreenApiSpec, type FigmaAnalysisJob } from '@/lib/api'
+import type { Project } from '@/types'
 import { cn } from '@/lib/utils'
 
 export function Knowledge() {
@@ -1100,11 +1101,18 @@ function FigmaApiSpecModal({
   onResult: (result: FigmaApiSpecResult) => void
 }) {
   const [figmaUrl, setFigmaUrl] = useState('')
+  const [title, setTitle] = useState('')
   const [projectId, setProjectId] = useState('')
+  const [projects, setProjects] = useState<Project[]>([])
   const [isStarting, setIsStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentJob, setCurrentJob] = useState<FigmaAnalysisJob | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+
+  // 프로젝트 목록 로드
+  useEffect(() => {
+    projectsApi.getAll().then(setProjects).catch(console.error)
+  }, [])
 
   // SSE로 Job 진행 상황 스트리밍
   useEffect(() => {
@@ -1156,6 +1164,7 @@ function FigmaApiSpecModal({
 
     try {
       const job = await knowledgeApi.startFigmaAnalysisJob(figmaUrl, {
+        title: title || undefined,
         projectId: projectId || undefined,
         indexToKnowledgeBase: true,
       })
@@ -1208,16 +1217,34 @@ function FigmaApiSpecModal({
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-2">Project ID (optional)</label>
+            <label className="block text-sm font-medium mb-2">문서 제목 (optional)</label>
             <input
               type="text"
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              placeholder="e.g., ccds, sirius"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g., CCDC Figma 기획 문서 (v0.6)"
               disabled={isProcessing}
               className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
             />
-            <p className="text-xs text-muted-foreground mt-1">MR 리뷰 시 검색 필터로 사용됩니다</p>
+            <p className="text-xs text-muted-foreground mt-1">비워두면 Figma 파일명이 사용됩니다</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">프로젝트 (optional)</label>
+            <select
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              disabled={isProcessing}
+              className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+            >
+              <option value="">선택 안함</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name} ({project.id})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">MR 리뷰 시 해당 프로젝트의 기획서만 검색됩니다</p>
           </div>
         </div>
 

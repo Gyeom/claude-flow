@@ -4,6 +4,9 @@ plugins {
 }
 
 dependencies {
+    // Kotlin Reflect (for runtime reflection)
+    implementation(kotlin("reflect"))
+
     // JSON Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
 

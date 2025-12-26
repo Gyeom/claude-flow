@@ -1344,6 +1344,7 @@ export const knowledgeApi = {
   startFigmaAnalysisJob: (
     figmaUrl: string,
     options?: {
+      title?: string
       projectId?: string
       indexToKnowledgeBase?: boolean
     }
@@ -1352,6 +1353,7 @@ export const knowledgeApi = {
       method: 'POST',
       body: JSON.stringify({
         figmaUrl,
+        title: options?.title,
         projectId: options?.projectId,
         indexToKnowledgeBase: options?.indexToKnowledgeBase ?? true,
       }),
@@ -1394,6 +1396,7 @@ export interface FigmaAnalysisJob {
   figmaUrl: string
   figmaFileKey: string
   fileName: string
+  title: string | null        // 사용자 지정 제목
   projectId: string | null
   status: FigmaJobStatus
   progress: {
