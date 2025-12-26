@@ -286,7 +286,7 @@ class AnalyticsRepository(
         return executeQuery(
             """
             SELECT
-                COALESCE(model, 'claude-sonnet-4-20250514') as model,
+                COALESCE(NULLIF(model, ''), 'claude-sonnet-4-20250514') as model,
                 COALESCE(SUM(cost), 0) as cost,
                 COUNT(*) as requests,
                 COALESCE(SUM(input_tokens + output_tokens), 0) as total_tokens,
@@ -295,7 +295,7 @@ class AnalyticsRepository(
                     CAST(NULLIF(COUNT(*), 0) AS REAL) as success_rate
             FROM executions
             WHERE created_at BETWEEN ? AND ?
-            GROUP BY COALESCE(model, 'claude-sonnet-4-20250514')
+            GROUP BY COALESCE(NULLIF(model, ''), 'claude-sonnet-4-20250514')
             ORDER BY cost DESC
             """.trimIndent(),
             dateRange.from.toString(), dateRange.to.toString()
