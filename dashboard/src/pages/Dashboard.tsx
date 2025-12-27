@@ -7,24 +7,40 @@ import {
   Coins,
   ThumbsUp,
   ThumbsDown,
-  TrendingUp,
   Users,
   Timer,
   DollarSign,
-  Zap,
   AlertTriangle,
 } from 'lucide-react'
 import { StatCard, Card, CardHeader } from '@/components/Card'
 import {
   ChartContainer,
-  AgentPerformanceChart,
   FeedbackChart,
   TokenUsageChart,
 } from '@/components/Chart'
 import { dashboardApi, analyticsApi, type TokenTrendPoint } from '@/lib/api'
 import { formatNumber, formatDuration, formatPercent, formatCost, getSatisfactionColor, cn } from '@/lib/utils'
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts'
 
 type Period = '1h' | '24h' | '7d' | '30d'
+
+const MODEL_COLORS: Record<string, string> = {
+  'claude-sonnet-4-20250514': '#8b5cf6',
+  'claude-3-5-sonnet-20241022': '#8b5cf6',
+  'claude-3-opus-20240229': '#f59e0b',
+  'claude-3-sonnet-20240229': '#3b82f6',
+  'claude-3-haiku-20240307': '#10b981',
+  'gpt-4': '#ef4444',
+  'gpt-4-turbo': '#f97316',
+  'gpt-3.5-turbo': '#6366f1',
+  default: '#94a3b8',
+}
 
 export function Dashboard() {
   const [period, setPeriod] = useState<Period>('7d')
@@ -40,7 +56,12 @@ export function Dashboard() {
     queryFn: () => analyticsApi.getTokensTrend(period),
   })
 
-  const isLoading = statsLoading || tokenTrendLoading
+  const { data: modelsData, isLoading: modelsLoading } = useQuery({
+    queryKey: ['dashboard', 'models', period],
+    queryFn: () => analyticsApi.getModels(period),
+  })
+
+  const isLoading = statsLoading || tokenTrendLoading || modelsLoading
 
   if (isLoading) {
     return (
@@ -61,7 +82,6 @@ export function Dashboard() {
     )
   }
 
-  // Default empty stats used when API returns partial data
   const emptyStats = {
     period: period,
     overview: {
@@ -90,7 +110,6 @@ export function Dashboard() {
     },
   }
 
-  // Use actual data with deep merge for safety
   const dashboardStats = {
     ...emptyStats,
     ...stats,
@@ -105,17 +124,22 @@ export function Dashboard() {
 
   const totalTokens = dashboardStats.overview.totalInputTokens + dashboardStats.overview.totalOutputTokens
 
-  // Transform timeseries for charts using actual token trend data
   const timeseriesChartData = (tokenTrend || []).map((point: TokenTrendPoint) => ({
     date: new Date(point.date).toLocaleDateString('en-US', { weekday: 'short' }),
     input: point.inputTokens,
     output: point.outputTokens,
   }))
 
-  const routingChartData = dashboardStats.routing.map(r => ({
-    name: r.method.charAt(0).toUpperCase() + r.method.slice(1),
-    executions: r.requests,
-    successRate: r.successRate,
+  // Model data for pie chart
+  const modelList = modelsData?.models || []
+  const totalModelRequests = modelList.reduce((sum, m) => sum + (m.requests || 0), 0)
+  const totalModelCost = modelList.reduce((sum, m) => sum + (m.costUsd || 0), 0)
+
+  const pieData = modelList.map(m => ({
+    name: m.model.split('-').slice(-2).join('-'),
+    value: m.requests,
+    fullName: m.model,
+    color: MODEL_COLORS[m.model] || MODEL_COLORS.default,
   }))
 
   return (
@@ -125,7 +149,7 @@ export function Dashboard() {
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
           <p className="text-muted-foreground mt-1">
-            엔터프라이즈급 AI 에이전트 오케스트레이션 플랫폼
+            AI 에이전트 플랫폼 통합 대시보드
           </p>
         </div>
         <div className="flex gap-2">
@@ -146,21 +170,17 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* KPI Cards with P50/P90/P95/P99 */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Requests"
           value={formatNumber(dashboardStats.overview.totalRequests)}
           icon={<Activity className="h-6 w-6" />}
-          change={{ value: 12.5, label: 'vs last period' }}
-          trend="up"
         />
         <StatCard
           title="Success Rate"
           value={formatPercent(dashboardStats.overview.successRate)}
           icon={<CheckCircle className="h-6 w-6" />}
-          change={{ value: 2.1, label: 'vs last period' }}
-          trend="up"
         />
         <StatCard
           title="P50 Duration"
@@ -212,40 +232,87 @@ export function Dashboard() {
         </ChartContainer>
 
         <ChartContainer
-          title="Routing Method Distribution"
-          description="How requests are being routed"
+          title="Model Distribution"
+          description={`${formatNumber(totalModelRequests)} requests · ${formatCost(totalModelCost)} total`}
         >
-          <AgentPerformanceChart data={routingChartData} />
+          {pieData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  dataKey="value"
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => formatNumber(value)} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[240px] flex items-center justify-center text-muted-foreground">
+              No model data available
+            </div>
+          )}
         </ChartContainer>
       </div>
 
-      {/* Bottom Row 3 Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Model Stats */}
+      {/* Model Stats Table */}
+      {modelList.length > 0 && (
         <Card>
-          <CardHeader title="Model Usage" description="By model type" />
-          <div className="space-y-3">
-            {dashboardStats.models.map((model) => (
-              <div key={model.model} className="p-3 rounded-lg bg-muted/50">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-medium text-sm">{model.model}</span>
-                  <span className="text-xs text-muted-foreground">{formatCost(model.costUsd)}</span>
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{formatNumber(model.requests)} requests</span>
-                  <span>{formatPercent(model.successRate)} success</span>
-                </div>
-                <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-2">
-                  <div
-                    className="h-full bg-primary rounded-full"
-                    style={{ width: `${(model.requests / dashboardStats.overview.totalRequests) * 100}%` }}
-                  />
-                </div>
-              </div>
-            ))}
+          <CardHeader title="Model Usage" description="Performance by model" />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left py-3 px-4 font-medium text-muted-foreground">Model</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">Requests</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">Tokens</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">Avg Duration</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">Success</th>
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modelList.map((model) => (
+                  <tr key={model.model} className="border-b border-border/50 hover:bg-muted/30">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: MODEL_COLORS[model.model] || MODEL_COLORS.default }}
+                        />
+                        <span className="font-medium truncate max-w-[200px]" title={model.model}>
+                          {model.model}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="text-right py-3 px-4">{formatNumber(model.requests)}</td>
+                    <td className="text-right py-3 px-4">{formatNumber(model.totalTokens)}</td>
+                    <td className="text-right py-3 px-4">{(model.avgDurationMs / 1000).toFixed(2)}s</td>
+                    <td className="text-right py-3 px-4">
+                      <span className={cn(
+                        model.successRate >= 0.95 ? 'text-green-500' :
+                        model.successRate >= 0.9 ? 'text-yellow-500' : 'text-red-500'
+                      )}>
+                        {formatPercent(model.successRate)}
+                      </span>
+                    </td>
+                    <td className="text-right py-3 px-4">{formatCost(model.costUsd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </Card>
+      )}
 
+      {/* Bottom Row 3 Columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* User Feedback */}
         <Card>
           <CardHeader title="User Feedback" description="Satisfaction metrics" />
@@ -298,44 +365,10 @@ export function Dashboard() {
             ))}
           </div>
         </Card>
-      </div>
-
-      {/* Source & Routing Details */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Source Stats */}
-        <Card>
-          <CardHeader title="Request Sources" description="Where requests come from" />
-          <div className="grid grid-cols-2 gap-4">
-            {dashboardStats.sources.length > 0 ? (
-              dashboardStats.sources.map((source) => (
-                <div key={source.source} className="p-4 rounded-lg bg-muted/50">
-                  <div className="flex items-center gap-2 mb-2">
-                    {source.source === 'slack' ? (
-                      <Zap className="h-4 w-4 text-purple-500" />
-                    ) : (
-                      <Activity className="h-4 w-4 text-blue-500" />
-                    )}
-                    <span className="font-medium capitalize">{source.source}</span>
-                  </div>
-                  <p className="text-2xl font-bold">{formatNumber(source.requests)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatPercent(source.successRate)} success rate
-                  </p>
-                </div>
-              ))
-            ) : (
-              <div className="col-span-2 p-4 rounded-lg bg-muted/50 text-center text-muted-foreground">
-                <Activity className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No source data available</p>
-                <p className="text-xs mt-1">Source tracking will appear here once enabled</p>
-              </div>
-            )}
-          </div>
-        </Card>
 
         {/* Quick Stats */}
         <Card>
-          <CardHeader title="Quick Stats" description="Key metrics at a glance" />
+          <CardHeader title="Quick Stats" description="Key metrics" />
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
               <div className="flex items-center gap-3">
@@ -360,8 +393,8 @@ export function Dashboard() {
             </div>
             <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5">
               <div className="flex items-center gap-3">
-                <TrendingUp className="h-5 w-5 text-primary" />
-                <span className="text-sm">Avg Tokens/Request</span>
+                <Activity className="h-5 w-5 text-primary" />
+                <span className="text-sm">Avg Tokens/Req</span>
               </div>
               <span className="font-semibold">
                 {formatNumber(dashboardStats.overview.totalRequests > 0

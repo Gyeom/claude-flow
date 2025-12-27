@@ -145,64 +145,6 @@ class GitLabFeedbackController(
     }
 
     /**
-     * GitLab 답글 피드백 처리
-     */
-    @PostMapping("/gitlab-note")
-    fun handleGitLabNote(@RequestBody request: GitLabNoteRequest): Mono<ResponseEntity<Map<String, Any>>> = mono {
-        logger.info { "GitLab note feedback: noteId=${request.noteId}, parentNoteId=${request.parentNoteId}" }
-
-        // 부모 코멘트가 AI 리뷰인지 확인
-        val reviewRecord = if (request.parentNoteId != null) {
-            storage.feedbackRepository.findReviewByDiscussionId(request.parentNoteId)
-                ?: storage.feedbackRepository.findReviewByNoteId(request.parentNoteId.toIntOrNull() ?: 0)
-        } else {
-            null
-        }
-
-        if (reviewRecord == null) {
-            return@mono ResponseEntity.ok(mapOf(
-                "status" to "ignored",
-                "reason" to "not_ai_comment_reply"
-            ))
-        }
-
-        // 답글 감정 분석
-        val sentiment = analyzeCommentSentiment(request.content)
-
-        // 피드백 저장
-        storage.feedbackRepository.saveGitLabFeedback(
-            id = UUID.randomUUID().toString(),
-            gitlabProjectId = request.projectId,
-            mrIid = reviewRecord.mrIid,
-            noteId = request.noteId,
-            reaction = sentiment.reaction,
-            userId = request.userId.toString(),
-            source = "gitlab_note",
-            comment = request.content
-        )
-
-        // 학습 서비스에 전달
-        feedbackLearningService?.let { service ->
-            try {
-                service.learnFromComment(
-                    mrContext = reviewRecord.mrContext ?: "MR #${reviewRecord.mrIid}",
-                    reviewContent = reviewRecord.reviewContent,
-                    userComment = request.content,
-                    userId = request.userId.toString()
-                )
-            } catch (e: Exception) {
-                logger.warn { "Failed to learn from GitLab note: ${e.message}" }
-            }
-        }
-
-        ResponseEntity.ok(mapOf(
-            "status" to "processed",
-            "sentiment" to sentiment.type.name,
-            "reviewId" to reviewRecord.id
-        ))
-    }
-
-    /**
      * GitLab 피드백 통계 조회
      */
     @GetMapping("/gitlab-stats")
@@ -266,52 +208,6 @@ class GitLabFeedbackController(
 
         ResponseEntity.ok(result)
     }
-
-    /**
-     * GitLab 리뷰에 대시보드 코멘트 추가
-     */
-    @PostMapping("/gitlab-review/{reviewId}/comment")
-    fun addDashboardComment(
-        @PathVariable reviewId: String,
-        @RequestBody request: DashboardCommentRequest
-    ): Mono<ResponseEntity<Map<String, Any>>> = mono {
-        logger.info { "Add dashboard comment to review $reviewId" }
-
-        storage.feedbackRepository.saveGitLabFeedback(
-            id = UUID.randomUUID().toString(),
-            gitlabProjectId = "",
-            mrIid = 0,
-            noteId = 0,
-            reaction = "comment",
-            userId = "dashboard",
-            source = "dashboard",
-            comment = request.comment
-        )
-
-        ResponseEntity.ok(mapOf("success" to true))
-    }
-
-    /**
-     * 간단한 감정 분석
-     */
-    private fun analyzeCommentSentiment(content: String): SentimentResult {
-        val lowerContent = content.lowercase()
-
-        val positiveKeywords = listOf(
-            "좋아요", "감사", "도움", "정확", "훌륭", "좋습니다", "맞아요",
-            "good", "thanks", "helpful", "correct", "great", "agree", "nice"
-        )
-        val negativeKeywords = listOf(
-            "틀렸", "아니", "잘못", "부정확", "오류", "버그", "문제",
-            "wrong", "incorrect", "no", "error", "bug", "issue", "disagree"
-        )
-
-        return when {
-            positiveKeywords.any { it in lowerContent } -> SentimentResult(GitLabFeedbackType.POSITIVE, "thumbsup")
-            negativeKeywords.any { it in lowerContent } -> SentimentResult(GitLabFeedbackType.NEGATIVE, "thumbsdown")
-            else -> SentimentResult(GitLabFeedbackType.NEUTRAL, "neutral")
-        }
-    }
 }
 
 // ==================== Request DTOs ====================
@@ -331,23 +227,4 @@ data class GitLabEmojiRequest(
     val emoji: String,      // thumbsup, thumbsdown, +1, -1
     val userId: Int,
     val action: String      // created, deleted, award
-)
-
-data class GitLabNoteRequest(
-    val projectId: String,
-    val noteId: Int,
-    val parentNoteId: String?,  // discussion_id 또는 parent note_id
-    val content: String,
-    val userId: Int
-)
-
-data class DashboardCommentRequest(
-    val comment: String
-)
-
-// ==================== Internal DTOs ====================
-
-private data class SentimentResult(
-    val type: GitLabFeedbackType,
-    val reaction: String
 )

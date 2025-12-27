@@ -2,11 +2,9 @@ import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
   Bot,
-  BarChart3,
   Settings,
   Zap,
   ThumbsUp,
-  Cpu,
   Clock,
   Workflow,
   ScrollText,
@@ -29,9 +27,7 @@ const navigation = [
   { name: 'Jira', href: '/jira', icon: Ticket },
   { name: 'MR Reviews', href: '/gitlab-reviews', icon: GitMerge },
   { name: 'Agents', href: '/agents', icon: Bot },
-  { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Feedback', href: '/feedback', icon: ThumbsUp },
-  { name: 'Models', href: '/models', icon: Cpu },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
 ]
 

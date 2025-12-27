@@ -6,9 +6,7 @@ import { Layout } from '@/components/Layout'
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
 const Chat = lazy(() => import('@/pages/Chat').then(m => ({ default: m.Chat })))
 const Agents = lazy(() => import('@/pages/Agents').then(m => ({ default: m.Agents })))
-const Analytics = lazy(() => import('@/pages/Analytics').then(m => ({ default: m.Analytics })))
 const Feedback = lazy(() => import('@/pages/Feedback').then(m => ({ default: m.Feedback })))
-const Models = lazy(() => import('@/pages/Models').then(m => ({ default: m.Models })))
 const History = lazy(() => import('@/pages/History').then(m => ({ default: m.History })))
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
 const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
@@ -46,19 +44,9 @@ function App() {
             <Agents />
           </Suspense>
         } />
-        <Route path="/analytics" element={
-          <Suspense fallback={<PageLoader />}>
-            <Analytics />
-          </Suspense>
-        } />
         <Route path="/feedback" element={
           <Suspense fallback={<PageLoader />}>
             <Feedback />
-          </Suspense>
-        } />
-        <Route path="/models" element={
-          <Suspense fallback={<PageLoader />}>
-            <Models />
           </Suspense>
         } />
         <Route path="/history" element={

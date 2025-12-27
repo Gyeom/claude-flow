@@ -1483,13 +1483,6 @@ export const gitlabReviewsApi = {
   // Get GitLab feedback stats
   getStats: (days = 30) =>
     fetchApi<GitLabFeedbackStats>(`/feedback/gitlab-stats?days=${days}`),
-
-  // Add comment to review (from dashboard)
-  addComment: (reviewId: string, comment: string) =>
-    fetchApi<{ success: boolean }>(`/feedback/gitlab-review/${reviewId}/comment`, {
-      method: 'POST',
-      body: JSON.stringify({ comment }),
-    }),
 }
 
 // Extended Analytics API (Verified Feedback)
