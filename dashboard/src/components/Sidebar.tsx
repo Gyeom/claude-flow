@@ -28,55 +28,55 @@ export function Sidebar() {
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-border bg-card">
       <div className="flex h-full flex-col">
         {/* Logo */}
-        <div className="flex h-16 items-center gap-3 border-b border-border px-6">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Zap className="h-5 w-5" />
+        <div className="flex h-20 items-center gap-4 border-b border-border px-6">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <Zap className="h-6 w-6" />
           </div>
           <div>
-            <h1 className="text-lg font-bold">Claude Flow</h1>
-            <p className="text-xs text-muted-foreground">AI Agent Platform</p>
+            <h1 className="text-xl font-bold">Claude Flow</h1>
+            <p className="text-sm text-muted-foreground">AI Agent Platform</p>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-1 p-4">
+        <nav className="flex-1 space-y-2 p-4">
           {navigation.map((item) => (
             <NavLink
               key={item.name}
               to={item.href}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+                  'flex items-center gap-4 rounded-xl px-4 py-3.5 text-base font-medium transition-colors',
                   isActive
                     ? 'bg-primary/10 text-primary'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )
               }
             >
-              <item.icon className="h-5 w-5" />
+              <item.icon className="h-6 w-6" />
               {item.name}
             </NavLink>
           ))}
         </nav>
 
         {/* Footer */}
-        <div className="border-t border-border p-4 space-y-4">
+        <div className="border-t border-border p-4 space-y-3">
           <ThemeToggle />
           <NavLink
             to="/settings"
             className={({ isActive }) =>
               cn(
-                'flex items-center gap-3 px-3 py-2 rounded-lg transition-colors',
+                'flex items-center gap-4 px-4 py-3 rounded-xl transition-colors',
                 isActive
                   ? 'bg-primary/10 text-primary'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )
             }
           >
-            <Settings className="h-5 w-5" />
-            <span className="text-sm font-medium">Settings</span>
+            <Settings className="h-6 w-6" />
+            <span className="text-base font-medium">Settings</span>
           </NavLink>
-          <div className="px-3 py-2">
+          <div className="px-4 py-2">
             <p className="text-xs text-muted-foreground">
               Version 1.0.0
             </p>
