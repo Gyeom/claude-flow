@@ -7,7 +7,6 @@ const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m
 const Chat = lazy(() => import('@/pages/Chat').then(m => ({ default: m.Chat })))
 const Interactions = lazy(() => import('@/pages/Interactions').then(m => ({ default: m.Interactions })))
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
-const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
 const Jira = lazy(() => import('@/pages/Jira').then(m => ({ default: m.Jira })))
 const Knowledge = lazy(() => import('@/pages/Knowledge').then(m => ({ default: m.Knowledge })))
 const Logs = lazy(() => import('@/pages/Logs'))
@@ -49,11 +48,7 @@ function App() {
             <Workflows />
           </Suspense>
         } />
-        <Route path="/projects" element={
-          <Suspense fallback={<PageLoader />}>
-            <Projects />
-          </Suspense>
-        } />
+        <Route path="/projects" element={<Navigate to="/settings" replace />} />
         <Route path="/jira" element={
           <Suspense fallback={<PageLoader />}>
             <Jira />

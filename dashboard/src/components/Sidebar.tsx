@@ -5,7 +5,6 @@ import {
   Zap,
   Workflow,
   ScrollText,
-  FolderOpen,
   MessageSquare,
   Ticket,
   BookOpen,
@@ -16,12 +15,11 @@ import { ThemeToggle } from './ThemeToggle'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Jira', href: '/jira', icon: Ticket },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
   { name: 'Activity', href: '/interactions', icon: Activity },
   { name: 'Live Logs', href: '/logs', icon: ScrollText },
-  { name: 'Projects', href: '/projects', icon: FolderOpen },
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen },
-  { name: 'Jira', href: '/jira', icon: Ticket },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
 ]
 
