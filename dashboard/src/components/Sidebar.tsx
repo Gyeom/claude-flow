@@ -7,7 +7,6 @@ import {
   Zap,
   ThumbsUp,
   Cpu,
-  AlertTriangle,
   Clock,
   Workflow,
   ScrollText,
@@ -33,7 +32,6 @@ const navigation = [
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Feedback', href: '/feedback', icon: ThumbsUp },
   { name: 'Models', href: '/models', icon: Cpu },
-  { name: 'Errors', href: '/errors', icon: AlertTriangle },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
 ]
 

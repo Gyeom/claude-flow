@@ -11,7 +11,6 @@ import type {
   ModelStats,
   SourceStats,
   RequesterStats,
-  ErrorStats,
   Project,
   ProjectInput,
   ProjectStats,
@@ -361,12 +360,6 @@ export const analyticsApi = {
     return { period, models }
   },
 
-  getErrors: async (period = '7d') => {
-    const query = buildPeriodQuery(period)
-    const errors = await fetchApi<ErrorStats[]>(`/analytics/errors?${query}`)
-    return { period, errors }
-  },
-
   getSources: async (period = '7d') => {
     const query = buildPeriodQuery(period)
     const sources = await fetchApi<SourceStats[]>(`/analytics/sources?${query}`)
@@ -385,11 +378,6 @@ export const analyticsApi = {
     return fetchApi<TokenTrendPoint[]>(`/analytics/tokens/trend?${query}`)
   },
 
-  getErrorsTrend: async (period = '7d') => {
-    const query = buildPeriodQuery(period)
-    return fetchApi<ErrorTrendPoint[]>(`/analytics/errors/trend?${query}`)
-  },
-
   getFeedbackTrend: async (period = '7d') => {
     const query = buildPeriodQuery(period)
     return fetchApi<FeedbackTrendPoint[]>(`/analytics/feedback/trend?${query}`)
@@ -401,11 +389,6 @@ export interface TokenTrendPoint {
   date: string
   inputTokens: number
   outputTokens: number
-}
-
-export interface ErrorTrendPoint {
-  date: string
-  errorCount: number
 }
 
 export interface FeedbackTrendPoint {

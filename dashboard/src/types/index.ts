@@ -204,13 +204,6 @@ export interface RecentConversation {
   timestamp: string
 }
 
-// Error Stats
-export interface ErrorStats {
-  errorType: string
-  count: number
-  lastOccurred: string
-}
-
 // Clarification Types (프로젝트 선택 등)
 export interface ClarificationOption {
   id: string
