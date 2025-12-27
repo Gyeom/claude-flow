@@ -1,6 +1,9 @@
 {
   "name": "Slack Feedback Handler",
   "versionId": "feedback-handler-v1",
+  "meta": {
+    "description": "Slack 이모지 리액션(👍/👎)을 수집하여 피드백으로 저장합니다. AI 응답 품질 개선에 활용됩니다."
+  },
   "nodes": [
     {
       "parameters": {

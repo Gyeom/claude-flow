@@ -1,6 +1,8 @@
 {
   "name": "Alert Channel Monitor",
-  "description": "장애 알람 채널 모니터링 → Claude 분석 → Jira 생성 → MR 파이프라인",
+  "meta": {
+    "description": "장애 알람 채널을 모니터링하여 Sentry/DataDog 알림을 분석하고, Jira 이슈 생성 및 MR 파이프라인을 트리거합니다."
+  },
   "active": false,
   "nodes": [
     {

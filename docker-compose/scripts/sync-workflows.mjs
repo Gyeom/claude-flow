@@ -1,5 +1,5 @@
 // n8n 워크플로우 동기화 스크립트
-// JSON 파일과 N8N 워크플로우를 동기화 (생성/업데이트)
+// JSON 파일과 N8N 워크플로우를 동기화 (생성/업데이트/삭제)
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
@@ -114,7 +114,20 @@ async function syncWorkflows() {
     const files = fs.readdirSync(WORKFLOWS_DIR).filter(f => f.endsWith('.json'));
     console.log(`Found ${files.length} workflow files`);
 
-    let updated = 0, created = 0, unchanged = 0;
+    let updated = 0, created = 0, deleted = 0;
+
+    // JSON 파일에서 워크플로우 이름 목록 수집
+    const jsonWorkflowNames = new Set();
+    for (const file of files) {
+        const filePath = path.join(WORKFLOWS_DIR, file);
+        try {
+            const content = fs.readFileSync(filePath, 'utf8');
+            const workflow = JSON.parse(content);
+            jsonWorkflowNames.add(workflow.name);
+        } catch (err) {
+            console.log(`  Warning: Failed to parse ${file}:`, err.message);
+        }
+    }
 
     for (const file of files) {
         const filePath = path.join(WORKFLOWS_DIR, file);
@@ -161,8 +174,23 @@ async function syncWorkflows() {
         }
     }
 
+    // 5. JSON 파일에 없는 워크플로우 삭제
+    console.log('\nChecking for workflows to delete...');
+    for (const existing of existingWorkflows) {
+        if (!jsonWorkflowNames.has(existing.name)) {
+            console.log(`  Deleting: ${existing.name} (ID: ${existing.id})`);
+            const deleteResult = await request('DELETE', `/rest/workflows/${existing.id}`);
+            if (deleteResult.status === 200 || deleteResult.status === 204) {
+                console.log(`    Deleted successfully`);
+                deleted++;
+            } else {
+                console.log(`    Delete failed:`, deleteResult.status);
+            }
+        }
+    }
+
     console.log(`\n=== Sync Complete ===`);
-    console.log(`Created: ${created}, Updated: ${updated}`);
+    console.log(`Created: ${created}, Updated: ${updated}, Deleted: ${deleted}`);
     return true;
 }
 

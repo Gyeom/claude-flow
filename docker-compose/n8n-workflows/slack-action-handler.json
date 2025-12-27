@@ -1,6 +1,9 @@
 {
   "name": "Slack Action Handler",
   "versionId": "action-handler-v1",
+  "meta": {
+    "description": "Slack 버튼 액션을 처리합니다. Jira 티켓 생성, 대화 요약, MR 선택 등의 인터랙티브 작업을 수행합니다."
+  },
   "nodes": [
     {
       "parameters": {

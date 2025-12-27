@@ -1,5 +1,8 @@
 {
   "name": "Scheduled MR Auto Review",
+  "meta": {
+    "description": "5분마다 GitLab에서 새 MR을 확인하고 자동으로 AI 코드 리뷰를 수행합니다. ai-review 라벨이 있는 MR을 대상으로 합니다."
+  },
   "nodes": [
     {
       "parameters": {

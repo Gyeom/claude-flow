@@ -1,5 +1,8 @@
 {
   "name": "GitLab Feedback Poller",
+  "meta": {
+    "description": "5분마다 GitLab MR 코멘트의 이모지 리액션을 수집합니다. AI 리뷰에 대한 개발자 피드백을 추적합니다."
+  },
   "nodes": [
     {
       "parameters": {

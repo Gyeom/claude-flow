@@ -314,7 +314,8 @@ data class N8nWorkflow(
     val nodes: List<Map<String, Any>>? = null,
     val connections: Any? = null,
     val settings: Map<String, Any>? = null,
-    val tags: List<Map<String, Any>>? = null
+    val tags: List<Map<String, Any>>? = null,
+    val meta: Map<String, Any>? = null
 ) {
     fun toDto() = N8nWorkflowDto(
         id = id,
@@ -325,7 +326,8 @@ data class N8nWorkflow(
         nodes = nodes,
         connections = connections,
         settings = settings,
-        tags = tags?.map { N8nTagDto(it["id"]?.toString() ?: "", it["name"]?.toString() ?: "") }
+        tags = tags?.map { N8nTagDto(it["id"]?.toString() ?: "", it["name"]?.toString() ?: "") },
+        meta = meta
     )
 }
 
@@ -361,7 +363,8 @@ data class N8nWorkflowDto(
     val nodes: List<Map<String, Any>>?,
     val connections: Any?,
     val settings: Map<String, Any>?,
-    val tags: List<N8nTagDto>?
+    val tags: List<N8nTagDto>?,
+    val meta: Map<String, Any>?
 )
 
 data class N8nTagDto(val id: String, val name: String)

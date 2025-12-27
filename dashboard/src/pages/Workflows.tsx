@@ -23,6 +23,17 @@ interface WorkflowWithStats extends N8nWorkflow {
   errorCount: number
 }
 
+// 워크플로우 이름 → 설명 매핑
+const WORKFLOW_DESCRIPTIONS: Record<string, string> = {
+  'Slack Mention Handler': 'Slack에서 @멘션 메시지를 처리합니다. 일반 질문, 명령어(/health 등), MR 리뷰 요청을 분류하여 적절한 핸들러로 라우팅합니다.',
+  'Slack Action Handler': 'Slack 버튼 액션을 처리합니다. Jira 티켓 생성, 대화 요약, MR 선택 등의 인터랙티브 작업을 수행합니다.',
+  'Slack Feedback Handler': 'Slack 이모지 리액션(👍/👎)을 수집하여 피드백으로 저장합니다. AI 응답 품질 개선에 활용됩니다.',
+  'Scheduled MR Auto Review': '5분마다 GitLab에서 새 MR을 확인하고 자동으로 AI 코드 리뷰를 수행합니다. ai-review 라벨이 있는 MR을 대상으로 합니다.',
+  'GitLab Feedback Poller': '5분마다 GitLab MR 코멘트의 이모지 리액션을 수집합니다. AI 리뷰에 대한 개발자 피드백을 추적합니다.',
+  'Alert Channel Monitor': '장애 알람 채널을 모니터링하여 Sentry/DataDog 알림을 분석하고, Jira 이슈 생성 및 MR 파이프라인을 트리거합니다.',
+  'Alert to MR Pipeline': 'Jira 이슈 기반으로 자동 수정 파이프라인을 실행합니다. 브랜치 생성 → Claude Code 수정 → MR 생성까지 자동화합니다.',
+}
+
 export function Workflows() {
   const [selectedWorkflow, setSelectedWorkflow] = useState<string | null>(null)
   const queryClient = useQueryClient()
@@ -301,7 +312,12 @@ export function Workflows() {
                       <h3 className="font-semibold">{workflow.name}</h3>
                       {getStatusIcon(workflow)}
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">
+                    {WORKFLOW_DESCRIPTIONS[workflow.name] && (
+                      <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
+                        {WORKFLOW_DESCRIPTIONS[workflow.name]}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground/70 mt-1">
                       {workflow.nodes?.length || 0} nodes • Updated {formatTimeAgo(workflow.updatedAt)}
                     </p>
                   </div>

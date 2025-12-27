@@ -1,6 +1,9 @@
 {
   "name": "Slack Mention Handler",
   "versionId": "mention-handler-v4",
+  "meta": {
+    "description": "Slack에서 @멘션 메시지를 처리합니다. 일반 질문, 명령어(/health 등), MR 리뷰 요청을 분류하여 적절한 핸들러로 라우팅합니다."
+  },
   "nodes": [
     {
       "parameters": {

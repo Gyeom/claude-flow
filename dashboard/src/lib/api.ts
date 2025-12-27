@@ -662,6 +662,9 @@ export interface N8nWorkflow {
   }
   staticData?: unknown
   tags?: { id: string; name: string }[]
+  meta?: {
+    description?: string
+  }
 }
 
 export interface N8nExecution {
