@@ -5,7 +5,7 @@ import { useChatContext } from '@/contexts/ChatContext'
 import { ChatMessages } from './ChatMessages'
 import { ChatInput } from './ChatInput'
 import { useQuery } from '@tanstack/react-query'
-import { agentsApi, projectsApi } from '@/lib/api'
+import { projectsApi } from '@/lib/api'
 
 // 최소/최대 크기 제한
 const MIN_WIDTH = 320
@@ -25,16 +25,15 @@ export function FloatingChat() {
     currentToolCalls,
     currentMetadata,
     progressStatus,
-    // currentClarification is handled by messages with clarification field
     isPanelOpen,
     selectedProject,
-    selectedAgent,
+    feedbackState,
     setSelectedProject,
-    setSelectedAgent,
     openPanel,
     closePanel,
     sendMessage,
     sendClarificationResponse,
+    submitFeedback,
     stopStreaming,
     clearMessages,
   } = useChatContext()
@@ -52,12 +51,6 @@ export function FloatingChat() {
   const { data: projects } = useQuery({
     queryKey: ['projects'],
     queryFn: projectsApi.getAll,
-  })
-
-  // 에이전트 목록 조회
-  const { data: agents } = useQuery({
-    queryKey: ['agents'],
-    queryFn: agentsApi.getAll,
   })
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -257,38 +250,24 @@ export function FloatingChat() {
 
       {/* 설정 패널 */}
       {showSettings && (
-        <div className="px-4 py-3 border-b border-border bg-muted/30 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Project
-              </label>
-              <select
-                value={selectedProject || ''}
-                onChange={(e) => setSelectedProject(e.target.value || null)}
-                className="w-full text-sm px-2 py-1.5 rounded-md border border-border bg-background"
-              >
-                <option value="">Auto-detect</option>
-                {projects?.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Agent
-              </label>
-              <select
-                value={selectedAgent || ''}
-                onChange={(e) => setSelectedAgent(e.target.value || null)}
-                className="w-full text-sm px-2 py-1.5 rounded-md border border-border bg-background"
-              >
-                <option value="">Auto-route</option>
-                {agents?.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-            </div>
+        <div className="px-4 py-3 border-b border-border bg-muted/30">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">
+              Project
+            </label>
+            <select
+              value={selectedProject || ''}
+              onChange={(e) => setSelectedProject(e.target.value || null)}
+              className="w-full text-sm px-2 py-1.5 rounded-md border border-border bg-background"
+            >
+              <option value="">Auto-detect</option>
+              {projects?.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              에이전트는 메시지에 따라 자동으로 선택됩니다.
+            </p>
           </div>
         </div>
       )}
@@ -379,6 +358,8 @@ export function FloatingChat() {
           currentToolCalls={currentToolCalls}
           streamingContent={streamingContent}
           onClarificationSelect={(option, context) => sendClarificationResponse(option, context)}
+          feedbackState={feedbackState}
+          onFeedback={submitFeedback}
         />
       </div>
 

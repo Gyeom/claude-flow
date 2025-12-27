@@ -10,10 +10,14 @@ import {
   Calendar,
   ShieldCheck,
   Tags,
+  MessageSquare,
+  GitBranch,
+  Slack,
+  Globe,
 } from 'lucide-react'
 import { Card, CardHeader, StatCard } from '@/components/Card'
 import { ChartContainer } from '@/components/Chart'
-import { analyticsApi, verifiedFeedbackApi, type FeedbackTrendPoint } from '@/lib/api'
+import { analyticsApi, verifiedFeedbackApi, feedbackApi, type FeedbackTrendPoint, type FeedbackBySource } from '@/lib/api'
 import { formatNumber, formatPercent, cn } from '@/lib/utils'
 import {
   XAxis,
@@ -64,7 +68,12 @@ export function Feedback() {
     queryFn: () => analyticsApi.getFeedbackTrend(period),
   })
 
-  const isLoading = feedbackLoading || verifiedLoading || categoryLoading || trendLoading
+  const { data: sourceStats, isLoading: sourceLoading } = useQuery({
+    queryKey: ['analytics', 'feedback', 'by-source', period],
+    queryFn: () => feedbackApi.getBySource(parseInt(period.replace('d', ''))),
+  })
+
+  const isLoading = feedbackLoading || verifiedLoading || categoryLoading || trendLoading || sourceLoading
 
   // Use API data directly with default values
   const feedbackData = feedback || {
@@ -307,6 +316,67 @@ export function Feedback() {
                 </div>
               </Card>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Feedback by Source */}
+      {sourceStats && sourceStats.length > 0 && (
+        <div>
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Globe className="h-5 w-5" />
+            Feedback by Source
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            Distribution of feedback across different platforms and integrations
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {sourceStats.map((source: FeedbackBySource) => {
+              const getSourceIcon = (s: string) => {
+                if (s.includes('slack')) return <Slack className="h-5 w-5 text-purple-500" />
+                if (s.includes('chat')) return <MessageSquare className="h-5 w-5 text-blue-500" />
+                if (s.includes('gitlab')) return <GitBranch className="h-5 w-5 text-orange-500" />
+                return <Globe className="h-5 w-5 text-gray-500" />
+              }
+              const getSourceColor = (s: string) => {
+                if (s.includes('slack')) return 'border-purple-500/30'
+                if (s.includes('chat')) return 'border-blue-500/30'
+                if (s.includes('gitlab')) return 'border-orange-500/30'
+                return 'border-gray-500/30'
+              }
+              const satisfactionRate = source.total > 0 ? (source.positive / source.total) * 100 : 0
+
+              return (
+                <Card key={source.source} className={cn("p-4", getSourceColor(source.source))}>
+                  <div className="flex items-center gap-2 mb-3">
+                    {getSourceIcon(source.source)}
+                    <span className="text-sm font-medium">{source.source}</span>
+                  </div>
+                  <p className="text-2xl font-bold">{formatNumber(source.total)}</p>
+                  <div className="flex items-center justify-between mt-3 text-xs">
+                    <div className="flex items-center gap-1 text-green-500">
+                      <ThumbsUp className="h-3 w-3" />
+                      <span>{source.positive}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-red-500">
+                      <ThumbsDown className="h-3 w-3" />
+                      <span>{source.negative}</span>
+                    </div>
+                  </div>
+                  <div className="mt-2">
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-green-500 rounded-full transition-all"
+                        style={{ width: `${satisfactionRate}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground mt-1">
+                      {satisfactionRate.toFixed(0)}% positive
+                    </span>
+                  </div>
+                </Card>
+              )
+            })}
           </div>
         </div>
       )}

@@ -20,10 +20,12 @@ import type {
   GitLabReviewRecord,
   GitLabFeedbackStats,
   GitLabProject,
+  InteractionsResponse,
+  Interaction,
+  InteractionSourceStats,
 } from '@/types'
 
 const API_BASE_V1 = '/api/v1'
-const API_BASE_V2 = '/api/v2'
 
 /**
  * Period를 API 파라미터로 변환
@@ -301,41 +303,6 @@ export const executionsApi = {
     fetchApi<{ success: boolean }>(`/executions/${id}/retry`, { method: 'POST' }),
 }
 
-// Agents (v2 API)
-export const agentsApi = {
-  getAll: () =>
-    fetchApi<Agent[]>('/agents', undefined, API_BASE_V2),
-
-  getByProject: (projectId: string) =>
-    fetchApi<Agent[]>(`/agents?projectId=${projectId}`, undefined, API_BASE_V2),
-
-  getById: (id: string, projectId?: string) =>
-    fetchApi<Agent>(`/agents/${id}${projectId ? `?projectId=${projectId}` : ''}`, undefined, API_BASE_V2),
-
-  create: (agent: Omit<Agent, 'id'>) =>
-    fetchApi<Agent>('/agents', {
-      method: 'POST',
-      body: JSON.stringify(agent),
-    }, API_BASE_V2),
-
-  update: (id: string, agent: Partial<Agent>) =>
-    fetchApi<Agent>(`/agents/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(agent),
-    }, API_BASE_V2),
-
-  delete: (id: string, projectId?: string) =>
-    fetchApi<{ success: boolean }>(`/agents/${id}${projectId ? `?projectId=${projectId}` : ''}`, {
-      method: 'DELETE',
-    }, API_BASE_V2),
-
-  setEnabled: (id: string, enabled: boolean) =>
-    fetchApi<Agent>(`/agents/${id}/enabled`, {
-      method: 'PATCH',
-      body: JSON.stringify({ enabled }),
-    }, API_BASE_V2),
-}
-
 // Analytics
 export const analyticsApi = {
   getFeedback: (period = '7d') => {
@@ -611,12 +578,74 @@ export interface FeedbackStats {
   }[]
 }
 
+// Feedback by source distribution type
+export interface FeedbackBySource {
+  source: string
+  positive: number
+  negative: number
+  total: number
+}
+
 export const feedbackApi = {
-  getStats: (days = 7) =>
-    fetchApi<FeedbackStats>(`/analytics/feedback/detailed?days=${days}`),
+  getStats: (days = 7, source?: string) => {
+    const params = new URLSearchParams({ days: days.toString() })
+    if (source) params.set('source', source)
+    return fetchApi<FeedbackStats>(`/analytics/feedback/detailed?${params}`)
+  },
 
   getRecent: (limit = 50) =>
     fetchApi<FeedbackRecord[]>(`/feedback/recent?limit=${limit}`),
+
+  // Get feedback distribution by source (slack, chat, gitlab_emoji, api 등)
+  getBySource: (days = 7) =>
+    fetchApi<FeedbackBySource[]>(`/analytics/feedback/by-source?days=${days}`),
+}
+
+// ==================== Interactions API (통합) ====================
+
+export interface InteractionsParams {
+  sources?: string[]  // slack, chat, mr_review, other
+  search?: string
+  days?: number
+  page?: number
+  size?: number
+}
+
+export const interactionsApi = {
+  /**
+   * 통합 조회 (필터링 지원)
+   */
+  getAll: (params: InteractionsParams = {}) => {
+    const queryParams = new URLSearchParams()
+    if (params.sources?.length) {
+      queryParams.set('sources', params.sources.join(','))
+    }
+    if (params.search) {
+      queryParams.set('search', params.search)
+    }
+    if (params.days) {
+      queryParams.set('days', params.days.toString())
+    }
+    if (params.page !== undefined) {
+      queryParams.set('page', params.page.toString())
+    }
+    if (params.size) {
+      queryParams.set('size', params.size.toString())
+    }
+    return fetchApi<InteractionsResponse>(`/interactions?${queryParams}`)
+  },
+
+  /**
+   * 단건 조회
+   */
+  getById: (id: string) =>
+    fetchApi<Interaction>(`/interactions/${id}`),
+
+  /**
+   * Source별 통계
+   */
+  getStatsBySource: (days = 30) =>
+    fetchApi<InteractionSourceStats[]>(`/interactions/stats/by-source?days=${days}`),
 }
 
 // n8n Workflows (via backend proxy to avoid CORS issues)

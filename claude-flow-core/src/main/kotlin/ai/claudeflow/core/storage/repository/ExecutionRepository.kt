@@ -39,6 +39,11 @@ class ExecutionRepository(
             source = rs.getString("source"),
             routingMethod = rs.getString("routing_method"),
             routingConfidence = rs.getObject("routing_confidence") as? Double,
+            // MR 리뷰 필드
+            mrIid = rs.getObject("mr_iid") as? Int,
+            gitlabNoteId = rs.getObject("gitlab_note_id") as? Int,
+            discussionId = rs.getString("discussion_id"),
+            mrContext = rs.getString("mr_context"),
             createdAt = Instant.parse(rs.getString("created_at"))
         )
     }
@@ -67,6 +72,11 @@ class ExecutionRepository(
                 "source" to entity.source,
                 "routing_method" to entity.routingMethod,
                 "routing_confidence" to entity.routingConfidence,
+                // MR 리뷰 필드
+                "mr_iid" to entity.mrIid,
+                "gitlab_note_id" to entity.gitlabNoteId,
+                "discussion_id" to entity.discussionId,
+                "mr_context" to entity.mrContext,
                 "created_at" to entity.createdAt.toString()
             )
             .execute()
@@ -296,6 +306,158 @@ class ExecutionRepository(
                 lastSeen = it.getString("last_seen")
             )
         }
+    }
+
+    // ==================== 통합 조회 API ====================
+
+    /**
+     * Source 필터링된 조회 (통합 Interactions)
+     * @param sources 조회할 source 목록 (null이면 전체)
+     * @param search 검색어 (prompt, result에서 검색)
+     * @param dateRange 날짜 범위
+     * @param pageRequest 페이징
+     */
+    fun findByFilters(
+        sources: List<String>? = null,
+        search: String? = null,
+        dateRange: DateRange? = null,
+        pageRequest: PageRequest? = null
+    ): List<ExecutionRecord> {
+        val conditions = mutableListOf<String>()
+        val params = mutableListOf<Any>()
+
+        // Source 필터
+        if (!sources.isNullOrEmpty()) {
+            val placeholders = sources.joinToString(",") { "?" }
+            conditions.add("(source IN ($placeholders) OR (source IS NULL AND ? = 'other'))")
+            params.addAll(sources)
+            params.add(if (sources.contains("other")) "other" else "")
+        }
+
+        // 검색어 필터
+        if (!search.isNullOrBlank()) {
+            conditions.add("(prompt LIKE ? OR result LIKE ? OR mr_context LIKE ?)")
+            val searchPattern = "%$search%"
+            params.add(searchPattern)
+            params.add(searchPattern)
+            params.add(searchPattern)
+        }
+
+        // 날짜 범위 필터
+        if (dateRange != null) {
+            conditions.add("created_at BETWEEN ? AND ?")
+            params.add(dateRange.from.toString())
+            params.add(dateRange.to.toString())
+        }
+
+        val whereClause = if (conditions.isEmpty()) "" else "WHERE ${conditions.joinToString(" AND ")}"
+        val limitClause = pageRequest?.let { "LIMIT ${it.size} OFFSET ${it.offset}" } ?: "LIMIT 100"
+
+        val sql = """
+            SELECT * FROM executions
+            $whereClause
+            ORDER BY created_at DESC
+            $limitClause
+        """.trimIndent()
+
+        return executeQuery(sql, *params.toTypedArray()) { mapRow(it) }
+    }
+
+    /**
+     * Source별 통계
+     */
+    fun getStatsBySource(dateRange: DateRange? = null): List<SourceStats> {
+        val whereClause = dateRange?.let {
+            "WHERE created_at BETWEEN '${it.from}' AND '${it.to}'"
+        } ?: ""
+
+        return executeQuery(
+            """
+            SELECT
+                COALESCE(source, 'other') as source,
+                COUNT(*) as requests,
+                SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful
+            FROM executions
+            $whereClause
+            GROUP BY COALESCE(source, 'other')
+            ORDER BY requests DESC
+            """.trimIndent()
+        ) {
+            val requests = it.getLong("requests")
+            SourceStats(
+                source = it.getString("source") ?: "other",
+                requests = requests,
+                successRate = if (requests > 0)
+                    it.getLong("successful").toDouble() / requests else 0.0
+            )
+        }
+    }
+
+    /**
+     * 전체 카운트 (필터 적용)
+     */
+    fun countByFilters(
+        sources: List<String>? = null,
+        search: String? = null,
+        dateRange: DateRange? = null
+    ): Long {
+        val conditions = mutableListOf<String>()
+        val params = mutableListOf<Any>()
+
+        if (!sources.isNullOrEmpty()) {
+            val placeholders = sources.joinToString(",") { "?" }
+            conditions.add("(source IN ($placeholders) OR (source IS NULL AND ? = 'other'))")
+            params.addAll(sources)
+            params.add(if (sources.contains("other")) "other" else "")
+        }
+
+        if (!search.isNullOrBlank()) {
+            conditions.add("(prompt LIKE ? OR result LIKE ? OR mr_context LIKE ?)")
+            val searchPattern = "%$search%"
+            params.add(searchPattern)
+            params.add(searchPattern)
+            params.add(searchPattern)
+        }
+
+        if (dateRange != null) {
+            conditions.add("created_at BETWEEN ? AND ?")
+            params.add(dateRange.from.toString())
+            params.add(dateRange.to.toString())
+        }
+
+        val whereClause = if (conditions.isEmpty()) "" else "WHERE ${conditions.joinToString(" AND ")}"
+
+        return executeQueryOne(
+            "SELECT COUNT(*) as cnt FROM executions $whereClause",
+            *params.toTypedArray()
+        ) { it.getLong("cnt") } ?: 0L
+    }
+
+    /**
+     * GitLab note ID로 조회
+     */
+    fun findByGitlabNoteId(noteId: Int): ExecutionRecord? {
+        return query()
+            .select("*")
+            .where("gitlab_note_id = ?", noteId)
+            .executeOne { mapRow(it) }
+    }
+
+    /**
+     * MR 리뷰 조회
+     */
+    fun findMrReviews(projectId: String? = null, limit: Int = 50): List<ExecutionRecord> {
+        val q = query()
+            .select("*")
+            .where("source = ?", ExecutionRecord.SOURCE_MR_REVIEW)
+
+        if (projectId != null) {
+            q.where("project_id = ?", projectId)
+        }
+
+        return q.orderBy("created_at", QueryBuilder.SortDirection.DESC)
+            .limit(limit)
+            .execute { mapRow(it) }
     }
 }
 

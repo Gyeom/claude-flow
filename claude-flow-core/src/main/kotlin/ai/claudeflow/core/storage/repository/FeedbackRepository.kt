@@ -28,6 +28,7 @@ class FeedbackRepository(
             userId = rs.getString("user_id"),
             reaction = rs.getString("reaction"),
             category = rs.getString("category") ?: FeedbackRecord.categorizeReaction(rs.getString("reaction")),
+            source = rs.getString("source") ?: "unknown",
             isVerified = rs.getInt("is_verified") == 1,
             verifiedAt = rs.getString("verified_at")?.let { Instant.parse(it) },
             createdAt = Instant.parse(rs.getString("created_at"))
@@ -44,6 +45,7 @@ class FeedbackRepository(
                 "user_id" to entity.userId,
                 "reaction" to entity.reaction,
                 "category" to entity.category,
+                "source" to entity.source,
                 "is_verified" to (if (entity.isVerified) 1 else 0),
                 "verified_at" to entity.verifiedAt?.toString(),
                 "created_at" to entity.createdAt.toString()
@@ -53,15 +55,17 @@ class FeedbackRepository(
 
     /**
      * Verified Feedback 저장 (요청자 확인)
+     * @param source 피드백 출처 (slack, chat, gitlab_emoji, gitlab_note, api)
      */
     fun saveWithVerification(
         id: String,
         executionId: String,
         userId: String,
         reaction: String,
-        requesterId: String
+        requesterId: String,
+        source: String = "unknown"
     ): FeedbackRecord {
-        val feedback = FeedbackRecord.createVerified(id, executionId, userId, reaction, requesterId)
+        val feedback = FeedbackRecord.createVerified(id, executionId, userId, reaction, requesterId, source)
         save(feedback)
         return feedback
     }
@@ -73,11 +77,156 @@ class FeedbackRepository(
             .execute { mapRow(it) }
     }
 
+    /**
+     * 여러 execution ID에 대한 피드백을 한 번에 조회 (batch)
+     * @return execution_id를 키로 하는 맵
+     */
+    fun findByExecutionIds(executionIds: List<String>): Map<String, List<FeedbackRecord>> {
+        if (executionIds.isEmpty()) return emptyMap()
+
+        val placeholders = executionIds.joinToString(",") { "?" }
+        val sql = "SELECT * FROM feedback WHERE execution_id IN ($placeholders)"
+
+        val feedbacks = executeQuery(sql, *executionIds.toTypedArray()) { mapRow(it) }
+        return feedbacks.groupBy { it.executionId }
+    }
+
     fun findByUserId(userId: String): List<FeedbackRecord> {
         return query()
             .select("*")
             .where("user_id = ?", userId)
             .execute { mapRow(it) }
+    }
+
+    /**
+     * Source별 피드백 조회
+     * @param source 피드백 출처 (slack, chat, gitlab_emoji, gitlab_note, api)
+     */
+    fun findBySource(source: String, dateRange: DateRange? = null): List<FeedbackRecord> {
+        return if (dateRange != null) {
+            query()
+                .select("*")
+                .where("source = ?", source)
+                .where("created_at BETWEEN ? AND ?", dateRange.from.toString(), dateRange.to.toString())
+                .execute { mapRow(it) }
+        } else {
+            query()
+                .select("*")
+                .where("source = ?", source)
+                .execute { mapRow(it) }
+        }
+    }
+
+    /**
+     * Source별 피드백 통계
+     */
+    fun getFeedbackStatsBySource(source: String, dateRange: DateRange? = null): FeedbackStats {
+        val baseSql = """
+            SELECT
+                SUM(CASE WHEN reaction IN ('thumbsup', '+1') THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN reaction IN ('thumbsdown', '-1') THEN 1 ELSE 0 END) as negative
+            FROM feedback
+            WHERE source = ?
+        """.trimIndent()
+
+        val sql = if (dateRange != null) {
+            "$baseSql AND created_at BETWEEN ? AND ?"
+        } else {
+            baseSql
+        }
+
+        val (positive, negative) = if (dateRange != null) {
+            executeQueryOne(sql, source, dateRange.from.toString(), dateRange.to.toString()) {
+                Pair(it.getLong("positive"), it.getLong("negative"))
+            } ?: Pair(0L, 0L)
+        } else {
+            executeQueryOne(sql, source) {
+                Pair(it.getLong("positive"), it.getLong("negative"))
+            } ?: Pair(0L, 0L)
+        }
+
+        val total = positive + negative
+        val satisfactionRate = if (total > 0) positive.toDouble() / total else 0.0
+
+        return FeedbackStats(
+            positive = positive,
+            negative = negative,
+            satisfactionRate = satisfactionRate,
+            pendingFeedback = 0
+        )
+    }
+
+    /**
+     * 전체 Source별 피드백 분포 조회
+     */
+    fun getFeedbackDistributionBySource(dateRange: DateRange? = null): Map<String, Long> {
+        val baseSql = """
+            SELECT source, COUNT(*) as count
+            FROM feedback
+        """.trimIndent()
+
+        val sql = if (dateRange != null) {
+            "$baseSql WHERE created_at BETWEEN ? AND ? GROUP BY source"
+        } else {
+            "$baseSql GROUP BY source"
+        }
+
+        val result = mutableMapOf<String, Long>()
+        if (dateRange != null) {
+            executeQuery(sql, dateRange.from.toString(), dateRange.to.toString()) { rs ->
+                val source = rs.getString("source") ?: "unknown"
+                val count = rs.getLong("count")
+                result[source] = count
+            }
+        } else {
+            executeQuery(sql) { rs ->
+                val source = rs.getString("source") ?: "unknown"
+                val count = rs.getLong("count")
+                result[source] = count
+            }
+        }
+        return result
+    }
+
+    /**
+     * Source별 피드백 상세 통계 (positive/negative/total)
+     */
+    fun getFeedbackDetailedBySource(dateRange: DateRange? = null): List<FeedbackBySourceStats> {
+        val baseSql = """
+            SELECT
+                source,
+                SUM(CASE WHEN reaction IN ('thumbsup', '+1', 'heart', 'tada') THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN reaction IN ('thumbsdown', '-1') THEN 1 ELSE 0 END) as negative,
+                COUNT(*) as total
+            FROM feedback
+            WHERE category = 'feedback'
+        """.trimIndent()
+
+        val sql = if (dateRange != null) {
+            "$baseSql AND created_at BETWEEN ? AND ? GROUP BY source ORDER BY total DESC"
+        } else {
+            "$baseSql GROUP BY source ORDER BY total DESC"
+        }
+
+        return if (dateRange != null) {
+            executeQuery(sql, dateRange.from.toString(), dateRange.to.toString()) { rs ->
+                FeedbackBySourceStats(
+                    source = rs.getString("source") ?: "unknown",
+                    positive = rs.getLong("positive"),
+                    negative = rs.getLong("negative"),
+                    total = rs.getLong("total")
+                )
+            }
+        } else {
+            executeQuery(sql) { rs ->
+                FeedbackBySourceStats(
+                    source = rs.getString("source") ?: "unknown",
+                    positive = rs.getLong("positive"),
+                    negative = rs.getLong("negative"),
+                    total = rs.getLong("total")
+                )
+            }
+        }
     }
 
     fun deleteByExecutionUserReaction(executionId: String, userId: String, reaction: String): Boolean {
@@ -432,6 +581,7 @@ class FeedbackRepository(
             userId = userId,
             reaction = reaction,
             category = category,
+            source = source,
             isVerified = true,
             verifiedAt = now,
             createdAt = now

@@ -733,6 +733,7 @@ class ClaudeFlowController(
 
     /**
      * 피드백 저장/삭제 API
+     * @param request.source 피드백 출처 (slack, chat, gitlab_emoji, gitlab_note, api)
      */
     @PostMapping("/feedback")
     fun saveFeedback(@RequestBody request: FeedbackRequest): Mono<ResponseEntity<FeedbackResponse>> = mono {
@@ -748,10 +749,11 @@ class ClaudeFlowController(
                     id = UUID.randomUUID().toString(),
                     executionId = request.executionId,
                     userId = request.userId,
-                    reaction = request.reaction
+                    reaction = request.reaction,
+                    source = request.source  // source 필드 추가
                 ))
             }
-            logger.info { "Feedback ${request.action}: ${request.executionId} - ${request.reaction}" }
+            logger.info { "Feedback ${request.action} (source=${request.source}): ${request.executionId} - ${request.reaction}" }
             ResponseEntity.ok(FeedbackResponse(success = true))
         } catch (e: Exception) {
             logger.error(e) { "Failed to save feedback" }
@@ -1075,7 +1077,8 @@ data class FeedbackRequest(
     val executionId: String,
     val userId: String,
     val reaction: String,
-    val action: String = "upsert"  // upsert or delete
+    val action: String = "upsert",  // upsert or delete
+    val source: String = "api"  // slack, chat, gitlab_emoji, gitlab_note, api
 )
 
 data class FeedbackResponse(

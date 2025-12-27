@@ -1,18 +1,15 @@
 import { Suspense, lazy } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 
 // Lazy load pages for code splitting
 const Dashboard = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.Dashboard })))
 const Chat = lazy(() => import('@/pages/Chat').then(m => ({ default: m.Chat })))
-const Agents = lazy(() => import('@/pages/Agents').then(m => ({ default: m.Agents })))
-const Feedback = lazy(() => import('@/pages/Feedback').then(m => ({ default: m.Feedback })))
-const History = lazy(() => import('@/pages/History').then(m => ({ default: m.History })))
+const Interactions = lazy(() => import('@/pages/Interactions').then(m => ({ default: m.Interactions })))
 const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m.Workflows })))
 const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
 const Jira = lazy(() => import('@/pages/Jira').then(m => ({ default: m.Jira })))
 const Knowledge = lazy(() => import('@/pages/Knowledge').then(m => ({ default: m.Knowledge })))
-const GitLabReviews = lazy(() => import('@/pages/GitLabReviews').then(m => ({ default: m.GitLabReviews })))
 const Logs = lazy(() => import('@/pages/Logs'))
 const Settings = lazy(() => import('@/pages/Settings'))
 
@@ -39,21 +36,14 @@ function App() {
             <Chat />
           </Suspense>
         } />
-        <Route path="/agents" element={
+        <Route path="/interactions" element={
           <Suspense fallback={<PageLoader />}>
-            <Agents />
+            <Interactions />
           </Suspense>
         } />
-        <Route path="/feedback" element={
-          <Suspense fallback={<PageLoader />}>
-            <Feedback />
-          </Suspense>
-        } />
-        <Route path="/history" element={
-          <Suspense fallback={<PageLoader />}>
-            <History />
-          </Suspense>
-        } />
+        {/* Redirects for old routes */}
+        <Route path="/history" element={<Navigate to="/interactions" replace />} />
+        <Route path="/gitlab-reviews" element={<Navigate to="/interactions?sources=mr_review" replace />} />
         <Route path="/workflows" element={
           <Suspense fallback={<PageLoader />}>
             <Workflows />
@@ -72,11 +62,6 @@ function App() {
         <Route path="/knowledge" element={
           <Suspense fallback={<PageLoader />}>
             <Knowledge />
-          </Suspense>
-        } />
-        <Route path="/gitlab-reviews" element={
-          <Suspense fallback={<PageLoader />}>
-            <GitLabReviews />
           </Suspense>
         } />
         <Route path="/logs" element={

@@ -187,14 +187,20 @@ class AnalyticsController(
 
     /**
      * 피드백 상세 통계
+     * @param source 피드백 소스 필터 (slack, chat, gitlab_emoji, api 등)
      */
     @GetMapping("/feedback/detailed")
     fun getFeedbackDetailed(
-        @RequestParam(defaultValue = "7") days: Int
+        @RequestParam(defaultValue = "7") days: Int,
+        @RequestParam(required = false) source: String?
     ): Mono<ResponseEntity<FeedbackStats>> = mono {
-        logger.info { "Get detailed feedback stats for $days days" }
-        val since = java.time.Instant.now().minusSeconds(days * 24 * 60 * 60L).toString()
-        val stats = storage.getFeedbackStats(since)
+        logger.info { "Get detailed feedback stats for $days days${source?.let { ", source=$it" } ?: ""}" }
+        val dateRange = DateRange.lastDays(days)
+        val stats = if (source != null) {
+            storage.feedbackRepository.getFeedbackStatsBySource(source, dateRange)
+        } else {
+            storage.feedbackRepository.getFeedbackStats(dateRange)
+        }
         ResponseEntity.ok(stats)
     }
 
@@ -296,6 +302,20 @@ class AnalyticsController(
         val trend = storage.analyticsRepository.getFeedbackTrend(dateRange)
         ResponseEntity.ok(trend.map { FeedbackTrendPointDto(it.date, it.positive, it.negative) })
     }
+
+    /**
+     * 피드백 소스별 분포
+     * 각 소스(slack, chat, gitlab_emoji 등)별 피드백 분포
+     */
+    @GetMapping("/feedback/by-source")
+    fun getFeedbackBySource(
+        @RequestParam(defaultValue = "7") days: Int
+    ): Mono<ResponseEntity<List<FeedbackBySourceDto>>> = mono {
+        logger.info { "Get feedback distribution by source for $days days" }
+        val dateRange = DateRange.lastDays(days)
+        val distribution = storage.feedbackRepository.getFeedbackDetailedBySource(dateRange)
+        ResponseEntity.ok(distribution.map { FeedbackBySourceDto(it.source, it.positive, it.negative, it.total) })
+    }
 }
 
 data class StorageStatsDto(
@@ -344,4 +364,11 @@ data class FeedbackTrendPointDto(
     val date: String,
     val positive: Long,
     val negative: Long
+)
+
+data class FeedbackBySourceDto(
+    val source: String,
+    val positive: Long,
+    val negative: Long,
+    val total: Long
 )

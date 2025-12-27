@@ -324,3 +324,59 @@ export interface GitLabProject {
   gitlabPath: string
   defaultBranch: string
 }
+
+// ==================== Interaction Types (통합) ====================
+
+export interface Interaction {
+  id: string
+  source: string  // slack, chat, mr_review, api, other
+  sourceDisplayName: string
+  sourceIcon: string
+  prompt: string
+  result: string | null
+  status: string
+  agentId: string
+  projectId: string | null
+  userId: string | null
+  channel: string | null
+  model: string | null
+  durationMs: number
+  inputTokens: number
+  outputTokens: number
+  cost: number | null
+  error: string | null
+  // MR 관련
+  mrIid: number | null
+  gitlabNoteId: number | null
+  mrContext: string | null
+  // 피드백
+  feedbackPositive: number
+  feedbackNegative: number
+  feedbacks: InteractionFeedback[]
+  createdAt: string
+}
+
+export interface InteractionFeedback {
+  id: string
+  userId: string
+  reaction: string
+  source: string
+  isVerified: boolean
+  createdAt: string
+}
+
+export interface InteractionsResponse {
+  items: Interaction[]
+  totalCount: number
+  page: number
+  size: number
+  totalPages: number
+}
+
+export interface InteractionSourceStats {
+  source: string
+  displayName: string
+  icon: string
+  count: number
+  successRate: number
+}

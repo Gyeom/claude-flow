@@ -10,11 +10,11 @@ export function Chat() {
     currentToolCalls,
     currentMetadata,
     selectedProject,
-    selectedAgent,
+    feedbackState,
     setSelectedProject,
-    setSelectedAgent,
     sendMessage,
     sendClarificationResponse,
+    submitFeedback,
     stopStreaming,
   } = useChatContext()
 
@@ -38,8 +38,6 @@ export function Chat() {
       <ChatSidebar
         selectedProject={selectedProject}
         onProjectChange={setSelectedProject}
-        selectedAgent={selectedAgent}
-        onAgentChange={setSelectedAgent}
       />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* 메타데이터 헤더 */}
@@ -66,6 +64,8 @@ export function Chat() {
           currentToolCalls={currentToolCalls}
           streamingContent={streamingContent}
           onClarificationSelect={(option, context) => sendClarificationResponse(option, context)}
+          feedbackState={feedbackState}
+          onFeedback={submitFeedback}
         />
 
         <ChatInput

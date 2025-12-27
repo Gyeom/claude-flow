@@ -8,6 +8,7 @@ import ai.claudeflow.core.model.Project
 import ai.claudeflow.core.model.RoutingMethod
 import ai.claudeflow.core.plugin.GitLabPlugin
 import ai.claudeflow.core.plugin.PluginRegistry
+import ai.claudeflow.core.rag.ConversationVectorService
 import ai.claudeflow.core.ratelimit.RateLimiter
 import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.core.routing.AgentRouter
@@ -58,7 +59,8 @@ class ChatStreamController(
     private val enrichmentPipeline: ContextEnrichmentPipeline,  // Pipeline 사용
     private val pluginRegistry: PluginRegistry,  // MR 분석용
     private val storage: Storage? = null,
-    private val rateLimiter: RateLimiter? = null
+    private val rateLimiter: RateLimiter? = null,
+    private val conversationVectorService: ConversationVectorService? = null  // RAG 인덱싱용
 ) {
     private val agentRouter = AgentRouter()
     private val objectMapper = ObjectMapper()
@@ -122,6 +124,7 @@ class ChatStreamController(
                         "최적의 에이전트 선택 중..."
                     ))
 
+                    val routingStartTime = System.currentTimeMillis()
                     val sessionContext = request.sessionContext
                     val agentMatch: AgentMatch = when {
                         // 1. 명시적 agentId 지정
@@ -154,6 +157,8 @@ class ChatStreamController(
                         else -> agentRouter.route(lastUserMessage)
                     }
 
+                    val routingLatencyMs = System.currentTimeMillis() - routingStartTime
+
                     // 메타데이터 이벤트 전송 (에이전트 선택 결과)
                     sink.next(buildProgressEvent(
                         ProgressSteps.AGENT_ROUTING,
@@ -161,7 +166,8 @@ class ChatStreamController(
                         mapOf(
                             "agentId" to agentMatch.agent.id,
                             "confidence" to String.format("%.0f%%", agentMatch.confidence * 100),
-                            "method" to agentMatch.method.name
+                            "method" to agentMatch.method.name,
+                            "routingLatencyMs" to routingLatencyMs
                         )
                     ))
 
@@ -341,14 +347,15 @@ class ChatStreamController(
                                 is StreamingEvent.ToolStart -> buildToolStartEvent(event)
                                 is StreamingEvent.ToolEnd -> buildToolEndEvent(event)
                                 is StreamingEvent.Done -> {
-                                    // 📊 ExecutionRecord 저장 (통계용)
+                                    // 📊 ExecutionRecord 저장 (통계용 + RAG 인덱싱 + 라우팅 메트릭)
                                     saveExecutionRecord(
                                         event = event,
                                         prompt = lastUserMessage,
                                         agentMatch = agentMatch,
                                         projectId = projectId,
                                         userId = request.userId,
-                                        model = usedModel
+                                        model = usedModel,
+                                        routingLatencyMs = routingLatencyMs
                                     )
                                     buildDoneEvent(event, agentMatch.agent.id)
                                 }
@@ -626,6 +633,7 @@ class ChatStreamController(
     private fun buildDoneEvent(event: StreamingEvent.Done, agentId: String): ServerSentEvent<String> {
         val data = objectMapper.writeValueAsString(mapOf(
             "requestId" to event.requestId,
+            "executionId" to event.requestId,  // 피드백 제출용 ID (requestId와 동일)
             "agentId" to agentId,
             "durationMs" to event.durationMs,
             "usage" to event.usage?.let {
@@ -654,6 +662,12 @@ class ChatStreamController(
      * 실행 기록 저장 (성공 시) - 비동기
      * Chat 스트리밍 완료 후 통계용으로 ExecutionRecord 저장
      * 스트리밍 응답에 영향을 주지 않도록 백그라운드에서 처리
+     *
+     * ClaudeFlowController와 동일한 수준의 데이터 수집:
+     * 1. ExecutionRecord 저장
+     * 2. RAG 인덱싱 (ConversationVectorService)
+     * 3. 라우팅 메트릭 저장
+     * 4. 사용자 컨텍스트 업데이트
      */
     private fun saveExecutionRecord(
         event: StreamingEvent.Done,
@@ -661,12 +675,14 @@ class ChatStreamController(
         agentMatch: AgentMatch,
         projectId: String,
         userId: String?,
-        model: String
+        model: String,
+        routingLatencyMs: Long = 0
     ) {
         storage?.let { store ->
             // 비동기로 저장 (스트리밍 블로킹 방지)
             CoroutineScope(Dispatchers.IO).launch {
                 try {
+                    // 1. ExecutionRecord 저장
                     val record = ExecutionRecord(
                         id = event.requestId,
                         prompt = prompt.take(1000),
@@ -692,6 +708,47 @@ class ChatStreamController(
                     )
                     store.saveExecution(record)
                     logger.debug { "Chat execution saved: ${event.requestId}" }
+
+                    // 2. RAG 자동 인덱싱 (성공한 실행만)
+                    if (conversationVectorService != null) {
+                        try {
+                            val indexed = conversationVectorService.indexExecution(record)
+                            if (indexed) {
+                                logger.debug { "RAG indexed chat execution: ${event.requestId}" }
+                            }
+                        } catch (e: Exception) {
+                            logger.warn { "RAG indexing failed for chat (non-critical): ${e.message}" }
+                        }
+                    }
+
+                    // 3. 라우팅 메트릭 저장
+                    try {
+                        store.saveRoutingMetric(
+                            executionId = event.requestId,
+                            routingMethod = agentMatch.method.name.lowercase(),
+                            agentId = agentMatch.agent.id,
+                            confidence = agentMatch.confidence,
+                            latencyMs = routingLatencyMs
+                        )
+                        logger.debug { "Chat routing metric saved: method=${agentMatch.method.name}, latency=${routingLatencyMs}ms" }
+                    } catch (e: Exception) {
+                        logger.warn { "Failed to save chat routing metric: ${e.message}" }
+                    }
+
+                    // 4. 사용자 컨텍스트 업데이트 (User Management용)
+                    userId?.let { uid ->
+                        try {
+                            store.updateUserInteraction(
+                                userId = uid,
+                                promptLength = prompt.length,
+                                responseLength = event.result?.length ?: 0
+                            )
+                            logger.debug { "Updated user context for chat: $uid" }
+                        } catch (e: Exception) {
+                            logger.warn { "Failed to update user context for chat: ${e.message}" }
+                        }
+                    }
+
                 } catch (e: Exception) {
                     logger.warn { "Failed to save chat execution: ${e.message}" }
                 }

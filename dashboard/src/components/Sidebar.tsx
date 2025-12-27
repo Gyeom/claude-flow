@@ -1,18 +1,15 @@
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
-  Bot,
   Settings,
   Zap,
-  ThumbsUp,
-  Clock,
   Workflow,
   ScrollText,
   FolderOpen,
   MessageSquare,
   Ticket,
   BookOpen,
-  GitMerge,
+  Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
@@ -20,14 +17,11 @@ import { ThemeToggle } from './ThemeToggle'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
-  { name: 'History', href: '/history', icon: Clock },
+  { name: 'Activity', href: '/interactions', icon: Activity },
   { name: 'Live Logs', href: '/logs', icon: ScrollText },
   { name: 'Projects', href: '/projects', icon: FolderOpen },
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen },
   { name: 'Jira', href: '/jira', icon: Ticket },
-  { name: 'MR Reviews', href: '/gitlab-reviews', icon: GitMerge },
-  { name: 'Agents', href: '/agents', icon: Bot },
-  { name: 'Feedback', href: '/feedback', icon: ThumbsUp },
   { name: 'Workflows', href: '/workflows', icon: Workflow },
 ]
 

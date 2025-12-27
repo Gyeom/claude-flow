@@ -204,6 +204,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     user_id TEXT NOT NULL,
                     reaction TEXT NOT NULL,
                     category TEXT DEFAULT 'other',
+                    source TEXT DEFAULT 'unknown',
                     is_verified INTEGER DEFAULT 0,
                     verified_at TEXT,
                     created_at TEXT NOT NULL,

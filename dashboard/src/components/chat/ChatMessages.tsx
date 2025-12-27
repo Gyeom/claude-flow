@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react'
-import { User, Bot, Sparkles, Clock, Zap } from 'lucide-react'
+import { User, Bot, Sparkles, Clock, Zap, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ToolCallsList } from './ToolCallDisplay'
 import { MarkdownRenderer } from './MarkdownRenderer'
@@ -21,6 +21,7 @@ interface Message {
   content: string
   toolCalls?: ToolCall[]
   clarification?: ClarificationRequest  // 프로젝트 선택 등 Clarification UI
+  executionId?: string  // 피드백 제출용 ID
   metadata?: {
     agentId?: string
     agentName?: string
@@ -30,12 +31,17 @@ interface Message {
   timestamp?: string
 }
 
+// 피드백 상태 타입
+type FeedbackState = Record<string, 'thumbsup' | 'thumbsdown' | null>
+
 interface ChatMessagesProps {
   messages: Message[]
   isStreaming: boolean
   currentToolCalls?: ToolCall[]
   streamingContent?: string
   onClarificationSelect?: (option: ClarificationOption, context?: Record<string, unknown>) => void
+  feedbackState?: FeedbackState
+  onFeedback?: (executionId: string, reaction: 'thumbsup' | 'thumbsdown') => void
 }
 
 // 타이핑 인디케이터
@@ -128,14 +134,59 @@ function EmptyState() {
   )
 }
 
+// 피드백 버튼 컴포넌트
+function FeedbackButtons({
+  executionId,
+  currentFeedback,
+  onFeedback
+}: {
+  executionId: string
+  currentFeedback?: 'thumbsup' | 'thumbsdown' | null
+  onFeedback: (executionId: string, reaction: 'thumbsup' | 'thumbsdown') => void
+}) {
+  return (
+    <div className="flex items-center gap-1 mt-3 pt-3 border-t border-border/30">
+      <span className="text-xs text-muted-foreground mr-2">이 응답이 도움이 되었나요?</span>
+      <button
+        onClick={() => onFeedback(executionId, 'thumbsup')}
+        className={cn(
+          'p-1.5 rounded-md transition-all',
+          currentFeedback === 'thumbsup'
+            ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+            : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+        )}
+        title="도움이 됐어요"
+      >
+        <ThumbsUp className="h-4 w-4" />
+      </button>
+      <button
+        onClick={() => onFeedback(executionId, 'thumbsdown')}
+        className={cn(
+          'p-1.5 rounded-md transition-all',
+          currentFeedback === 'thumbsdown'
+            ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+            : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+        )}
+        title="개선이 필요해요"
+      >
+        <ThumbsDown className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
 // 메시지 버블
 function MessageBubble({
   message,
   onClarificationSelect,
+  feedbackState,
+  onFeedback,
   isLatest = false
 }: {
   message: Message
   onClarificationSelect?: (option: ClarificationOption, context?: Record<string, unknown>) => void
+  feedbackState?: FeedbackState
+  onFeedback?: (executionId: string, reaction: 'thumbsup' | 'thumbsdown') => void
   isLatest?: boolean
 }) {
   const isUser = message.role === 'user'
@@ -216,6 +267,15 @@ function MessageBubble({
             onSelect={(option) => onClarificationSelect(option, message.clarification?.context)}
           />
         )}
+
+        {/* 피드백 버튼 (어시스턴트 메시지 + executionId가 있는 경우만) */}
+        {!isUser && message.executionId && onFeedback && (
+          <FeedbackButtons
+            executionId={message.executionId}
+            currentFeedback={feedbackState?.[message.executionId]}
+            onFeedback={onFeedback}
+          />
+        )}
       </div>
     </div>
   )
@@ -280,7 +340,9 @@ export function ChatMessages({
   isStreaming,
   currentToolCalls = [],
   streamingContent,
-  onClarificationSelect
+  onClarificationSelect,
+  feedbackState,
+  onFeedback
 }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -302,6 +364,8 @@ export function ChatMessages({
             key={message.id}
             message={message}
             onClarificationSelect={onClarificationSelect}
+            feedbackState={feedbackState}
+            onFeedback={onFeedback}
             isLatest={index === messages.length - 1 && !isStreaming}
           />
         ))}

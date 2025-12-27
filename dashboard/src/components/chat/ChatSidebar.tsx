@@ -1,39 +1,28 @@
 import { useQuery } from '@tanstack/react-query'
-import { Bot, FolderOpen, Settings2 } from 'lucide-react'
+import { FolderOpen, Settings2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { agentsApi, projectsApi } from '@/lib/api'
+import { projectsApi } from '@/lib/api'
 
 interface ChatSidebarProps {
   selectedProject: string | null
   onProjectChange: (projectId: string | null) => void
-  selectedAgent: string | null
-  onAgentChange: (agentId: string | null) => void
 }
 
 export function ChatSidebar({
   selectedProject,
   onProjectChange,
-  selectedAgent,
-  onAgentChange
 }: ChatSidebarProps) {
   const { data: projects } = useQuery({
     queryKey: ['projects'],
     queryFn: projectsApi.getAll,
   })
 
-  const { data: agents } = useQuery({
-    queryKey: ['agents'],
-    queryFn: agentsApi.getAll,
-  })
-
-  const enabledAgents = agents?.filter(a => a.enabled) ?? []
-
   return (
     <aside className="w-64 border-r border-border bg-muted/30 flex flex-col">
       {/* 헤더 */}
       <div className="p-4 border-b border-border">
         <h2 className="font-semibold text-lg flex items-center gap-2">
-          <Bot className="h-5 w-5" />
+          <Settings2 className="h-5 w-5" />
           Chat Settings
         </h2>
       </div>
@@ -65,53 +54,17 @@ export function ChatSidebar({
           </p>
         </div>
 
-        {/* 에이전트 선택 */}
+        {/* 에이전트 라우팅 안내 */}
         <div className="space-y-2">
-          <label className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Settings2 className="h-4 w-4" />
-            Agent
-          </label>
-          <select
-            value={selectedAgent || ''}
-            onChange={(e) => onAgentChange(e.target.value || null)}
-            className={cn(
-              'w-full rounded-lg border border-border bg-background px-3 py-2',
-              'text-sm focus:outline-none focus:ring-2 focus:ring-primary/50'
-            )}
-          >
-            <option value="">Auto-route (권장)</option>
-            {enabledAgents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name}
-              </option>
-            ))}
-          </select>
+          <h3 className="text-sm font-medium text-muted-foreground">Agent Routing</h3>
           <p className="text-xs text-muted-foreground">
-            메시지에 따라 자동으로 적합한 에이전트가 선택됩니다.
+            메시지 내용에 따라 적합한 에이전트가 자동으로 선택됩니다.
           </p>
-        </div>
-
-        {/* 에이전트 목록 */}
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium text-muted-foreground">Available Agents</h3>
-          <div className="space-y-1">
-            {enabledAgents.map((agent) => (
-              <button
-                key={agent.id}
-                onClick={() => onAgentChange(agent.id)}
-                className={cn(
-                  'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors',
-                  selectedAgent === agent.id
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-muted'
-                )}
-              >
-                <div className="font-medium">{agent.name}</div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {agent.description}
-                </div>
-              </button>
-            ))}
+          <div className="text-xs text-muted-foreground space-y-1">
+            <p>• <strong>general</strong>: 일반 질문</p>
+            <p>• <strong>code-reviewer</strong>: MR/PR 리뷰</p>
+            <p>• <strong>bug-fixer</strong>: 버그 수정</p>
+            <p>• <strong>refactor</strong>: 리팩토링</p>
           </div>
         </div>
       </div>

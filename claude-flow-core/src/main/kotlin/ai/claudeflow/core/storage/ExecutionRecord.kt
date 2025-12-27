@@ -5,7 +5,13 @@ import kotlinx.serialization.json.JsonElement
 import java.time.Instant
 
 /**
- * 실행 이력 레코드
+ * 실행 이력 레코드 (통합)
+ *
+ * 모든 상호작용을 통합 관리:
+ * - Slack 메시지/멘션
+ * - Dashboard Chat
+ * - GitLab MR 리뷰
+ * - API 직접 호출
  *
  * 주요 기능:
  * - 구조화된 출력 지원 (structuredOutput)
@@ -14,6 +20,7 @@ import java.time.Instant
  * - API 지연 시간 분리 (durationApiMs)
  * - 메타데이터 저장 (metadata)
  * - 세션 ID 지원 (sessionId)
+ * - MR 리뷰 통합 (mrIid, gitlabNoteId, discussionId, mrContext)
  */
 data class ExecutionRecord(
     val id: String,
@@ -41,10 +48,47 @@ data class ExecutionRecord(
     val routingMethod: String? = null,   // keyword, pattern, semantic, llm, fallback
     val routingConfidence: Double? = null,
     val sessionId: String? = null,       // 대화 세션 ID
-    val source: String? = null,          // slack, webhook, api, etc.
+    val source: String? = null,          // slack, chat, mr_review, api, other
     val metadata: String? = null,        // JSON 형식 추가 메타데이터
+    // MR 리뷰 전용 필드
+    val mrIid: Int? = null,              // GitLab MR 번호
+    val gitlabNoteId: Int? = null,       // GitLab 코멘트 ID
+    val discussionId: String? = null,    // GitLab 토론 ID
+    val mrContext: String? = null,       // MR 제목/요약
     val createdAt: Instant = Instant.now()
-)
+) {
+    companion object {
+        // Source 타입 상수
+        const val SOURCE_SLACK = "slack"
+        const val SOURCE_CHAT = "chat"
+        const val SOURCE_MR_REVIEW = "mr_review"
+        const val SOURCE_API = "api"
+        const val SOURCE_OTHER = "other"
+
+        /**
+         * Source 표시명 반환
+         */
+        fun getSourceDisplayName(source: String?): String = when (source) {
+            SOURCE_SLACK -> "Slack"
+            SOURCE_CHAT -> "Chat"
+            SOURCE_MR_REVIEW -> "MR Review"
+            SOURCE_API -> "API"
+            SOURCE_OTHER -> "기타"
+            else -> "기타"
+        }
+
+        /**
+         * Source 아이콘 반환
+         */
+        fun getSourceIcon(source: String?): String = when (source) {
+            SOURCE_SLACK -> "💬"
+            SOURCE_CHAT -> "💻"
+            SOURCE_MR_REVIEW -> "🔀"
+            SOURCE_API -> "📡"
+            else -> "📋"
+        }
+    }
+}
 
 /**
  * 피드백 레코드
@@ -53,9 +97,11 @@ data class ExecutionRecord(
  * - 카테고리 분류 (feedback, trigger, action)
  * - 점수 계산 지원
  * - Verified Feedback: 요청자의 피드백만 실제 점수에 반영
+ * - Source 추적: 피드백 출처 구분 (slack, chat, gitlab_emoji 등)
  *
  * @property isVerified 요청자(질문한 사람)의 피드백인지 여부
  * @property verifiedAt 검증 시간 (verified feedback인 경우)
+ * @property source 피드백 출처 (slack, chat, gitlab_emoji, gitlab_note, api)
  */
 data class FeedbackRecord(
     val id: String,
@@ -63,6 +109,7 @@ data class FeedbackRecord(
     val userId: String,
     val reaction: String,  // thumbsup, thumbsdown, jira, wrench, one, two, etc.
     val category: String = categorizeReaction(reaction),  // feedback, trigger, action
+    val source: String = "unknown",  // slack, chat, gitlab_emoji, gitlab_note, api
     val isVerified: Boolean = false,  // 요청자의 피드백만 검증됨
     val verifiedAt: Instant? = null,
     val createdAt: Instant = Instant.now()
@@ -111,13 +158,16 @@ data class FeedbackRecord(
         /**
          * Verified Feedback 생성
          * 요청자의 피드백인 경우 자동으로 verified 처리
+         *
+         * @param source 피드백 출처 (slack, chat, gitlab_emoji, gitlab_note, api)
          */
         fun createVerified(
             id: String,
             executionId: String,
             userId: String,
             reaction: String,
-            requesterId: String  // 원래 요청한 사용자 ID
+            requesterId: String,  // 원래 요청한 사용자 ID
+            source: String = "unknown"
         ): FeedbackRecord {
             val isVerified = userId == requesterId
             return FeedbackRecord(
@@ -126,6 +176,7 @@ data class FeedbackRecord(
                 userId = userId,
                 reaction = reaction,
                 category = categorizeReaction(reaction),
+                source = source,
                 isVerified = isVerified,
                 verifiedAt = if (isVerified) Instant.now() else null
             )
@@ -413,3 +464,13 @@ enum class GitLabFeedbackType {
     NEGATIVE,   // 👎 thumbsdown
     NEUTRAL     // 답글 감정 분석 결과가 중립
 }
+
+/**
+ * Source별 피드백 상세 통계
+ */
+data class FeedbackBySourceStats(
+    val source: String,
+    val positive: Long,
+    val negative: Long,
+    val total: Long
+)

@@ -27,6 +27,7 @@ interface Message {
   content: string
   toolCalls?: ToolCall[]
   clarification?: ClarificationRequest  // 프로젝트 선택 등 Clarification UI
+  executionId?: string  // 피드백 제출용 ID
   metadata?: {
     agentId?: string
     agentName?: string
@@ -34,6 +35,9 @@ interface Message {
     routingMethod?: string
   }
 }
+
+// 피드백 상태 (메시지별)
+type FeedbackState = Record<string, 'thumbsup' | 'thumbsdown' | null>
 
 interface ChatContextType {
   messages: Message[]
@@ -45,14 +49,14 @@ interface ChatContextType {
   currentClarification: ClarificationRequest | null
   isPanelOpen: boolean
   selectedProject: string | null
-  selectedAgent: string | null
+  feedbackState: FeedbackState
   setSelectedProject: (project: string | null) => void
-  setSelectedAgent: (agent: string | null) => void
   openPanel: () => void
   closePanel: () => void
   togglePanel: () => void
   sendMessage: (content: string) => Promise<void>
   sendClarificationResponse: (option: ClarificationOption, originalContext?: Record<string, unknown>) => Promise<void>
+  submitFeedback: (executionId: string, reaction: 'thumbsup' | 'thumbsdown') => Promise<void>
   stopStreaming: () => void
   clearMessages: () => void
 }
@@ -90,7 +94,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const [currentClarification, setCurrentClarification] = useState<ClarificationRequest | null>(null)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [feedbackState, setFeedbackState] = useState<FeedbackState>({})
   // 세션 컨텍스트 (후속 질문 시 동일 에이전트 유지)
   const [sessionContext, setSessionContext] = useState<SessionContext>({})
 
@@ -107,6 +111,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setCurrentMetadata(undefined)
     setProgressStatus(null)
     setCurrentClarification(null)
+    setFeedbackState({})
     // 세션 컨텍스트도 초기화
     setSessionContext({})
   }, [])
@@ -178,7 +183,6 @@ export function ChatProvider({ children }: ChatProviderProps) {
         body: JSON.stringify({
           messages: chatMessages,
           projectId: selectedProject,
-          agentId: selectedAgent,
           // 세션 컨텍스트 전송 (후속 질문 시 에이전트 유지)
           sessionContext: Object.keys(sessionContext).length > 0 ? sessionContext : undefined,
         }),
@@ -199,6 +203,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
       let accumulatedContent = ''
       let toolCalls: ToolCall[] = []
       let metadata: Message['metadata'] = undefined
+      let executionId: string | undefined = undefined  // 피드백 제출용 ID
       let streamComplete = false
 
       while (!streamComplete) {
@@ -242,6 +247,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
           role: 'assistant',
           content: accumulatedContent,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          executionId,  // 피드백 제출용 ID
           metadata,
         }
         setMessages(prev => [...prev, assistantMessage])
@@ -332,7 +338,8 @@ export function ChatProvider({ children }: ChatProviderProps) {
               return true  // 스트림 종료 - 사용자 선택 대기
 
             case 'done':
-              // 스트림 완료 - 루프 종료
+              // 스트림 완료 - executionId 캡처 후 루프 종료
+              executionId = data.executionId
               setProgressStatus(null)
               return true
 
@@ -361,7 +368,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
       setProgressStatus(null)
       abortControllerRef.current = null
     }
-  }, [isStreaming, messages, selectedProject, selectedAgent, sessionContext])
+  }, [isStreaming, messages, selectedProject, sessionContext])
 
   /**
    * Clarification 응답 전송
@@ -384,6 +391,48 @@ export function ChatProvider({ children }: ChatProviderProps) {
     await sendMessage(enhancedMessage)
   }, [sendMessage])
 
+  /**
+   * 피드백 제출
+   * 어시스턴트 메시지에 대한 thumbsup/thumbsdown 피드백
+   */
+  const submitFeedback = useCallback(async (
+    executionId: string,
+    reaction: 'thumbsup' | 'thumbsdown'
+  ) => {
+    try {
+      // 이미 동일한 피드백이 있으면 삭제 (토글)
+      const currentFeedback = feedbackState[executionId]
+      const action = currentFeedback === reaction ? 'delete' : 'upsert'
+
+      const response = await fetch('/api/v1/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          executionId,
+          userId: 'chat-user',  // TODO: 실제 사용자 ID로 대체
+          reaction,
+          action,
+          source: 'chat'  // Chat에서 온 피드백임을 표시
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to submit feedback')
+      }
+
+      // 피드백 상태 업데이트
+      setFeedbackState(prev => ({
+        ...prev,
+        [executionId]: action === 'delete' ? null : reaction
+      }))
+
+      toast.success(action === 'delete' ? '피드백이 취소되었습니다' : '피드백이 제출되었습니다')
+    } catch (error) {
+      console.error('Feedback error:', error)
+      toast.error('피드백 제출에 실패했습니다')
+    }
+  }, [feedbackState])
+
   const value: ChatContextType = {
     messages,
     isStreaming,
@@ -394,14 +443,14 @@ export function ChatProvider({ children }: ChatProviderProps) {
     currentClarification,
     isPanelOpen,
     selectedProject,
-    selectedAgent,
+    feedbackState,
     setSelectedProject,
-    setSelectedAgent,
     openPanel,
     closePanel,
     togglePanel,
     sendMessage,
     sendClarificationResponse,
+    submitFeedback,
     stopStreaming,
     clearMessages,
   }

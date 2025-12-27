@@ -26,6 +26,7 @@ interface Message {
   content: string
   toolCalls?: ToolCall[]
   clarification?: ClarificationRequest
+  executionId?: string  // 피드백 제출용 ID
   metadata?: {
     agentId?: string
     agentName?: string
@@ -33,6 +34,9 @@ interface Message {
     routingMethod?: string
   }
 }
+
+// 피드백 상태 타입
+type FeedbackState = Record<string, 'thumbsup' | 'thumbsdown' | null>
 
 interface ChatMainProps {
   projectId: string | null
@@ -49,6 +53,7 @@ export function ChatMain({ projectId, agentId }: ChatMainProps) {
   const [progressStatus, setProgressStatus] = useState<ProgressStatus | null>(null)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_currentClarification, setCurrentClarification] = useState<ClarificationRequest | null>(null)
+  const [feedbackState, setFeedbackState] = useState<FeedbackState>({})
 
   const abortControllerRef = useRef<AbortController | null>(null)
 
@@ -113,6 +118,7 @@ export function ChatMain({ projectId, agentId }: ChatMainProps) {
       let accumulatedContent = ''
       let toolCalls: ToolCall[] = []
       let metadata: Message['metadata'] = undefined
+      let executionId: string | undefined = undefined  // 피드백 제출용 ID
 
       while (true) {
         const { done, value } = await reader.read()
@@ -152,6 +158,7 @@ export function ChatMain({ projectId, agentId }: ChatMainProps) {
           role: 'assistant',
           content: accumulatedContent,
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+          executionId,  // 피드백 제출용 ID
           metadata,
         }
         setMessages(prev => [...prev, assistantMessage])
@@ -229,7 +236,8 @@ export function ChatMain({ projectId, agentId }: ChatMainProps) {
               break
 
             case 'done':
-              // 완료 처리는 루프 종료 후
+              // 완료 처리 - executionId 캡처 후 루프 종료
+              executionId = data.executionId
               setProgressStatus(null)
               break
 
@@ -287,6 +295,48 @@ export function ChatMain({ projectId, agentId }: ChatMainProps) {
       }
     }, 0)
   }, [])
+
+  /**
+   * 피드백 제출 핸들러
+   * 어시스턴트 메시지에 대한 thumbsup/thumbsdown 피드백
+   */
+  const handleFeedback = useCallback(async (
+    executionId: string,
+    reaction: 'thumbsup' | 'thumbsdown'
+  ) => {
+    try {
+      // 이미 동일한 피드백이 있으면 삭제 (토글)
+      const currentFeedback = feedbackState[executionId]
+      const action = currentFeedback === reaction ? 'delete' : 'upsert'
+
+      const response = await fetch('/api/v1/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          executionId,
+          userId: 'chat-user',  // TODO: 실제 사용자 ID로 대체
+          reaction,
+          action,
+          source: 'chat'  // Chat에서 온 피드백임을 표시
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to submit feedback')
+      }
+
+      // 피드백 상태 업데이트
+      setFeedbackState(prev => ({
+        ...prev,
+        [executionId]: action === 'delete' ? null : reaction
+      }))
+
+      toast.success(action === 'delete' ? '피드백이 취소되었습니다' : '피드백이 제출되었습니다')
+    } catch (error) {
+      console.error('Feedback error:', error)
+      toast.error('피드백 제출에 실패했습니다')
+    }
+  }, [feedbackState])
 
   return (
     <div className="flex flex-col flex-1 min-w-0">
@@ -392,6 +442,8 @@ export function ChatMain({ projectId, agentId }: ChatMainProps) {
         currentToolCalls={currentToolCalls}
         streamingContent={streamingContent}
         onClarificationSelect={handleClarificationSelect}
+        feedbackState={feedbackState}
+        onFeedback={handleFeedback}
       />
 
       <ChatInput
