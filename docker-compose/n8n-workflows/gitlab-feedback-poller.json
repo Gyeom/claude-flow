@@ -1,0 +1,507 @@
+{
+  "name": "GitLab Feedback Poller",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "notes": "5분마다 GitLab 피드백 폴링"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL }}/api/v1/projects/gitlab-enabled",
+        "options": {}
+      },
+      "id": "get-gitlab-projects",
+      "name": "Get GitLab Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "notes": "GitLab 연동 프로젝트 목록 조회"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-projects",
+      "name": "Loop Projects",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ encodeURIComponent($json.gitlabPath) }}/merge_requests",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {
+          "qs": {
+            "state": "opened",
+            "labels": "ai-review::done",
+            "updated_after": "={{ DateTime.now().minus({minutes: 10}).toISO() }}",
+            "per_page": 20
+          }
+        }
+      },
+      "id": "get-reviewed-mrs",
+      "name": "Get Reviewed MRs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 300],
+      "notes": "AI 리뷰 완료된 MR 중 최근 10분 내 업데이트된 것만"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-mrs",
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-mrs",
+      "name": "Has MRs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1040, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-mrs",
+      "name": "Loop MRs",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $('Loop Projects').item.json.gitlabPath | encodeURIComponent }}/merge_requests/{{ $json.iid }}/notes",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {
+          "qs": {
+            "per_page": 100
+          }
+        }
+      },
+      "id": "get-mr-notes",
+      "name": "Get MR Notes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 200],
+      "notes": "MR의 모든 코멘트 조회"
+    },
+    {
+      "parameters": {
+        "jsCode": "// AI 코멘트 식별\nconst notes = $input.all();\nconst projectId = $('Loop Projects').item.json.gitlabPath;\nconst mrIid = $('Loop MRs').item.json.iid;\n\nconst aiNotes = [];\n\nfor (const item of notes) {\n  const note = item.json;\n  \n  // AI 코멘트 식별 (author가 봇이거나 특정 마커가 있는 경우)\n  const isAiComment = note.body && (\n    note.body.includes('## 🤖 AI Code Review') ||\n    note.body.includes('Claude Flow') ||\n    note.author?.username === 'claude-bot'\n  );\n  \n  if (isAiComment) {\n    aiNotes.push({\n      projectId: projectId,\n      mrIid: mrIid,\n      noteId: note.id\n    });\n  }\n}\n\nreturn aiNotes.map(n => ({ json: n }));"
+      },
+      "id": "find-ai-notes",
+      "name": "Find AI Notes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 200],
+      "notes": "AI 코멘트만 필터링"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-ai-notes",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-ai-notes",
+      "name": "Has AI Notes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1840, 200]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-ai-notes",
+      "name": "Loop AI Notes",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2040, 100]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ $json.projectId | encodeURIComponent }}/merge_requests/{{ $json.mrIid }}/notes/{{ $json.noteId }}/award_emoji",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gitlabApi",
+        "options": {}
+      },
+      "id": "get-note-emojis",
+      "name": "Get Note Emojis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2240, 100],
+      "notes": "AI 코멘트의 이모지 조회"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 피드백 이모지 필터링 (👍/👎)\nconst emojis = $input.first().json;\nconst noteData = $('Loop AI Notes').item.json;\nconst feedbackEmojis = [];\n\nif (Array.isArray(emojis)) {\n  for (const emoji of emojis) {\n    if (['thumbsup', 'thumbsdown', '+1', '-1'].includes(emoji.name)) {\n      feedbackEmojis.push({\n        projectId: noteData.projectId,\n        noteId: noteData.noteId,\n        emoji: emoji.name,\n        userId: emoji.user?.id || 0,\n        action: 'award'\n      });\n    }\n  }\n}\n\nreturn feedbackEmojis.map(e => ({ json: e }));"
+      },
+      "id": "filter-feedback-emojis",
+      "name": "Filter Feedback Emojis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 100],
+      "notes": "👍/👎 이모지만 필터링"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-emojis",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-feedback-emojis",
+      "name": "Has Feedback Emojis?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2640, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL }}/api/v1/feedback/gitlab-emoji",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "save-emoji-feedback",
+      "name": "Save Emoji Feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2840, 0],
+      "notes": "이모지 피드백 저장"
+    },
+    {
+      "parameters": {},
+      "id": "no-op-1",
+      "name": "No MRs",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1240, 400]
+    },
+    {
+      "parameters": {},
+      "id": "no-op-2",
+      "name": "No AI Notes",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2040, 300]
+    },
+    {
+      "parameters": {},
+      "id": "no-op-3",
+      "name": "No Emojis",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2840, 200]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get GitLab Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get GitLab Projects": {
+      "main": [
+        [
+          {
+            "node": "Loop Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Projects": {
+      "main": [
+        [
+          {
+            "node": "Get Reviewed MRs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Reviewed MRs": {
+      "main": [
+        [
+          {
+            "node": "Has MRs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has MRs?": {
+      "main": [
+        [
+          {
+            "node": "Loop MRs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No MRs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No MRs": {
+      "main": [
+        [
+          {
+            "node": "Loop Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop MRs": {
+      "main": [
+        [
+          {
+            "node": "Get MR Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get MR Notes": {
+      "main": [
+        [
+          {
+            "node": "Find AI Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find AI Notes": {
+      "main": [
+        [
+          {
+            "node": "Has AI Notes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has AI Notes?": {
+      "main": [
+        [
+          {
+            "node": "Loop AI Notes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No AI Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No AI Notes": {
+      "main": [
+        [
+          {
+            "node": "Loop MRs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop AI Notes": {
+      "main": [
+        [
+          {
+            "node": "Get Note Emojis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Note Emojis": {
+      "main": [
+        [
+          {
+            "node": "Filter Feedback Emojis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Feedback Emojis": {
+      "main": [
+        [
+          {
+            "node": "Has Feedback Emojis?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Feedback Emojis?": {
+      "main": [
+        [
+          {
+            "node": "Save Emoji Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Emojis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Emoji Feedback": {
+      "main": [
+        [
+          {
+            "node": "Loop AI Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Emojis": {
+      "main": [
+        [
+          {
+            "node": "Loop AI Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateId": "gitlab-feedback-poller"
+  },
+  "pinData": {},
+  "versionId": "1",
+  "tags": [
+    {
+      "name": "gitlab",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "feedback",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "active": false
+}

@@ -294,3 +294,40 @@ export interface ExtendedFeedbackStats {
   verified: VerifiedFeedbackStats
   byCategory: FeedbackByCategory[]
 }
+
+// GitLab Review Types
+export interface GitLabReviewRecord {
+  id: string
+  projectId: string
+  mrIid: number
+  noteId: number
+  discussionId: string | null
+  reviewContent: string
+  mrContext: string | null
+  createdAt: string
+  feedback?: GitLabFeedbackRecord[]
+}
+
+export interface GitLabFeedbackRecord {
+  id: string
+  noteId: number
+  reaction: string
+  userId: string
+  source: string
+  comment: string | null
+  createdAt: string
+}
+
+export interface GitLabFeedbackStats {
+  positive: number
+  negative: number
+  satisfactionRate: number
+  total: number
+}
+
+export interface GitLabProject {
+  id: string
+  name: string
+  gitlabPath: string
+  defaultBranch: string
+}

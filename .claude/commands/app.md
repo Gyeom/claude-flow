@@ -24,11 +24,9 @@ else
 fi
 
 echo ""
-echo "=== Dashboard ==="
+echo "=== Dashboard (3000) ==="
 if curl -s --max-time 2 http://localhost:3000/ >/dev/null 2>&1; then
-  echo "✓ Running (port 3000)"
-elif curl -s --max-time 2 http://localhost:5173/ >/dev/null 2>&1; then
-  echo "✓ Running (port 5173)"
+  echo "✓ Running"
 else
   echo "✗ Not running"
 fi

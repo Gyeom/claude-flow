@@ -15,6 +15,7 @@ const Workflows = lazy(() => import('@/pages/Workflows').then(m => ({ default: m
 const Projects = lazy(() => import('@/pages/Projects').then(m => ({ default: m.Projects })))
 const Jira = lazy(() => import('@/pages/Jira').then(m => ({ default: m.Jira })))
 const Knowledge = lazy(() => import('@/pages/Knowledge').then(m => ({ default: m.Knowledge })))
+const GitLabReviews = lazy(() => import('@/pages/GitLabReviews').then(m => ({ default: m.GitLabReviews })))
 const Logs = lazy(() => import('@/pages/Logs'))
 const Settings = lazy(() => import('@/pages/Settings'))
 
@@ -89,6 +90,11 @@ function App() {
         <Route path="/knowledge" element={
           <Suspense fallback={<PageLoader />}>
             <Knowledge />
+          </Suspense>
+        } />
+        <Route path="/gitlab-reviews" element={
+          <Suspense fallback={<PageLoader />}>
+            <GitLabReviews />
           </Suspense>
         } />
         <Route path="/logs" element={

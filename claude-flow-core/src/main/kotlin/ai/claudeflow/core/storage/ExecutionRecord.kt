@@ -386,3 +386,30 @@ data class UserStats(
     val totalCost: Double,
     val lastSeen: String?
 )
+
+// ==================== GitLab Review Records ====================
+
+/**
+ * GitLab AI 리뷰 레코드
+ *
+ * AI가 작성한 MR 리뷰 코멘트를 추적하여 피드백 수집 시 매칭에 사용
+ */
+data class GitLabReviewRecord(
+    val id: String,
+    val projectId: String,           // GitLab 프로젝트 ID (숫자)
+    val mrIid: Int,                  // MR 번호
+    val noteId: Int,                 // GitLab 코멘트 ID
+    val discussionId: String?,       // 토론 ID (답글 추적용)
+    val reviewContent: String,       // 리뷰 내용
+    val mrContext: String?,          // MR 제목+요약 (학습용)
+    val createdAt: Instant = Instant.now()
+)
+
+/**
+ * GitLab 피드백 타입
+ */
+enum class GitLabFeedbackType {
+    POSITIVE,   // 👍 thumbsup
+    NEGATIVE,   // 👎 thumbsdown
+    NEUTRAL     // 답글 감정 분석 결과가 중립
+}

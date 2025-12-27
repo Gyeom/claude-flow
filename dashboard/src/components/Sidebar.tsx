@@ -15,6 +15,7 @@ import {
   MessageSquare,
   Ticket,
   BookOpen,
+  GitMerge,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ThemeToggle } from './ThemeToggle'
@@ -27,6 +28,7 @@ const navigation = [
   { name: 'Projects', href: '/projects', icon: FolderOpen },
   { name: 'Knowledge', href: '/knowledge', icon: BookOpen },
   { name: 'Jira', href: '/jira', icon: Ticket },
+  { name: 'MR Reviews', href: '/gitlab-reviews', icon: GitMerge },
   { name: 'Agents', href: '/agents', icon: Bot },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
   { name: 'Feedback', href: '/feedback', icon: ThumbsUp },

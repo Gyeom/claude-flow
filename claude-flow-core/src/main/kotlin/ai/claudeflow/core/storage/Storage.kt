@@ -370,9 +370,26 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 )
             """)
 
+            // GitLab AI 리뷰 레코드 테이블 (피드백 수집용)
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS gitlab_reviews (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    mr_iid INTEGER NOT NULL,
+                    note_id INTEGER NOT NULL,
+                    discussion_id TEXT,
+                    review_content TEXT NOT NULL,
+                    mr_context TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(project_id, mr_iid, note_id)
+                )
+            """)
+
             // 인덱스 생성
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_channel ON executions(channel)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_created ON executions(created_at)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_gitlab_reviews_note ON gitlab_reviews(note_id)")
+            stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_gitlab_reviews_project_mr ON gitlab_reviews(project_id, mr_iid)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_executions_user ON executions(user_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_feedback_execution ON feedback(execution_id)")
             stmt.executeUpdate("CREATE INDEX IF NOT EXISTS idx_agents_project ON agents(project_id)")
@@ -445,6 +462,33 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     try {
                         stmt.executeUpdate("ALTER TABLE executions ADD COLUMN $column $definition")
                         logger.info { "Migrated: Added column $column to executions table" }
+                    } catch (e: Exception) {
+                        logger.warn { "Migration skipped for $column: ${e.message}" }
+                    }
+                }
+            }
+
+            // feedback 테이블에 GitLab 피드백 컬럼 추가
+            val feedbackColumns = mutableSetOf<String>()
+            stmt.executeQuery("PRAGMA table_info(feedback)").use { rs ->
+                while (rs.next()) {
+                    feedbackColumns.add(rs.getString("name"))
+                }
+            }
+
+            val newFeedbackColumns = mapOf(
+                "source" to "TEXT DEFAULT 'slack'",           // slack, gitlab_emoji, gitlab_note
+                "gitlab_project_id" to "TEXT",                // GitLab 프로젝트 ID
+                "gitlab_mr_iid" to "INTEGER",                 // MR 번호
+                "gitlab_note_id" to "INTEGER",                // 코멘트 ID
+                "comment" to "TEXT"                           // 답글 내용 (gitlab_note 용)
+            )
+
+            for ((column, definition) in newFeedbackColumns) {
+                if (!feedbackColumns.contains(column)) {
+                    try {
+                        stmt.executeUpdate("ALTER TABLE feedback ADD COLUMN $column $definition")
+                        logger.info { "Migrated: Added column $column to feedback table" }
                     } catch (e: Exception) {
                         logger.warn { "Migration skipped for $column: ${e.message}" }
                     }

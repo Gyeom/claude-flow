@@ -47,7 +47,7 @@ services:
       dockerfile: ../docker-compose/Dockerfile.dashboard
     container_name: claude-flow-dashboard
     ports:
-      - "5173:5173"
+      - "3000:3000"
     environment:
       - VITE_API_URL=http://claude-flow:8080
     depends_on:

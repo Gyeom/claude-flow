@@ -18,6 +18,9 @@ import type {
   VerifiedFeedbackStats,
   FeedbackByCategory,
   RoutingEfficiency,
+  GitLabReviewRecord,
+  GitLabFeedbackStats,
+  GitLabProject,
 } from '@/types'
 
 const API_BASE_V1 = '/api/v1'
@@ -1474,6 +1477,36 @@ export interface ErrorCase {
   errorCode: string | null
   condition: string
   message: string | null
+}
+
+// GitLab Reviews API
+export const gitlabReviewsApi = {
+  // Get GitLab-enabled projects
+  getProjects: () =>
+    fetchApi<GitLabProject[]>('/projects/gitlab-enabled'),
+
+  // Get reviews for a project
+  getReviews: (projectId?: string, days = 30) => {
+    const params = new URLSearchParams()
+    if (projectId) params.set('projectId', projectId)
+    params.set('days', days.toString())
+    return fetchApi<GitLabReviewRecord[]>(`/feedback/gitlab-reviews?${params}`)
+  },
+
+  // Get review by ID
+  getReview: (reviewId: string) =>
+    fetchApi<GitLabReviewRecord>(`/feedback/gitlab-review/${reviewId}`),
+
+  // Get GitLab feedback stats
+  getStats: (days = 30) =>
+    fetchApi<GitLabFeedbackStats>(`/feedback/gitlab-stats?days=${days}`),
+
+  // Add comment to review (from dashboard)
+  addComment: (reviewId: string, comment: string) =>
+    fetchApi<{ success: boolean }>(`/feedback/gitlab-review/${reviewId}/comment`, {
+      method: 'POST',
+      body: JSON.stringify({ comment }),
+    }),
 }
 
 // Extended Analytics API (Verified Feedback)

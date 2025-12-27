@@ -1,0 +1,266 @@
+{
+  "name": "Scheduled MR Auto Review",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/projects/gitlab-enabled",
+        "options": { "timeout": 10000 }
+      },
+      "id": "get-projects",
+      "name": "Get GitLab Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ Array.isArray($json) ? $json.length > 0 : ($json.id !== undefined) }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "has-projects",
+      "name": "Has Projects?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 각 프로젝트 항목을 개별 처리\nconst project = $input.item.json;\n\nif (project.error || project.message) {\n  return { json: { error: project.error || project.message, skip: true } };\n}\n\nif (!project.id || !project.gitlabPath) {\n  return { json: { error: 'Invalid project data', skip: true } };\n}\n\nreturn { json: project };"
+      },
+      "id": "split-projects",
+      "name": "Split Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Claude Flow API를 통해 GitLab MR 목록 조회\nconst project = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nif (project.skip) {\n  return { json: project };\n}\n\nconsole.log('Fetching MRs for project:', project.id, project.gitlabPath);\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/plugins/gitlab/execute',\n    body: {\n      command: 'mr-list',\n      args: { project: project.gitlabPath }\n    },\n    json: true,\n    timeout: 30000\n  });\n\n  if (!response.success || !response.data) {\n    console.log('Failed to get MRs:', response.error);\n    return { json: { skip: true, reason: response.error || 'No MRs', project: project.id } };\n  }\n\n  // ai-review::done 또는 ai-review::in-progress 라벨이 없는 MR만 필터링\n  // (현재 mr-list 결과에 labels가 없으므로 전체 반환)\n  const mrs = response.data;\n  if (!Array.isArray(mrs) || mrs.length === 0) {\n    console.log('No MRs for project:', project.id);\n    return { json: { skip: true, reason: 'No MRs', project: project.id } };\n  }\n\n  // target_branch가 develop인 MR만 필터링\n  const filteredMRs = mrs.filter(mr => mr.target_branch === (project.defaultBranch || 'develop'));\n  if (filteredMRs.length === 0) {\n    console.log('No MRs targeting', project.defaultBranch || 'develop');\n    return { json: { skip: true, reason: 'No MRs targeting default branch', project: project.id } };\n  }\n\n  console.log('Found', filteredMRs.length, 'MRs for project:', project.id);\n  return { json: { mrs: filteredMRs, projectInfo: project } };\n} catch (e) {\n  console.log('Error fetching MRs:', e.message);\n  return { json: { skip: true, reason: e.message, project: project.id } };\n}"
+      },
+      "id": "get-project-mrs",
+      "name": "Get Project MRs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// MR 배열을 개별 아이템으로 분할 (모든 입력 처리)\nconst allItems = $input.all();\nconst results = [];\n\nfor (const item of allItems) {\n  const data = item.json;\n  \n  if (data.skip || !data.mrs) {\n    // skip 아이템은 그대로 전달 (Should Review?에서 필터링됨)\n    results.push({ json: data });\n    continue;\n  }\n  \n  const project = data.projectInfo;\n  console.log('Splitting', data.mrs.length, 'MRs for project:', project?.id);\n  \n  for (const mr of data.mrs) {\n    results.push({\n      json: {\n        mr_iid: mr.iid,\n        mr_title: mr.title,\n        mr_author: mr.author,\n        source_branch: mr.source_branch,\n        target_branch: mr.target_branch,\n        mr_url: mr.web_url,\n        created_at: mr.created_at,\n        projectInfo: project\n      }\n    });\n  }\n}\n\nconsole.log('Total output items:', results.length);\nreturn results;"
+      },
+      "id": "split-mrs",
+      "name": "Split MRs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1240, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.skip !== true && $json.mr_iid !== undefined }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "should-review",
+      "name": "Should Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1440, 200]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Claude Flow API를 통해 MR 상세 정보(changes 포함) 조회\nconst mr = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nconsole.log('Fetching MR details for:', mr.mr_iid, 'project:', mr.projectInfo?.gitlabPath);\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/plugins/gitlab/execute',\n    body: {\n      command: 'mr-info',\n      args: {\n        project: mr.projectInfo.gitlabPath,\n        mr_id: mr.mr_iid\n      }\n    },\n    json: true,\n    timeout: 60000\n  });\n\n  if (!response.success || !response.data) {\n    console.log('Failed to get MR info:', response.error);\n    return { json: { ...mr, skip: true, error: response.error || 'Failed to get MR info' } };\n  }\n\n  const mrInfo = response.data;\n  console.log('Got MR info:', mrInfo.iid, mrInfo.title?.substring(0, 30));\n\n  return {\n    json: {\n      ...mr,\n      mr_description: mrInfo.description,\n      mr_state: mrInfo.state,\n      merge_status: mrInfo.merge_status,\n      has_conflicts: mrInfo.has_conflicts\n    }\n  };\n} catch (e) {\n  console.log('Error fetching MR info:', e.message);\n  return { json: { ...mr, skip: true, error: e.message } };\n}"
+      },
+      "id": "get-mr-details",
+      "name": "Get MR Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, 100]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// ChatStreamController의 performMrAnalysis()와 동일한 메커니즘 사용\n// 1. /context 엔드포인트로 포맷팅된 컨텍스트 조회\n// 2. 컨텍스트를 포함한 프롬프트로 Chat API 호출\nconst mr = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nif (mr.skip) {\n  console.log('Skipping review:', mr.error);\n  return { json: mr };\n}\n\nconst projectId = mr.projectInfo?.id || 'ccds-server';\nconst gitlabPath = mr.projectInfo?.gitlabPath;\n\nconsole.log('Starting review for MR:', mr.mr_iid, 'project:', gitlabPath);\n\ntry {\n  // 1단계: /context 엔드포인트로 ChatStreamController와 동일한 포맷의 컨텍스트 조회\n  const contextUrl = `${apiUrl}/api/v1/mr-review/context/${encodeURIComponent(gitlabPath)}/${mr.mr_iid}`;\n  console.log('Fetching context from:', contextUrl);\n  \n  const contextResponse = await this.helpers.httpRequest({\n    method: 'GET',\n    url: contextUrl,\n    json: true,\n    timeout: 120000  // 2분 타임아웃\n  });\n\n  if (!contextResponse.success || !contextResponse.context) {\n    console.log('Failed to get context:', contextResponse.error);\n    return { json: { ...mr, skip: true, error: contextResponse.error || 'Failed to get context' } };\n  }\n\n  const mrContext = contextResponse.context;\n  const mrTitle = contextResponse.mrTitle || mr.mr_title;\n  const issueCount = contextResponse.issueCount || 0;\n  const fileCount = contextResponse.fileCount || 0;\n\n  console.log('Got context - issues:', issueCount, 'files:', fileCount, 'context length:', mrContext.length);\n\n  // 2단계: 컨텍스트를 포함한 리뷰 프롬프트 구성\n  const reviewPrompt = `## MR 리뷰 요청\n\n**프로젝트**: ${gitlabPath}\n**MR**: !${mr.mr_iid} - ${mrTitle}\n**URL**: ${mr.mr_url}\n\n---\n\n${mrContext}\n\n---\n\n## 리뷰 요청\n\n위 MR 분석 결과와 실제 코드 변경사항을 바탕으로 상세한 코드 리뷰를 작성해주세요.\n\n**리뷰 형식:**\n\n### 요약\n(변경사항 한 줄 요약)\n\n### 장점\n- 잘된 점 2-3개\n\n### 개선 사항\n- 개선이 필요한 부분 (구체적인 코드 라인과 함께)\n- 보안, 성능, 유지보수성 관점에서의 제안\n\n### 질문\n- 명확하지 않거나 확인이 필요한 부분\n\n### 전체 평가\n⭐ X/10 - (한 줄 평가)`;\n\n  // 3단계: Chat API 호출 (컨텍스트가 이미 포함되어 있으므로 MR 재분석 불필요)\n  const chatResponse = await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/chat/execute',\n    body: {\n      messages: [\n        {\n          role: 'user',\n          content: reviewPrompt\n        }\n      ],\n      projectId: projectId,\n      agentId: 'code-reviewer',\n      skipMrAnalysis: true  // MR 재분석 건너뛰기 (이미 컨텍스트 포함)\n    },\n    json: true,\n    timeout: 600000  // 10분 타임아웃\n  });\n\n  console.log('Chat API response:', chatResponse.success, 'content length:', chatResponse.content?.length || 0);\n\n  if (!chatResponse.success || !chatResponse.content) {\n    console.log('Chat API failed:', chatResponse.error);\n    return { json: { ...mr, skip: true, error: chatResponse.error || 'Chat API failed' } };\n  }\n\n  console.log('AI review completed for MR:', mr.mr_iid);\n\n  return {\n    json: {\n      ...mr,\n      aiReview: chatResponse.content,\n      reviewSuccess: true,\n      agentId: chatResponse.agentId,\n      confidence: chatResponse.confidence,\n      issueCount: issueCount,\n      fileCount: fileCount\n    }\n  };\n} catch (e) {\n  console.log('Error during review:', e.message);\n  return { json: { ...mr, skip: true, error: e.message } };\n}"
+      },
+      "id": "execute-review",
+      "name": "Execute Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1840, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.reviewSuccess === true && !$json.skip }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "review-success",
+      "name": "Review Success?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2040, 100]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 리뷰 결과를 GitLab 코멘트로 포맷\nconst mr = $input.item.json;\nconst analysis = mr.analysis;\nconst aiReview = mr.aiReview;\n\nlet gitlabComment = '## 🤖 AI Code Review\\n\\n';\n\n// AI 리뷰가 있으면 사용\nif (aiReview) {\n  gitlabComment += aiReview;\n  gitlabComment += '\\n\\n';\n} else if (analysis) {\n  // 폴백: 자동 분석 결과 사용\n  gitlabComment += `### 변경 사항 요약\\n${analysis.summary || '분석 완료'}\\n\\n`;\n  \n  // 파일 통계\n  const fa = analysis.fileAnalysis;\n  if (fa) {\n    gitlabComment += `### 📊 파일 변경 통계\\n`;\n    gitlabComment += `| 구분 | 개수 |\\n|------|------|\\n`;\n    gitlabComment += `| 추가 | ${fa.added?.length || 0}개 (+${fa.totalAdditions || 0} lines) |\\n`;\n    gitlabComment += `| 수정 | ${fa.modified?.length || 0}개 |\\n`;\n    gitlabComment += `| 삭제 | ${fa.deleted?.length || 0}개 (-${fa.totalDeletions || 0} lines) |\\n`;\n    gitlabComment += `| 이름변경 | ${fa.renamed?.length || 0}개 |\\n\\n`;\n  }\n  \n  // 자동 감지된 이슈\n  if (analysis.quickIssues && analysis.quickIssues.length > 0) {\n    gitlabComment += '### ⚠️ 자동 감지된 이슈\\n';\n    for (const issue of analysis.quickIssues) {\n      const emoji = issue.severity === 'ERROR' ? '🔴' : issue.severity === 'WARNING' ? '🟡' : 'ℹ️';\n      gitlabComment += `${emoji} **[${issue.category}]** ${issue.message}\\n`;\n      if (issue.suggestion) {\n        gitlabComment += `   → ${issue.suggestion}\\n`;\n      }\n    }\n    gitlabComment += '\\n';\n  }\n  \n  // 우선 검토 파일\n  if (analysis.priorityFiles && analysis.priorityFiles.length > 0) {\n    gitlabComment += '### 📋 우선 검토 파일\\n';\n    for (const file of analysis.priorityFiles.slice(0, 5)) {\n      gitlabComment += `- \\`${file}\\`\\n`;\n    }\n    gitlabComment += '\\n';\n  }\n}\n\ngitlabComment += '---\\n\\n';\ngitlabComment += '👍 도움이 되었다면 이모지를, 👎 개선이 필요하면 답글을 남겨주세요!';\n\nreturn {\n  json: {\n    ...mr,\n    gitlabComment: gitlabComment\n  }\n};"
+      },
+      "id": "format-comment",
+      "name": "Format Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Claude Flow API를 통해 GitLab에 코멘트 작성\nconst mr = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nconsole.log('Posting comment to MR:', mr.mr_iid);\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/plugins/gitlab/execute',\n    body: {\n      command: 'mr-comment',\n      args: {\n        project: mr.projectInfo.gitlabPath,\n        mr_id: mr.mr_iid,\n        comment: mr.gitlabComment\n      }\n    },\n    json: true,\n    timeout: 30000\n  });\n\n  if (!response.success) {\n    console.log('Failed to post comment:', response.error);\n    return { json: { ...mr, commentPosted: false, error: response.error } };\n  }\n\n  console.log('Comment posted successfully');\n  return {\n    json: {\n      ...mr,\n      commentPosted: true,\n      noteId: response.data?.id\n    }\n  };\n} catch (e) {\n  console.log('Error posting comment:', e.message);\n  return { json: { ...mr, commentPosted: false, error: e.message } };\n}"
+      },
+      "id": "post-comment",
+      "name": "Post GitLab Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// MR에 ai-review::done 라벨 적용 (Claude Flow Plugin API 사용)\nconst mr = $input.item.json;\n\nif (!mr.commentPosted) {\n  console.log('Comment not posted, skipping label');\n  return { json: mr };\n}\n\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\nconst projectPath = mr.projectInfo?.gitlabPath;\n\nif (!projectPath) {\n  console.log('Project path not found');\n  return { json: { ...mr, labelApplied: false } };\n}\n\nconsole.log('Applying label to MR:', mr.mr_iid, 'in', projectPath);\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/plugins/gitlab/execute',\n    body: {\n      command: 'mr-add-label',\n      args: {\n        project: projectPath,\n        mr_id: mr.mr_iid,\n        label: 'ai-review::done'\n      }\n    },\n    json: true,\n    timeout: 10000\n  });\n\n  if (response.success) {\n    console.log('Label applied successfully');\n    return { json: { ...mr, labelApplied: true } };\n  } else {\n    console.log('Failed to apply label:', response.error);\n    return { json: { ...mr, labelApplied: false, labelError: response.error } };\n  }\n} catch (e) {\n  console.log('Failed to apply label:', e.message);\n  return { json: { ...mr, labelApplied: false, labelError: e.message } };\n}"
+      },
+      "id": "apply-label",
+      "name": "Apply Label",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 리뷰 레코드 저장\nconst mr = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nif (!mr.commentPosted) {\n  console.log('Comment not posted, skipping save');\n  return { json: mr };\n}\n\nconsole.log('Saving review record for MR:', mr.mr_iid);\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/feedback/gitlab-review',\n    body: {\n      projectId: mr.projectInfo?.gitlabPath || mr.projectInfo?.id,\n      mrIid: mr.mr_iid,\n      noteId: mr.noteId || 0,\n      discussionId: null,\n      reviewContent: mr.gitlabComment,\n      mrContext: `${mr.mr_title} - ${mr.mr_description?.slice(0, 200) || ''}`\n    },\n    json: true,\n    timeout: 10000\n  });\n  console.log('Review record saved');\n} catch (e) {\n  console.log('Failed to save review record:', e.message);\n}\n\nreturn { json: { ...mr, saved: true } };"
+      },
+      "id": "save-review",
+      "name": "Save Review Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2840, 0]
+    },
+    {
+      "parameters": {},
+      "id": "noop",
+      "name": "No MRs",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1640, 300]
+    },
+    {
+      "parameters": {},
+      "id": "noop-projects",
+      "name": "No Projects",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [840, 400]
+    },
+    {
+      "parameters": {},
+      "id": "review-failed",
+      "name": "Review Failed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2240, 200]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{ "node": "Get GitLab Projects", "type": "main", "index": 0 }]]
+    },
+    "Get GitLab Projects": {
+      "main": [[{ "node": "Has Projects?", "type": "main", "index": 0 }]]
+    },
+    "Has Projects?": {
+      "main": [
+        [{ "node": "Split Projects", "type": "main", "index": 0 }],
+        [{ "node": "No Projects", "type": "main", "index": 0 }]
+      ]
+    },
+    "Split Projects": {
+      "main": [[{ "node": "Get Project MRs", "type": "main", "index": 0 }]]
+    },
+    "Get Project MRs": {
+      "main": [[{ "node": "Split MRs", "type": "main", "index": 0 }]]
+    },
+    "Split MRs": {
+      "main": [[{ "node": "Should Review?", "type": "main", "index": 0 }]]
+    },
+    "Should Review?": {
+      "main": [
+        [{ "node": "Get MR Details", "type": "main", "index": 0 }],
+        [{ "node": "No MRs", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get MR Details": {
+      "main": [[{ "node": "Execute Review", "type": "main", "index": 0 }]]
+    },
+    "Execute Review": {
+      "main": [[{ "node": "Review Success?", "type": "main", "index": 0 }]]
+    },
+    "Review Success?": {
+      "main": [
+        [{ "node": "Format Comment", "type": "main", "index": 0 }],
+        [{ "node": "Review Failed", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Comment": {
+      "main": [[{ "node": "Post GitLab Comment", "type": "main", "index": 0 }]]
+    },
+    "Post GitLab Comment": {
+      "main": [[{ "node": "Apply Label", "type": "main", "index": 0 }]]
+    },
+    "Apply Label": {
+      "main": [[{ "node": "Save Review Record", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-12-27T06:00:00.000Z",
+  "versionId": "2"
+}

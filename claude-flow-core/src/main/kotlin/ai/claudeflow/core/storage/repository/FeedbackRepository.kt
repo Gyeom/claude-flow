@@ -4,6 +4,8 @@ import ai.claudeflow.core.storage.*
 import java.sql.ResultSet
 import java.time.Instant
 
+// GitLabReviewRecord is in ExecutionRecord.kt (same package: ai.claudeflow.core.storage)
+
 // FeedbackStats is defined in ExecutionRecord.kt
 
 /**
@@ -281,5 +283,205 @@ class FeedbackRepository(
         } else {
             countWhere("reaction IN ('thumbsdown', '-1')")
         }
+    }
+
+    // ==================== GitLab Review Records ====================
+
+    /**
+     * GitLab 리뷰 레코드 저장
+     */
+    fun saveReviewRecord(record: GitLabReviewRecord) {
+        val sql = """
+            INSERT OR REPLACE INTO gitlab_reviews
+            (id, project_id, mr_iid, note_id, discussion_id, review_content, mr_context, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """.trimIndent()
+
+        executeUpdate(sql,
+            record.id,
+            record.projectId,
+            record.mrIid,
+            record.noteId,
+            record.discussionId,
+            record.reviewContent,
+            record.mrContext,
+            record.createdAt.toString()
+        )
+    }
+
+    /**
+     * GitLab note ID로 리뷰 레코드 조회
+     */
+    fun findReviewByNoteId(noteId: Int): GitLabReviewRecord? {
+        val sql = "SELECT * FROM gitlab_reviews WHERE note_id = ?"
+        return executeQueryOne(sql, noteId) { rs ->
+            GitLabReviewRecord(
+                id = rs.getString("id"),
+                projectId = rs.getString("project_id"),
+                mrIid = rs.getInt("mr_iid"),
+                noteId = rs.getInt("note_id"),
+                discussionId = rs.getString("discussion_id"),
+                reviewContent = rs.getString("review_content"),
+                mrContext = rs.getString("mr_context"),
+                createdAt = java.time.Instant.parse(rs.getString("created_at"))
+            )
+        }
+    }
+
+    /**
+     * GitLab discussion ID로 리뷰 레코드 조회
+     */
+    fun findReviewByDiscussionId(discussionId: String): GitLabReviewRecord? {
+        val sql = "SELECT * FROM gitlab_reviews WHERE discussion_id = ?"
+        return executeQueryOne(sql, discussionId) { rs ->
+            GitLabReviewRecord(
+                id = rs.getString("id"),
+                projectId = rs.getString("project_id"),
+                mrIid = rs.getInt("mr_iid"),
+                noteId = rs.getInt("note_id"),
+                discussionId = rs.getString("discussion_id"),
+                reviewContent = rs.getString("review_content"),
+                mrContext = rs.getString("mr_context"),
+                createdAt = java.time.Instant.parse(rs.getString("created_at"))
+            )
+        }
+    }
+
+    /**
+     * 프로젝트의 모든 리뷰 레코드 조회
+     */
+    fun findReviewsByProject(projectId: String): List<GitLabReviewRecord> {
+        val sql = "SELECT * FROM gitlab_reviews WHERE project_id = ? ORDER BY created_at DESC"
+        return executeQuery(sql, projectId) { rs ->
+            GitLabReviewRecord(
+                id = rs.getString("id"),
+                projectId = rs.getString("project_id"),
+                mrIid = rs.getInt("mr_iid"),
+                noteId = rs.getInt("note_id"),
+                discussionId = rs.getString("discussion_id"),
+                reviewContent = rs.getString("review_content"),
+                mrContext = rs.getString("mr_context"),
+                createdAt = java.time.Instant.parse(rs.getString("created_at"))
+            )
+        }
+    }
+
+    /**
+     * 모든 리뷰 레코드 조회 (최근 N일)
+     */
+    fun findAllReviews(days: Int = 30): List<GitLabReviewRecord> {
+        val sql = """
+            SELECT * FROM gitlab_reviews
+            WHERE created_at >= datetime('now', '-$days days')
+            ORDER BY created_at DESC
+        """.trimIndent()
+        return executeQuery(sql) { rs ->
+            GitLabReviewRecord(
+                id = rs.getString("id"),
+                projectId = rs.getString("project_id"),
+                mrIid = rs.getInt("mr_iid"),
+                noteId = rs.getInt("note_id"),
+                discussionId = rs.getString("discussion_id"),
+                reviewContent = rs.getString("review_content"),
+                mrContext = rs.getString("mr_context"),
+                createdAt = java.time.Instant.parse(rs.getString("created_at"))
+            )
+        }
+    }
+
+    /**
+     * GitLab 소스 피드백 저장
+     */
+    fun saveGitLabFeedback(
+        id: String,
+        gitlabProjectId: String,
+        mrIid: Int,
+        noteId: Int,
+        reaction: String,
+        userId: String,
+        source: String,  // gitlab_emoji, gitlab_note
+        comment: String? = null
+    ): FeedbackRecord {
+        val sql = """
+            INSERT INTO feedback
+            (id, execution_id, user_id, reaction, category, is_verified, created_at, source, gitlab_project_id, gitlab_mr_iid, gitlab_note_id, comment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """.trimIndent()
+
+        val category = FeedbackRecord.categorizeReaction(reaction)
+        val now = java.time.Instant.now()
+
+        executeUpdate(sql,
+            id,
+            "",  // execution_id는 GitLab 피드백에서는 빈 문자열
+            userId,
+            reaction,
+            category,
+            1,  // GitLab 피드백은 모두 verified로 처리
+            now.toString(),
+            source,
+            gitlabProjectId,
+            mrIid,
+            noteId,
+            comment
+        )
+
+        return FeedbackRecord(
+            id = id,
+            executionId = "",
+            userId = userId,
+            reaction = reaction,
+            category = category,
+            isVerified = true,
+            verifiedAt = now,
+            createdAt = now
+        )
+    }
+
+    /**
+     * GitLab 피드백 조회 (note_id로)
+     */
+    fun findGitLabFeedbackByNoteId(noteId: Int): List<FeedbackRecord> {
+        val sql = "SELECT * FROM feedback WHERE gitlab_note_id = ?"
+        return executeQuery(sql, noteId) { mapRow(it) }
+    }
+
+    /**
+     * GitLab 피드백 통계
+     */
+    fun getGitLabFeedbackStats(dateRange: DateRange? = null): FeedbackStats {
+        val baseSql = """
+            SELECT
+                SUM(CASE WHEN reaction IN ('thumbsup', '+1') THEN 1 ELSE 0 END) as positive,
+                SUM(CASE WHEN reaction IN ('thumbsdown', '-1') THEN 1 ELSE 0 END) as negative
+            FROM feedback
+            WHERE source IN ('gitlab_emoji', 'gitlab_note')
+        """.trimIndent()
+
+        val sql = if (dateRange != null) {
+            "$baseSql AND created_at BETWEEN ? AND ?"
+        } else {
+            baseSql
+        }
+
+        val (positive, negative) = if (dateRange != null) {
+            executeQueryOne(sql, dateRange.from.toString(), dateRange.to.toString()) {
+                Pair(it.getLong("positive"), it.getLong("negative"))
+            } ?: Pair(0L, 0L)
+        } else {
+            executeQueryOne(sql) {
+                Pair(it.getLong("positive"), it.getLong("negative"))
+            } ?: Pair(0L, 0L)
+        }
+
+        val total = positive + negative
+        val satisfactionRate = if (total > 0) positive.toDouble() / total else 0.0
+
+        return FeedbackStats(
+            positive = positive,
+            negative = negative,
+            satisfactionRate = satisfactionRate,
+            pendingFeedback = 0  // GitLab 피드백은 pending 개념 없음
+        )
     }
 }

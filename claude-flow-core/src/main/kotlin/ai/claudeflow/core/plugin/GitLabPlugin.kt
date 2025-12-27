@@ -105,6 +105,12 @@ class GitLabPlugin(
             description = "MR에 코멘트 작성",
             usage = "/gitlab mr-comment <mr_id> <comment>",
             examples = listOf("/gitlab mr-comment 123 \"리뷰 완료\"")
+        ),
+        PluginCommand(
+            name = "mr-add-label",
+            description = "MR에 라벨 추가",
+            usage = "/gitlab mr-add-label <mr_id> <label>",
+            examples = listOf("/gitlab mr-add-label 123 \"ai-review::done\"")
         )
     )
 
@@ -419,6 +425,19 @@ class GitLabPlugin(
                     }
                 }
                 postMrComment(project, mrId, comment)
+            }
+            // MR 라벨 추가
+            "mr-add-label" -> {
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
+                val label = args["label"] as? String ?: return PluginResult(false, error = "Label required")
+                val project = args["project"] as? String ?: run {
+                    when (val result = findProjectByMrIid(mrId)) {
+                        is MrSearchResult.Found -> result.project
+                        is MrSearchResult.MultipleFound -> return createMrSelectionRequest(mrId, result.matches)
+                        is MrSearchResult.NotFound -> return PluginResult(false, error = "MR !$mrId not found")
+                    }
+                }
+                addMrLabel(project, mrId, label)
             }
             else -> PluginResult(false, error = "Unknown command: $command")
         }
@@ -947,15 +966,32 @@ class GitLabPlugin(
             sb.appendLine()
         }
 
-        sb.appendLine("## 변경된 파일 목록")
-        for (change in changes) {
+        sb.appendLine("## 변경된 파일 및 코드 diff")
+        for (change in changes.take(10)) {  // 최대 10개 파일
             val status = when {
                 change["new_file"] == true -> "[신규]"
                 change["deleted_file"] == true -> "[삭제]"
                 change["renamed_file"] == true -> "[이름변경]"
                 else -> "[수정]"
             }
-            sb.appendLine("$status ${change["new_path"]}")
+            sb.appendLine("### $status ${change["new_path"]}")
+
+            // diff 내용 포함 (최대 300줄)
+            val diff = change["diff"] as? String
+            if (!diff.isNullOrBlank()) {
+                val diffLines = diff.lines().take(300)
+                sb.appendLine("```diff")
+                sb.appendLine(diffLines.joinToString("\n"))
+                if (diff.lines().size > 300) {
+                    sb.appendLine("... (truncated, ${diff.lines().size - 300} more lines)")
+                }
+                sb.appendLine("```")
+            }
+            sb.appendLine()
+        }
+
+        if (changes.size > 10) {
+            sb.appendLine("... 그 외 ${changes.size - 10}개 파일 (생략)")
         }
 
         return sb.toString()
@@ -1143,6 +1179,26 @@ class GitLabPlugin(
         return response.body()
     }
 
+    private fun apiPut(url: String, body: Map<String, Any?>): String {
+        val jsonBody = mapper.writeValueAsString(body)
+
+        val request = HttpRequest.newBuilder()
+            .uri(URI.create(url))
+            .header("PRIVATE-TOKEN", token)
+            .header("Content-Type", "application/json")
+            .PUT(HttpRequest.BodyPublishers.ofString(jsonBody))
+            .timeout(Duration.ofSeconds(30))
+            .build()
+
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+
+        if (response.statusCode() !in 200..299) {
+            throw RuntimeException("GitLab API error: ${response.statusCode()} - ${response.body()}")
+        }
+
+        return response.body()
+    }
+
     /**
      * MR에 코멘트 작성
      * POST /api/v4/projects/:id/merge_requests/:merge_request_iid/notes
@@ -1173,6 +1229,37 @@ class GitLabPlugin(
         } catch (e: Exception) {
             logger.error(e) { "Failed to post comment to MR !$mrId" }
             PluginResult(false, error = "코멘트 작성 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * MR에 라벨 추가
+     * PUT /api/v4/projects/:id/merge_requests/:merge_request_iid
+     */
+    private fun addMrLabel(project: String, mrId: Int, label: String): PluginResult {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId"
+        val body = mapOf("add_labels" to label)
+
+        return try {
+            val response = apiPut(url, body)
+            val mr = mapper.readValue<Map<String, Any>>(response)
+
+            val result = mapOf(
+                "iid" to mr["iid"],
+                "labels" to mr["labels"],
+                "project" to project,
+                "added_label" to label
+            )
+
+            logger.info { "Added label '$label' to MR !$mrId in $project" }
+            PluginResult(
+                success = true,
+                data = result,
+                message = "MR !${mrId}에 라벨 '$label'이(가) 추가되었습니다."
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to add label to MR !$mrId" }
+            PluginResult(false, error = "라벨 추가 실패: ${e.message}")
         }
     }
 

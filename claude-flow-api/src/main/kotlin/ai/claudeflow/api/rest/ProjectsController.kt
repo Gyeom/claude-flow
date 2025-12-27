@@ -37,6 +37,26 @@ class ProjectsController(
         ResponseEntity.ok(projects.map { it.toDto() })
     }
 
+    /**
+     * GitLab 경로가 있는 프로젝트 목록 조회
+     * 스케줄 기반 MR 자동 리뷰 대상 프로젝트
+     */
+    @GetMapping("/gitlab-enabled")
+    fun listGitLabEnabledProjects(): Mono<ResponseEntity<List<GitLabProjectResponse>>> = mono {
+        logger.info { "List GitLab-enabled projects" }
+        val projects = projectRegistry.listAll()
+            .filter { !it.gitlabPath.isNullOrBlank() }
+            .map { project ->
+                GitLabProjectResponse(
+                    id = project.id,
+                    name = project.name,
+                    gitlabPath = project.gitlabPath!!,
+                    defaultBranch = project.defaultBranch
+                )
+            }
+        ResponseEntity.ok(projects)
+    }
+
     @GetMapping("/{projectId}")
     fun getProject(@PathVariable projectId: String): Mono<ResponseEntity<ProjectResponse>> = mono {
         logger.info { "Get project: $projectId" }
@@ -410,4 +430,14 @@ data class ProjectStatsResponse(
     val agentCount: Int,
     val totalCost: Double,
     val avgDurationMs: Double
+)
+
+/**
+ * GitLab 연동 프로젝트 응답 (스케줄 MR 리뷰용)
+ */
+data class GitLabProjectResponse(
+    val id: String,
+    val name: String,
+    val gitlabPath: String,
+    val defaultBranch: String
 )

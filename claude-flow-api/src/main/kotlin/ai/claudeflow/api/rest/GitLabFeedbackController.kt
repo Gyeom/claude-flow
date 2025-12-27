@@ -224,6 +224,74 @@ class GitLabFeedbackController(
     }
 
     /**
+     * GitLab 리뷰 목록 조회 (대시보드용)
+     */
+    @GetMapping("/gitlab-reviews")
+    fun getGitLabReviews(
+        @RequestParam(required = false) projectId: String?,
+        @RequestParam(required = false) days: Int?
+    ): Mono<ResponseEntity<List<Map<String, Any?>>>> = mono {
+        logger.info { "Get GitLab reviews: projectId=$projectId, days=$days" }
+
+        val reviews = if (projectId != null) {
+            storage.feedbackRepository.findReviewsByProject(projectId)
+        } else {
+            storage.feedbackRepository.findAllReviews(days ?: 30)
+        }
+
+        val result = reviews.map { review ->
+            val feedback = storage.feedbackRepository.findGitLabFeedbackByNoteId(review.noteId)
+            mapOf(
+                "id" to review.id,
+                "projectId" to review.projectId,
+                "mrIid" to review.mrIid,
+                "noteId" to review.noteId,
+                "discussionId" to review.discussionId,
+                "reviewContent" to review.reviewContent,
+                "mrContext" to review.mrContext,
+                "createdAt" to review.createdAt.toString(),
+                "feedback" to feedback.map { fb ->
+                    mapOf(
+                        "id" to fb.id,
+                        "noteId" to review.noteId,
+                        "reaction" to fb.reaction,
+                        "userId" to fb.userId,
+                        "source" to "gitlab",
+                        "comment" to null,
+                        "createdAt" to fb.createdAt.toString()
+                    )
+                }
+            )
+        }
+
+        ResponseEntity.ok(result)
+    }
+
+    /**
+     * GitLab 리뷰에 대시보드 코멘트 추가
+     */
+    @PostMapping("/gitlab-review/{reviewId}/comment")
+    fun addDashboardComment(
+        @PathVariable reviewId: String,
+        @RequestBody request: DashboardCommentRequest
+    ): Mono<ResponseEntity<Map<String, Any>>> = mono {
+        logger.info { "Add dashboard comment to review $reviewId" }
+
+        storage.feedbackRepository.saveGitLabFeedback(
+            id = UUID.randomUUID().toString(),
+            gitlabProjectId = "",
+            mrIid = 0,
+            noteId = 0,
+            reaction = "comment",
+            userId = "dashboard",
+            source = "dashboard",
+            comment = request.comment
+        )
+
+        ResponseEntity.ok(mapOf("success" to true))
+    }
+
+    /**
      * 간단한 감정 분석
      */
     private fun analyzeCommentSentiment(content: String): SentimentResult {
@@ -271,6 +339,10 @@ data class GitLabNoteRequest(
     val parentNoteId: String?,  // discussion_id 또는 parent note_id
     val content: String,
     val userId: Int
+)
+
+data class DashboardCommentRequest(
+    val comment: String
 )
 
 // ==================== Internal DTOs ====================

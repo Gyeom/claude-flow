@@ -202,6 +202,182 @@ class MrReviewController(
     }
 
     /**
+     * MR 리뷰 컨텍스트 생성 (ChatStreamController와 동일한 포맷)
+     *
+     * ChatStreamController의 performMrAnalysis()와 동일한 방식으로
+     * Claude에게 전달할 수 있는 구조화된 컨텍스트를 생성합니다.
+     *
+     * 포함 내용:
+     * - MR 요약
+     * - 파일 변경 분석 테이블 (Rename, Add, Delete, Modify)
+     * - 자동 감지된 이슈 (severity별 아이콘)
+     * - 리뷰 우선순위 파일
+     * - AI 리뷰 지침
+     * - 생성된 리뷰 프롬프트 (diff 포함)
+     *
+     * @param project GitLab 프로젝트 경로 (예: sirius/ccds-server)
+     * @param mrId MR 번호
+     * @return 포맷팅된 컨텍스트 문자열
+     */
+    @GetMapping("/context/{project}/{mrId}")
+    fun getReviewContext(
+        @PathVariable project: String,
+        @PathVariable mrId: Int
+    ): ResponseEntity<Map<String, Any>> {
+        logger.info { "Generating review context for MR !$mrId in project $project" }
+
+        val gitlabPlugin = pluginRegistry.get("gitlab") as? GitLabPlugin
+        if (gitlabPlugin == null) {
+            return ResponseEntity.badRequest().body(mapOf<String, Any>(
+                "success" to false,
+                "error" to "GitLab 플러그인이 초기화되지 않았습니다"
+            ))
+        }
+
+        return try {
+            val result = runBlocking {
+                gitlabPlugin.execute("mr-review", mapOf(
+                    "project" to project,
+                    "mr_id" to mrId
+                ))
+            }
+
+            if (!result.success || result.data == null) {
+                return ResponseEntity.badRequest().body(mapOf<String, Any>(
+                    "success" to false,
+                    "error" to (result.error ?: "MR 분석 실패")
+                ))
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            val data = result.data as Map<String, Any>
+
+            // 분석 결과 추출
+            val summary = data["summary"] as? String ?: ""
+            val quickIssues = data["quickIssues"] as? List<Map<String, Any>> ?: emptyList()
+            val fileAnalysis = data["fileAnalysis"] as? Map<String, Any>
+            val reviewPrompt = data["review_prompt"] as? String
+            val priorityFiles = data["priorityFiles"] as? List<String> ?: emptyList()
+            val mr = data["mr"] as? Map<String, Any>
+
+            // ChatStreamController와 동일한 포맷으로 컨텍스트 구성
+            val context = buildString {
+                appendLine("## MR 분석 결과 (Pass 1: 규칙 기반 분석)")
+                appendLine()
+                appendLine("### 요약")
+                appendLine(summary)
+                appendLine()
+
+                // 파일 분석 결과
+                if (fileAnalysis != null) {
+                    appendLine("### 파일 변경 분석 (GitLab API 플래그 기반)")
+                    @Suppress("UNCHECKED_CAST")
+                    val renamed = fileAnalysis["renamed"] as? List<Map<String, Any>> ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    val addedMaps = fileAnalysis["added"] as? List<Map<String, Any>> ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    val deletedMaps = fileAnalysis["deleted"] as? List<Map<String, Any>> ?: emptyList()
+                    @Suppress("UNCHECKED_CAST")
+                    val modifiedMaps = fileAnalysis["modified"] as? List<Map<String, Any>> ?: emptyList()
+
+                    // path 필드 추출
+                    val added = addedMaps.mapNotNull { it["path"] as? String }
+                    val deleted = deletedMaps.mapNotNull { it["path"] as? String }
+                    val modified = modifiedMaps.mapNotNull { it["path"] as? String }
+
+                    appendLine("| 유형 | 파일 | 비고 |")
+                    appendLine("|------|------|------|")
+                    renamed.forEach { r ->
+                        appendLine("| ✏️ Rename | ${r["oldPath"]} → ${r["newPath"]} | 파일명 변경 |")
+                    }
+                    added.forEach { f ->
+                        appendLine("| ➕ Add | $f | 신규 파일 |")
+                    }
+                    deleted.forEach { f ->
+                        appendLine("| ➖ Delete | $f | 삭제 |")
+                    }
+                    modified.take(10).forEach { f ->
+                        appendLine("| 📝 Modify | $f | 내용 수정 |")
+                    }
+                    if (modified.size > 10) {
+                        appendLine("| ... | ${modified.size - 10}개 파일 더 | |")
+                    }
+                    appendLine()
+                }
+
+                // 빠른 이슈 (Quick Issues)
+                if (quickIssues.isNotEmpty()) {
+                    appendLine("### 🚨 자동 감지된 이슈 (반드시 리뷰에 포함!)")
+                    quickIssues.forEach { issue ->
+                        val severity = issue["severity"] as? String ?: "INFO"
+                        val message = issue["message"] as? String
+                            ?: issue["description"] as? String
+                            ?: ""
+                        val suggestion = issue["suggestion"] as? String ?: ""
+                        val icon = when (severity) {
+                            "ERROR" -> "🚨"
+                            "WARNING" -> "⚠️"
+                            else -> "ℹ️"
+                        }
+                        appendLine("- $icon **[$severity]** $message")
+                        if (suggestion.isNotEmpty()) {
+                            appendLine("  - 권장: $suggestion")
+                        }
+                    }
+                    appendLine()
+                }
+
+                // 리뷰 우선순위 파일
+                if (priorityFiles.isNotEmpty()) {
+                    appendLine("### 리뷰 우선순위 파일")
+                    priorityFiles.take(5).forEachIndexed { idx, file ->
+                        appendLine("${idx + 1}. `$file`")
+                    }
+                    appendLine()
+                }
+
+                // AI 리뷰 가이드
+                appendLine("### AI 리뷰 지침")
+                appendLine("""
+                |위 분석 결과를 참고하여 심층 리뷰를 진행해주세요:
+                |1. 자동 감지된 이슈들을 먼저 확인하고 검증
+                |2. 우선순위 파일들의 변경사항 상세 분석
+                |3. 파일명 변경(Rename)과 내용 수정(Modify) 정확히 구분
+                |4. 보안, Breaking Change, 코드 품질 관점에서 추가 검토
+                |5. 각 항목에 대해 구체적인 코드 라인과 함께 피드백 제공
+                """.trimMargin())
+
+                // 리뷰 프롬프트가 있으면 추가 (diff 포함)
+                if (reviewPrompt != null && reviewPrompt.length > 100) {
+                    appendLine()
+                    appendLine("### 실제 코드 변경사항 (Diff)")
+                    appendLine("```")
+                    appendLine(reviewPrompt.take(8000))
+                    if (reviewPrompt.length > 8000) appendLine("... (생략됨)")
+                    appendLine("```")
+                }
+            }
+
+            ResponseEntity.ok(mapOf<String, Any>(
+                "success" to true,
+                "context" to context,
+                "summary" to summary,
+                "issueCount" to quickIssues.size,
+                "fileCount" to (fileAnalysis?.get("totalFiles") ?: 0),
+                "mrUrl" to (mr?.get("web_url") ?: ""),
+                "mrTitle" to (mr?.get("title") ?: "")
+            ))
+
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to generate context for MR !$mrId" }
+            ResponseEntity.internalServerError().body(mapOf<String, Any>(
+                "success" to false,
+                "error" to "컨텍스트 생성 실패: ${e.message}"
+            ))
+        }
+    }
+
+    /**
      * MR 리뷰 프롬프트 생성 (AI 리뷰용)
      *
      * Claude/GPT에게 전달할 수 있는 구조화된 리뷰 프롬프트를 생성합니다.
