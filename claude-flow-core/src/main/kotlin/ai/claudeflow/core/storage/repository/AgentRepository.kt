@@ -183,10 +183,7 @@ class AgentRepository(
         return executeQuery(
             """
             SELECT
-                COALESCE(
-                    (SELECT model FROM agents WHERE id = e.agent_id LIMIT 1),
-                    'claude-sonnet-4-20250514'
-                ) as model,
+                COALESCE(NULLIF(model, ''), 'claude-sonnet-4-20250514') as model,
                 COUNT(*) as requests,
                 -- cost: DB 값 우선, 없으면 토큰 기반 계산 (Sonnet 4: Input $3/1M, Output $15/1M)
                 COALESCE(
@@ -196,9 +193,9 @@ class AgentRepository(
                 SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as successful,
                 COALESCE(AVG(duration_ms), 0) as avg_duration,
                 COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) as total_tokens
-            FROM executions e
+            FROM executions
             WHERE created_at BETWEEN ? AND ?
-            GROUP BY model
+            GROUP BY COALESCE(NULLIF(model, ''), 'claude-sonnet-4-20250514')
             ORDER BY requests DESC
             """.trimIndent(),
             dateRange.from.toString(), dateRange.to.toString()

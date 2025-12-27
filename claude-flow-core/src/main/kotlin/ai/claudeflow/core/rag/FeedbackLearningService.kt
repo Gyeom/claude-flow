@@ -3,10 +3,12 @@ package ai.claudeflow.core.rag
 import ai.claudeflow.core.storage.repository.FeedbackRepository
 import ai.claudeflow.core.storage.repository.ExecutionRepository
 import ai.claudeflow.core.storage.FeedbackRecord
+import ai.claudeflow.core.storage.GitLabFeedbackType
 import mu.KotlinLogging
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -192,6 +194,107 @@ class FeedbackLearningService(
             preferenceCache.clear()
         }
         logger.info { "Cleared feedback cache${userId?.let { " for user $it" } ?: ""}" }
+    }
+
+    // ==================== GitLab 피드백 학습 ====================
+
+    /**
+     * GitLab 피드백 학습 (이모지)
+     *
+     * MR 리뷰 코멘트에 대한 이모지 피드백을 학습
+     * 향후 유사한 MR 리뷰 시 긍정 피드백 받은 패턴 우선
+     *
+     * @param mrContext MR 제목 + 요약 (쿼리로 사용)
+     * @param reviewContent AI 리뷰 내용 (응답으로 사용)
+     * @param feedbackType POSITIVE/NEGATIVE
+     * @param userId GitLab 사용자 ID
+     */
+    fun learnFromGitLabFeedback(
+        mrContext: String,
+        reviewContent: String,
+        feedbackType: GitLabFeedbackType,
+        userId: String
+    ) {
+        try {
+            val isPositive = feedbackType == GitLabFeedbackType.POSITIVE
+            val score = if (isPositive) 1.0 else -1.0
+
+            // 벡터 DB에 저장 (유사 MR 리뷰 시 참조)
+            // TODO: ExecutionRecord 기반 indexExecution 사용하도록 리팩토링 필요
+            logger.debug { "GitLab feedback recorded: context='$mrContext', positive=$isPositive" }
+
+            // 사용자 선호도 캐시 업데이트
+            val preferences = preferenceCache.getOrPut(userId) {
+                UserAgentPreferences(userId = userId)
+            }
+            preferences.recordFeedback("code-reviewer", isPositive)
+            preferences.lastUpdated = Instant.now()
+
+            logger.info { "Learned from GitLab feedback: userId=$userId, type=$feedbackType" }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to learn from GitLab feedback" }
+        }
+    }
+
+    /**
+     * GitLab 답글 기반 학습
+     *
+     * MR 리뷰 코멘트에 대한 답글 피드백을 분석하여 학습
+     *
+     * @param mrContext MR 제목 + 요약
+     * @param reviewContent AI 리뷰 내용
+     * @param userComment 사용자 답글 내용
+     * @param userId GitLab 사용자 ID
+     */
+    fun learnFromComment(
+        mrContext: String,
+        reviewContent: String,
+        userComment: String,
+        userId: String
+    ) {
+        try {
+            // 답글 감정 분석
+            val sentiment = analyzeCommentSentiment(userComment)
+
+            // 중립 피드백은 학습하지 않음
+            if (sentiment == GitLabFeedbackType.NEUTRAL) {
+                logger.debug { "Skipped neutral comment feedback: '$userComment'" }
+                return
+            }
+
+            // 피드백 학습
+            learnFromGitLabFeedback(mrContext, reviewContent, sentiment, userId)
+
+            // 답글 내용도 컨텍스트로 저장 (향후 개선 참고용)
+            // TODO: ExecutionRecord 기반 indexExecution 사용하도록 리팩토링 필요
+            logger.debug { "GitLab comment feedback recorded: userId=$userId, sentiment=$sentiment" }
+
+            logger.info { "Learned from GitLab comment: userId=$userId, sentiment=$sentiment" }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to learn from GitLab comment" }
+        }
+    }
+
+    /**
+     * 답글 감정 분석
+     */
+    private fun analyzeCommentSentiment(content: String): GitLabFeedbackType {
+        val lowerContent = content.lowercase()
+
+        val positiveKeywords = listOf(
+            "좋아요", "감사", "도움", "정확", "훌륭", "좋습니다", "맞아요", "동의",
+            "good", "thanks", "helpful", "correct", "great", "agree", "nice", "perfect"
+        )
+        val negativeKeywords = listOf(
+            "틀렸", "아니", "잘못", "부정확", "오류", "버그", "문제", "동의하지",
+            "wrong", "incorrect", "no", "error", "bug", "issue", "disagree", "missing"
+        )
+
+        return when {
+            positiveKeywords.any { it in lowerContent } -> GitLabFeedbackType.POSITIVE
+            negativeKeywords.any { it in lowerContent } -> GitLabFeedbackType.NEGATIVE
+            else -> GitLabFeedbackType.NEUTRAL
+        }
     }
 
     private fun loadPreferencesFromDb(userId: String): Map<String, Float> {
