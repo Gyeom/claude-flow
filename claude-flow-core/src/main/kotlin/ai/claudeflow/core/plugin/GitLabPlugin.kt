@@ -462,7 +462,8 @@ class GitLabPlugin(
                     "source_branch" to mr["source_branch"],
                     "target_branch" to mr["target_branch"],
                     "web_url" to mr["web_url"],
-                    "created_at" to mr["created_at"]
+                    "created_at" to mr["created_at"],
+                    "labels" to mr["labels"]  // ai-review::done 필터링을 위해 추가
                 )
             }
 
