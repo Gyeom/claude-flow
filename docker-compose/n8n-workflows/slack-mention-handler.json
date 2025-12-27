@@ -1,6 +1,6 @@
 {
   "name": "Slack Mention Handler",
-  "versionId": "mention-handler-v3",
+  "versionId": "mention-handler-v4",
   "nodes": [
     {
       "parameters": {
@@ -18,7 +18,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 메시지 유형 분류: command, mr-review, general\nconst body = $input.item.json.body || {};\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 기본 결과 객체 (항상 messageType 포함)\nconst result = { ...body, messageType: 'general', isMrReview: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크 (더 엄격한 조건)\n// MR 번호 패턴: !123, MR 123, MR#123, merge_requests/123\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\n// MR 번호가 있어야만 리뷰 요청으로 처리\nif (mrNumber) {\n  // 리뷰 관련 키워드 (명시적인 리뷰 요청)\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  // MR 번호 + 리뷰 키워드가 있어야 MR 리뷰\n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    return { json: result };\n  }\n}\n\n// 3. 일반 메시지 (기본값 유지)\nreturn { json: result };"
+        "jsCode": "// 메시지 유형 분류: command, mr-review, general\nconst body = $input.item.json.body || {};\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
       },
       "id": "classify-message",
       "name": "Classify Message",
@@ -47,30 +47,19 @@
     {
       "parameters": {
         "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
+          "boolean": [
             {
-              "id": "mr-review-check",
-              "leftValue": "={{ $json.isMrReview }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "true"
-              }
+              "value1": "={{ $json.isMrReview === true }}",
+              "value2": true
             }
-          ],
-          "combinator": "and"
+          ]
         }
       },
       "id": "is-mr-review",
       "name": "Is MR Review?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [850, 400]
+      "position": [850, 300]
     },
     {
       "parameters": {
@@ -85,7 +74,7 @@
       "name": "Execute Command",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [900, 150],
+      "position": [900, 100],
       "continueOnFail": true
     },
     {
@@ -100,23 +89,129 @@
       "name": "Send Command Response",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1150, 150],
+      "position": [1150, 100],
       "continueOnFail": true
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.N8N_WEBHOOK_URL || 'http://localhost:5678' }}/webhook/slack-mr-review",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($('Webhook').item.json.body) }}",
-        "options": { "timeout": 5000 }
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'hourglass_flowing_sand', remove: false }) }}"
       },
-      "id": "redirect-mr-review",
-      "name": "Redirect to MR Review",
+      "id": "add-loading-mr",
+      "name": "Add Loading (MR)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 300],
+      "position": [1050, 250],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// MR 컨텍스트 조회 (scheduled-mr-review와 동일한 방식)\nconst classifyData = $('Classify Message').first().json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nconst mrNumber = classifyData.mrNumber;\nlet project = classifyData.projectHint;\n\nif (!project) {\n  project = process.env.GITLAB_GROUP || 'sirius/ccds';\n}\n\nconsole.log('Fetching MR context:', project, mrNumber);\n\ntry {\n  const contextUrl = `${apiUrl}/api/v1/mr-review/context/${encodeURIComponent(project)}/${mrNumber}`;\n  const contextResponse = await this.helpers.httpRequest({\n    method: 'GET',\n    url: contextUrl,\n    json: true,\n    timeout: 120000\n  });\n\n  if (!contextResponse.success || !contextResponse.context) {\n    return {\n      json: {\n        error: contextResponse.error || 'MR 컨텍스트 조회 실패',\n        mrNumber: mrNumber,\n        project: project\n      }\n    };\n  }\n\n  return {\n    json: {\n      mrNumber: mrNumber,\n      project: project,\n      mrContext: contextResponse.context,\n      mrTitle: contextResponse.mrTitle,\n      mrUrl: contextResponse.mrUrl,\n      issueCount: contextResponse.issueCount || 0,\n      fileCount: contextResponse.fileCount || 0\n    }\n  };\n} catch (e) {\n  return {\n    json: {\n      error: e.message,\n      mrNumber: mrNumber,\n      project: project\n    }\n  };\n}"
+      },
+      "id": "get-mr-context",
+      "name": "Get MR Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 250]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.error }}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "mr-context-ok",
+      "name": "Context OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "// AI 리뷰 실행\nconst mrData = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nconst reviewPrompt = `## MR 리뷰 요청\\n\\n**프로젝트**: ${mrData.project}\\n**MR**: !${mrData.mrNumber} - ${mrData.mrTitle || ''}\\n**URL**: ${mrData.mrUrl || ''}\\n\\n---\\n\\n${mrData.mrContext}\\n\\n---\\n\\n위 MR 분석 결과를 바탕으로 코드 리뷰를 작성해주세요.\\n\\n**리뷰 형식:**\\n### 요약\\n### 장점\\n### 개선 사항\\n### 전체 평가 (⭐/10)`;\n\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/chat/execute',\n    body: {\n      messages: [{ role: 'user', content: reviewPrompt }],\n      projectId: mrData.project,\n      agentId: 'code-reviewer',\n      skipMrAnalysis: true,\n      source: 'slack'\n    },\n    json: true,\n    timeout: 600000\n  });\n\n  if (!response.success || !response.content) {\n    return { json: { ...mrData, error: response.error || 'AI 리뷰 실패' } };\n  }\n\n  return {\n    json: {\n      ...mrData,\n      aiReview: response.content,\n      reviewSuccess: true\n    }\n  };\n} catch (e) {\n  return { json: { ...mrData, error: e.message } };\n}"
+      },
+      "id": "execute-mr-review",
+      "name": "Execute MR Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GitLab에 코멘트 작성\nconst mrData = $input.item.json;\nconst apiUrl = process.env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080';\n\nif (!mrData.reviewSuccess || mrData.error) {\n  return { json: mrData };\n}\n\nconst gitlabComment = `## 🤖 AI Code Review\\n\\n${mrData.aiReview}\\n\\n---\\n_Generated by Claude Flow_`;\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/plugins/gitlab/execute',\n    body: {\n      command: 'mr-comment',\n      args: {\n        project: mrData.project,\n        mr_id: mrData.mrNumber,\n        comment: gitlabComment\n      }\n    },\n    json: true,\n    timeout: 30000\n  });\n  \n  // 라벨 적용\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: apiUrl + '/api/v1/plugins/gitlab/execute',\n    body: {\n      command: 'mr-add-label',\n      args: {\n        project: mrData.project,\n        mr_id: mrData.mrNumber,\n        label: 'ai-review::done'\n      }\n    },\n    json: true,\n    timeout: 10000\n  });\n} catch (e) {\n  console.log('GitLab comment error:', e.message);\n}\n\nreturn { json: mrData };"
+      },
+      "id": "post-gitlab-comment",
+      "name": "Post GitLab Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'hourglass_flowing_sand', remove: true }) }}"
+      },
+      "id": "remove-loading-mr",
+      "name": "Remove Loading (MR)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2050, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '✅ MR !' + $json.mrNumber + ' 리뷰 완료\\n\\n' + ($json.aiReview || '').substring(0, 2000) + ($json.aiReview && $json.aiReview.length > 2000 ? '\\n\\n_(GitLab에서 전체 리뷰 확인)_' : ''), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
+      },
+      "id": "send-mr-response",
+      "name": "Send MR Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, timestamp: $('Webhook').item.json.body.timestamp, emoji: 'white_check_mark', remove: false }) }}"
+      },
+      "id": "add-success-mr",
+      "name": "Add ✅ (MR)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '❌ MR 리뷰 실패: ' + $json.error, threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
+      },
+      "id": "send-mr-error",
+      "name": "Send MR Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 350],
       "continueOnFail": true
     },
     {
@@ -131,7 +226,7 @@
       "name": "Add Loading",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1100, 500],
+      "position": [1050, 500],
       "continueOnFail": true
     },
     {
@@ -147,7 +242,7 @@
       "name": "Get Thread History",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1300, 500],
+      "position": [1250, 500],
       "continueOnFail": true
     },
     {
@@ -158,7 +253,7 @@
       "name": "Format History",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1500, 500]
+      "position": [1450, 500]
     },
     {
       "parameters": {
@@ -173,7 +268,7 @@
       "name": "Execute Claude",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1700, 500],
+      "position": [1650, 500],
       "continueOnFail": true
     },
     {
@@ -188,7 +283,7 @@
       "name": "Remove Loading",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1900, 500],
+      "position": [1850, 500],
       "continueOnFail": true
     },
     {
@@ -206,7 +301,7 @@
       "name": "Success?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2100, 500]
+      "position": [2050, 500]
     },
     {
       "parameters": {
@@ -214,13 +309,13 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ($('Execute Claude').item.json.projectId ? '📁 [' + $('Execute Claude').item.json.projectId + '] ' : '') + ($('Execute Claude').item.json.routedAgent ? '🤖 [' + $('Execute Claude').item.json.routedAgent + ']\\n' : '') + ($('Execute Claude').item.json.result || $('Execute Claude').item.json.error || '응답이 없습니다. 도구 권한이나 작업 범위를 확인해주세요.'), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: ($('Execute Claude').item.json.projectId ? '📁 [' + $('Execute Claude').item.json.projectId + '] ' : '') + ($('Execute Claude').item.json.routedAgent ? '🤖 [' + $('Execute Claude').item.json.routedAgent + ']\\n' : '') + ($('Execute Claude').item.json.result || $('Execute Claude').item.json.error || '응답이 없습니다.'), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
       },
       "id": "send-reply",
       "name": "Send Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2300, 400],
+      "position": [2250, 450],
       "continueOnFail": true
     },
     {
@@ -229,13 +324,13 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '❌ 오류가 발생했습니다: ' + ($('Execute Claude').item.json.error || $('Execute Claude').item.json.message || 'Unknown error'), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $('Webhook').item.json.body.channel, text: '❌ 오류가 발생했습니다: ' + ($('Execute Claude').item.json.error || 'Unknown error'), threadTs: $('Webhook').item.json.body.threadTs || $('Webhook').item.json.body.timestamp }) }}"
       },
       "id": "send-error",
       "name": "Send Error",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2300, 600],
+      "position": [2250, 600],
       "continueOnFail": true
     },
     {
@@ -251,7 +346,7 @@
       "name": "Save Reply TS",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2500, 450],
+      "position": [2450, 450],
       "continueOnFail": true
     },
     {
@@ -266,7 +361,7 @@
       "name": "Add ✅",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2700, 350],
+      "position": [2650, 400],
       "continueOnFail": true
     },
     {
@@ -281,7 +376,7 @@
       "name": "Add ❌",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2500, 600],
+      "position": [2450, 600],
       "continueOnFail": true
     },
     {
@@ -296,7 +391,7 @@
       "name": "Add 👍",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2900, 300],
+      "position": [2850, 350],
       "continueOnFail": true
     },
     {
@@ -311,7 +406,7 @@
       "name": "Add 👎",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2900, 400],
+      "position": [2850, 450],
       "continueOnFail": true
     }
   ],
@@ -330,12 +425,36 @@
     },
     "Is MR Review?": {
       "main": [
-        [{ "node": "Redirect to MR Review", "type": "main", "index": 0 }],
+        [{ "node": "Add Loading (MR)", "type": "main", "index": 0 }],
         [{ "node": "Add Loading", "type": "main", "index": 0 }]
       ]
     },
     "Execute Command": {
       "main": [[{ "node": "Send Command Response", "type": "main", "index": 0 }]]
+    },
+    "Add Loading (MR)": {
+      "main": [[{ "node": "Get MR Context", "type": "main", "index": 0 }]]
+    },
+    "Get MR Context": {
+      "main": [[{ "node": "Context OK?", "type": "main", "index": 0 }]]
+    },
+    "Context OK?": {
+      "main": [
+        [{ "node": "Execute MR Review", "type": "main", "index": 0 }],
+        [{ "node": "Send MR Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute MR Review": {
+      "main": [[{ "node": "Post GitLab Comment", "type": "main", "index": 0 }]]
+    },
+    "Post GitLab Comment": {
+      "main": [[{ "node": "Remove Loading (MR)", "type": "main", "index": 0 }]]
+    },
+    "Remove Loading (MR)": {
+      "main": [[{ "node": "Send MR Response", "type": "main", "index": 0 }]]
+    },
+    "Send MR Response": {
+      "main": [[{ "node": "Add ✅ (MR)", "type": "main", "index": 0 }]]
     },
     "Add Loading": {
       "main": [[{ "node": "Get Thread History", "type": "main", "index": 0 }]]

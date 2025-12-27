@@ -140,12 +140,11 @@ claude-flow/
 
 | 워크플로우 | 기능 | 상태 |
 |-----------|------|------|
-| `slack-mention-handler` | Slack 멘션 → Claude 실행 | ✅ 활성 |
-| `slack-mr-review` | MR 리뷰 요청 처리 | ✅ 활성 |
+| `slack-mention-handler` | Slack 멘션 → 분류 → Claude/MR리뷰 실행 | ✅ 활성 |
 | `slack-action-handler` | Slack 버튼 액션 처리 | ✅ 활성 |
 | `slack-feedback-handler` | 피드백 수집 (👍/👎) | ✅ 활성 |
-| `slack-reaction-handler` | 리액션 → Jira/GitLab 연동 | ⏸️ 비활성 |
-| `user-context-handler` | 사용자 컨텍스트 관리 | ⏸️ 비활성 |
+| `scheduled-mr-review` | 5분마다 새 MR 자동 리뷰 | ✅ 활성 |
+| `gitlab-feedback-poller` | GitLab AI 코멘트 이모지 피드백 수집 | ✅ 활성 |
 | `alert-channel-monitor` | 장애 알람 채널 자동 모니터링 | ⏸️ 비활성 |
 | `alert-to-mr-pipeline` | 알람 → Jira → 브랜치 → MR 파이프라인 | ⏸️ 비활성 |
 
