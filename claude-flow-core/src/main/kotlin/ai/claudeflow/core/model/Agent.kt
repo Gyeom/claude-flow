@@ -93,6 +93,7 @@ data class Agent(
             name = "Code Reviewer",
             description = "코드 리뷰 및 MR/PR 작업을 수행하는 에이전트",
             keywords = listOf("review", "리뷰", "MR", "PR", "코드리뷰", "/MR.*봐/", "/!\\d+/"),
+            model = "claude-opus-4-20250514",  // Opus 모델 사용 (고품질 리뷰)
             systemPrompt = """
                 You are a senior code reviewer specializing in GitLab MR reviews.
 
@@ -272,6 +273,7 @@ data class Agent(
             name = "Bug Fixer",
             description = "버그를 분석하고 수정하는 에이전트",
             keywords = listOf("fix", "bug", "버그", "수정", "에러", "error", "/Exception/", "/오류.*고쳐/"),
+            model = "claude-opus-4-20250514",  // Opus 모델 사용 (정확한 버그 분석)
             systemPrompt = """
                 You are a bug fixing expert.
 
