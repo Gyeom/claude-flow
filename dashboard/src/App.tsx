@@ -59,6 +59,8 @@ function App() {
             <Knowledge />
           </Suspense>
         } />
+        {/* Admin Feedback merged into Interactions with admin mode toggle */}
+        <Route path="/admin-feedback" element={<Navigate to="/interactions" replace />} />
         <Route path="/logs" element={
           <Suspense fallback={<PageLoader />}>
             <Logs />

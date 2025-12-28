@@ -95,7 +95,7 @@ docker-compose ps
 curl -s http://localhost:8080/api/v1/health
 
 # 대시보드 접속
-echo "Dashboard: http://localhost:5173"
+echo "Dashboard: http://localhost:3000"
 
 # 로그 확인
 tail -20 /tmp/claude-flow.log

@@ -25,6 +25,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     // Repositories
     val executionRepository: ExecutionRepository
     val feedbackRepository: FeedbackRepository
+    val adminFeedbackRepository: AdminFeedbackRepository
     val userContextRepository: UserContextRepository
     val userRuleRepository: UserRuleRepository
     val agentRepository: AgentRepository
@@ -45,6 +46,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
         // Initialize repositories
         executionRepository = ExecutionRepository(this)
         feedbackRepository = FeedbackRepository(this)
+        adminFeedbackRepository = AdminFeedbackRepository(this)
         userContextRepository = UserContextRepository(this)
         userRuleRepository = UserRuleRepository(this)
         agentRepository = AgentRepository(this)
@@ -208,6 +210,26 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     is_verified INTEGER DEFAULT 0,
                     verified_at TEXT,
                     created_at TEXT NOT NULL,
+                    FOREIGN KEY (execution_id) REFERENCES executions(id)
+                )
+            """)
+
+            // 관리자 상세 피드백 테이블
+            stmt.executeUpdate("""
+                CREATE TABLE IF NOT EXISTS admin_feedback (
+                    id TEXT PRIMARY KEY,
+                    execution_id TEXT NOT NULL UNIQUE,
+                    admin_id TEXT NOT NULL,
+                    quick_rating TEXT DEFAULT 'PENDING',
+                    correctness INTEGER,
+                    helpfulness INTEGER,
+                    verbosity INTEGER,
+                    issues TEXT DEFAULT '[]',
+                    comment TEXT,
+                    is_exemplary INTEGER DEFAULT 0,
+                    gold_response TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
                     FOREIGN KEY (execution_id) REFERENCES executions(id)
                 )
             """)

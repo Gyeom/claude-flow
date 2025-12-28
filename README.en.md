@@ -181,7 +181,7 @@ The web dashboard provides real-time monitoring and management:
 ```bash
 cd dashboard
 npm install && npm run dev
-# http://localhost:5173
+# http://localhost:3000
 ```
 
 ### Pages

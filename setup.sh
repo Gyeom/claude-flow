@@ -200,7 +200,7 @@ show_summary() {
 
     echo -e "${CYAN}서비스 URL:${NC}"
     echo "  • API:        http://localhost:8080"
-    echo "  • Dashboard:  http://localhost:5173  (별도 실행 필요)"
+    echo "  • Dashboard:  http://localhost:3000  (별도 실행 필요)"
     echo "  • n8n:        http://localhost:5678  ($N8N_EMAIL / $N8N_PASS)"
     echo ""
     echo -e "${CYAN}Slack에서 테스트:${NC}"

@@ -23,6 +23,10 @@ import ai.claudeflow.core.plugin.GitHubPlugin
 import ai.claudeflow.core.plugin.JiraPlugin
 import ai.claudeflow.core.plugin.ConfluencePlugin
 import ai.claudeflow.core.storage.Storage
+import ai.claudeflow.core.rag.ContextAugmentationService
+import ai.claudeflow.core.rag.ConversationVectorService
+import ai.claudeflow.core.rag.FewShotInjectionService
+import ai.claudeflow.core.rag.FeedbackLearningService
 import ai.claudeflow.executor.ClaudeExecutor
 import kotlinx.coroutines.runBlocking
 import jakarta.annotation.PreDestroy
@@ -180,6 +184,84 @@ class ClaudeFlowConfiguration(
         }
 
         return service
+    }
+
+    @Bean
+    fun conversationVectorService(embeddingService: EmbeddingService?): ConversationVectorService? {
+        if (embeddingService == null) {
+            logger.info { "ConversationVectorService disabled (EmbeddingService not available)" }
+            return null
+        }
+
+        val qdrantUrl = properties.qdrant.url
+        if (qdrantUrl.isEmpty()) {
+            logger.info { "ConversationVectorService disabled (Qdrant not configured)" }
+            return null
+        }
+
+        logger.info { "Initializing ConversationVectorService: $qdrantUrl" }
+        val service = ConversationVectorService(
+            embeddingService = embeddingService,
+            qdrantUrl = qdrantUrl,
+            collectionName = "claude-flow-conversations"
+        )
+
+        try {
+            if (service.initCollection()) {
+                logger.info { "Conversation vector collection initialized" }
+            }
+        } catch (e: Exception) {
+            logger.warn { "Failed to initialize conversation collection: ${e.message}" }
+        }
+
+        return service
+    }
+
+    @Bean
+    fun fewShotInjectionService(storage: Storage): FewShotInjectionService {
+        logger.info { "Initializing FewShotInjectionService" }
+        return FewShotInjectionService(
+            adminFeedbackRepository = storage.adminFeedbackRepository,
+            executionRepository = storage.executionRepository
+        )
+    }
+
+    @Bean
+    fun feedbackLearningService(
+        conversationVectorService: ConversationVectorService?,
+        storage: Storage
+    ): FeedbackLearningService? {
+        if (conversationVectorService == null) {
+            logger.info { "FeedbackLearningService disabled (ConversationVectorService not available)" }
+            return null
+        }
+
+        logger.info { "Initializing FeedbackLearningService" }
+        return FeedbackLearningService(
+            conversationVectorService = conversationVectorService,
+            executionRepository = storage.executionRepository,
+            feedbackRepository = storage.feedbackRepository
+        )
+    }
+
+    @Bean
+    fun contextAugmentationService(
+        conversationVectorService: ConversationVectorService?,
+        storage: Storage,
+        fewShotInjectionService: FewShotInjectionService
+    ): ContextAugmentationService? {
+        if (conversationVectorService == null) {
+            logger.info { "ContextAugmentationService disabled (ConversationVectorService not available)" }
+            return null
+        }
+
+        logger.info { "Initializing ContextAugmentationService with FewShotInjection" }
+        return ContextAugmentationService(
+            conversationVectorService = conversationVectorService,
+            userContextRepository = storage.userContextRepository,
+            userRuleRepository = storage.userRuleRepository,
+            fewShotInjectionService = fewShotInjectionService
+        )
     }
 
     @Bean
@@ -394,7 +476,10 @@ class ClaudeFlowConfiguration(
         agentRouter: AgentRouter,
         commandHandler: CommandHandler,
         storage: Storage,
-        rateLimiter: RateLimiter
+        rateLimiter: RateLimiter,
+        contextAugmentationService: ContextAugmentationService?,
+        conversationVectorService: ConversationVectorService?,
+        feedbackLearningService: FeedbackLearningService?
     ): ClaudeFlowController = ClaudeFlowController(
         claudeExecutor = claudeExecutor,
         slackMessageSender = slackMessageSender,
@@ -403,7 +488,10 @@ class ClaudeFlowConfiguration(
         agentRouter = agentRouter,
         commandHandler = commandHandler,
         storage = storage,
-        rateLimiter = rateLimiter
+        rateLimiter = rateLimiter,
+        contextAugmentationService = contextAugmentationService,
+        conversationVectorService = conversationVectorService,
+        feedbackLearningService = feedbackLearningService
     )
 
     @Bean

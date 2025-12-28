@@ -1548,3 +1548,109 @@ export const verifiedFeedbackApi = {
     return { basic, verified, byCategory }
   },
 }
+
+// ==================== Admin Feedback API ====================
+
+export interface AdminFeedbackRequest {
+  executionId: string
+  adminId: string
+  quickRating: 'POSITIVE' | 'NEGATIVE' | 'PENDING'
+  correctness?: number  // 0-4
+  helpfulness?: number  // 0-4
+  verbosity?: number    // 0-4
+  issues?: string[]
+  comment?: string
+  isExemplary?: boolean
+  goldResponse?: string
+}
+
+export interface AdminFeedbackDto {
+  id: string
+  executionId: string
+  adminId: string
+  quickRating: string
+  correctness: number | null
+  helpfulness: number | null
+  verbosity: number | null
+  issues: string[]
+  comment: string | null
+  isExemplary: boolean
+  goldResponse: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ExemplaryFeedbackDto {
+  id: string
+  executionId: string
+  prompt: string
+  response: string
+  agentId: string | null
+  comment: string | null
+  correctness: number | null
+  helpfulness: number | null
+}
+
+export interface PendingExecutionDto {
+  executionId: string
+  prompt: string
+  response: string
+  agentId: string | null
+  createdAt: string
+}
+
+export interface AdminFeedbackStats {
+  totalReviewed: number
+  positiveCount: number
+  negativeCount: number
+  pendingCount: number
+  exemplaryCount: number
+  goldResponseCount: number
+  avgCorrectness: number | null
+  avgHelpfulness: number | null
+  avgVerbosity: number | null
+  issueDistribution: { name: string; displayName: string; count: number }[]
+}
+
+export interface IssueType {
+  name: string
+  displayName: string
+  description: string
+}
+
+export const adminFeedbackApi = {
+  // Save admin feedback
+  save: (request: AdminFeedbackRequest) =>
+    fetchApi<{ success: boolean; feedback?: AdminFeedbackDto; error?: string }>(
+      '/admin/feedback',
+      { method: 'POST', body: JSON.stringify(request) }
+    ),
+
+  // Get feedback by execution ID
+  getByExecutionId: (executionId: string) =>
+    fetchApi<AdminFeedbackDto | null>(`/admin/feedback/execution/${executionId}`),
+
+  // Get exemplary feedbacks (for Few-shot)
+  getExemplary: (limit = 10, agentId?: string) => {
+    const params = new URLSearchParams()
+    params.set('limit', limit.toString())
+    if (agentId) params.set('agentId', agentId)
+    return fetchApi<ExemplaryFeedbackDto[]>(`/admin/feedback/exemplary?${params}`)
+  },
+
+  // Get pending executions (admin work queue)
+  getPending: (limit = 50) =>
+    fetchApi<PendingExecutionDto[]>(`/admin/feedback/pending?limit=${limit}`),
+
+  // Get admin feedback stats
+  getStats: () =>
+    fetchApi<AdminFeedbackStats>('/admin/feedback/stats'),
+
+  // Get agent scores
+  getAgentScores: () =>
+    fetchApi<Record<string, number>>('/admin/feedback/agent-scores'),
+
+  // Get issue types
+  getIssueTypes: () =>
+    fetchApi<IssueType[]>('/admin/feedback/issue-types'),
+}

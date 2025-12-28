@@ -134,7 +134,7 @@ function EmptyState() {
   )
 }
 
-// 피드백 버튼 컴포넌트
+// 피드백 버튼 컴포넌트 (사용자용 간단 피드백)
 function FeedbackButtons({
   executionId,
   currentFeedback,
@@ -145,32 +145,34 @@ function FeedbackButtons({
   onFeedback: (executionId: string, reaction: 'thumbsup' | 'thumbsdown') => void
 }) {
   return (
-    <div className="flex items-center gap-1 mt-3 pt-3 border-t border-border/30">
-      <span className="text-xs text-muted-foreground mr-2">이 응답이 도움이 되었나요?</span>
-      <button
-        onClick={() => onFeedback(executionId, 'thumbsup')}
-        className={cn(
-          'p-1.5 rounded-md transition-all',
-          currentFeedback === 'thumbsup'
-            ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
-            : 'hover:bg-muted text-muted-foreground hover:text-foreground'
-        )}
-        title="도움이 됐어요"
-      >
-        <ThumbsUp className="h-4 w-4" />
-      </button>
-      <button
-        onClick={() => onFeedback(executionId, 'thumbsdown')}
-        className={cn(
-          'p-1.5 rounded-md transition-all',
-          currentFeedback === 'thumbsdown'
-            ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-            : 'hover:bg-muted text-muted-foreground hover:text-foreground'
-        )}
-        title="개선이 필요해요"
-      >
-        <ThumbsDown className="h-4 w-4" />
-      </button>
+    <div className="mt-3 pt-3 border-t border-border/30">
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-muted-foreground mr-2">이 응답이 도움이 되었나요?</span>
+        <button
+          onClick={() => onFeedback(executionId, 'thumbsup')}
+          className={cn(
+            'p-1.5 rounded-md transition-all',
+            currentFeedback === 'thumbsup'
+              ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+              : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+          )}
+          title="도움이 됐어요"
+        >
+          <ThumbsUp className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => onFeedback(executionId, 'thumbsdown')}
+          className={cn(
+            'p-1.5 rounded-md transition-all',
+            currentFeedback === 'thumbsdown'
+              ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+              : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+          )}
+          title="개선이 필요해요"
+        >
+          <ThumbsDown className="h-4 w-4" />
+        </button>
+      </div>
     </div>
   )
 }

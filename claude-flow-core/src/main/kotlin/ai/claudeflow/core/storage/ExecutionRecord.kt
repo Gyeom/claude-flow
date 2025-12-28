@@ -478,3 +478,92 @@ data class FeedbackBySourceStats(
     val negative: Long,
     val total: Long
 )
+
+// ==================== 관리자 상세 피드백 ====================
+
+/**
+ * 관리자 상세 피드백
+ *
+ * 관리자가 직접 평가하는 고품질 피드백 데이터
+ * - 다차원 점수 (정확성, 유용성, 적절한 길이)
+ * - 문제 유형 태깅
+ * - 자유 코멘트
+ * - 우수 사례 마킹 (Few-shot 예제용)
+ * - Gold Standard 응답 (이상적인 응답 직접 작성)
+ */
+data class AdminFeedback(
+    val id: String,
+    val executionId: String,
+    val adminId: String,
+
+    // 기본 평가 (thumbsup/thumbsdown 연동)
+    val quickRating: QuickRating,
+
+    // 다차원 점수 (0-4, HelpSteer2 스타일)
+    val correctness: Int? = null,    // 정확성
+    val helpfulness: Int? = null,    // 유용성
+    val verbosity: Int? = null,      // 적절한 길이 (0=너무짧음, 2=적절, 4=너무장황)
+
+    // 문제 유형 태깅
+    val issues: List<FeedbackIssue> = emptyList(),
+
+    // 자유 코멘트
+    val comment: String? = null,
+
+    // 학습용 플래그
+    val isExemplary: Boolean = false,     // 우수 사례 (Few-shot 예제용)
+    val goldResponse: String? = null,     // 이상적 응답 (직접 작성)
+
+    val createdAt: Instant = Instant.now(),
+    val updatedAt: Instant = Instant.now()
+) {
+    companion object {
+        /**
+         * 품질 레벨 계산 (0-100)
+         */
+        fun calculateQualityScore(feedback: AdminFeedback): Int? {
+            val scores = listOfNotNull(feedback.correctness, feedback.helpfulness)
+            if (scores.isEmpty()) return null
+            return ((scores.average() / 4.0) * 100).toInt()
+        }
+    }
+}
+
+/**
+ * 빠른 평가 (thumbsup/thumbsdown)
+ */
+enum class QuickRating {
+    POSITIVE,   // 👍
+    NEGATIVE,   // 👎
+    PENDING     // 미평가
+}
+
+/**
+ * 피드백 문제 유형
+ */
+enum class FeedbackIssue(val displayName: String, val description: String) {
+    INCORRECT("사실 오류", "정보가 부정확하거나 잘못됨"),
+    TOO_VERBOSE("너무 장황", "불필요하게 길고 반복적"),
+    OFF_TOPIC("핵심 벗어남", "질문의 핵심을 파악하지 못함"),
+    NOT_ACTIONABLE("실행 불가", "제안이 현실적으로 적용 불가능"),
+    TOO_BRIEF("너무 짧음", "필요한 정보나 맥락이 부족"),
+    CONTEXT_IGNORED("맥락 무시", "이전 대화나 컨텍스트를 무시"),
+    WRONG_AGENT("에이전트 오선택", "다른 에이전트가 더 적합했음"),
+    STYLE_ISSUE("스타일 문제", "톤이나 형식이 부적절")
+}
+
+/**
+ * 관리자 피드백 통계
+ */
+data class AdminFeedbackStats(
+    val totalReviewed: Long,
+    val positiveCount: Long,
+    val negativeCount: Long,
+    val pendingCount: Long,
+    val exemplaryCount: Long,
+    val goldResponseCount: Long,
+    val avgCorrectness: Double?,
+    val avgHelpfulness: Double?,
+    val avgVerbosity: Double?,
+    val issueDistribution: Map<FeedbackIssue, Long>
+)

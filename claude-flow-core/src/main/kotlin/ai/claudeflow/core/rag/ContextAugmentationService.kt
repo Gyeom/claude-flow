@@ -18,7 +18,8 @@ private val logger = KotlinLogging.logger {}
 class ContextAugmentationService(
     private val conversationVectorService: ConversationVectorService,
     private val userContextRepository: UserContextRepository? = null,
-    private val userRuleRepository: UserRuleRepository? = null
+    private val userRuleRepository: UserRuleRepository? = null,
+    private val fewShotInjectionService: FewShotInjectionService? = null
 ) {
     /**
      * 증강된 컨텍스트 빌드
@@ -61,12 +62,34 @@ class ContextAugmentationService(
             userContext?.summary
         } else null
 
-        // 4. 시스템 프롬프트 구성
+        // 4. Few-shot 예제 조회 (관리자가 마킹한 우수 사례)
+        val fewShotPrompt = if (options.includeFewShot && options.agentId != null && fewShotInjectionService != null) {
+            try {
+                fewShotInjectionService.buildFewShotPrompt(options.agentId, options.maxFewShotExamples)
+            } catch (e: Exception) {
+                logger.warn { "Failed to build few-shot prompt: ${e.message}" }
+                null
+            }
+        } else null
+
+        // 5. Anti-pattern 경고 조회 (자주 발생하는 문제 유형)
+        val antiPatternPrompt = if (options.includeAntiPatterns && options.agentId != null && fewShotInjectionService != null) {
+            try {
+                fewShotInjectionService.buildAntiPatternPrompt(options.agentId)
+            } catch (e: Exception) {
+                logger.warn { "Failed to build anti-pattern prompt: ${e.message}" }
+                null
+            }
+        } else null
+
+        // 6. 시스템 프롬프트 구성
         val systemPrompt = buildSystemPrompt(
             similarConversations = similarConversations,
             userRules = userRules,
             userSummary = userSummary,
-            userContext = userContext
+            userContext = userContext,
+            fewShotPrompt = fewShotPrompt,
+            antiPatternPrompt = antiPatternPrompt
         )
 
         val totalTimeMs = System.currentTimeMillis() - startTime
@@ -85,6 +108,8 @@ class ContextAugmentationService(
             },
             userRules = userRules,
             userSummary = userSummary,
+            fewShotPrompt = fewShotPrompt,
+            antiPatternPrompt = antiPatternPrompt,
             metadata = AugmentationMetadata(
                 retrievalTimeMs = retrievalTimeMs,
                 totalTimeMs = totalTimeMs,
@@ -165,7 +190,9 @@ class ContextAugmentationService(
         similarConversations: List<SimilarConversation>,
         userRules: List<UserRule>,
         userSummary: String?,
-        userContext: UserContext?
+        userContext: UserContext?,
+        fewShotPrompt: String? = null,
+        antiPatternPrompt: String? = null
     ): String {
         return buildString {
             appendLine("## 사용자 컨텍스트")
@@ -207,6 +234,18 @@ class ContextAugmentationService(
                     appendLine("A: ${conv.result.take(500)}")
                 }
             }
+
+            // Few-shot 예제 (관리자가 마킹한 우수 응답 사례)
+            fewShotPrompt?.let {
+                appendLine()
+                appendLine(it)
+            }
+
+            // Anti-pattern 경고 (자주 발생하는 문제 유형)
+            antiPatternPrompt?.let {
+                appendLine()
+                appendLine(it)
+            }
         }
     }
 }
@@ -218,7 +257,11 @@ data class AugmentationOptions(
     val includeSimilarConversations: Boolean = true,
     val includeUserRules: Boolean = true,
     val includeUserSummary: Boolean = true,
+    val includeFewShot: Boolean = true,
+    val includeAntiPatterns: Boolean = true,
+    val agentId: String? = null,
     val maxSimilarConversations: Int = 3,
+    val maxFewShotExamples: Int = 3,
     val minSimilarityScore: Float = 0.65f,
     val userScopedSearch: Boolean = false  // true면 해당 사용자 대화만 검색
 )
@@ -231,6 +274,8 @@ data class AugmentedContext(
     val relevantConversations: List<RelevantConversation>,
     val userRules: List<UserRule>,
     val userSummary: String?,
+    val fewShotPrompt: String?,
+    val antiPatternPrompt: String?,
     val metadata: AugmentationMetadata
 )
 

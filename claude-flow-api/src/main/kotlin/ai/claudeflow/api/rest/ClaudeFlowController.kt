@@ -778,6 +778,66 @@ class ClaudeFlowController(
     }
 
     /**
+     * 실행 이력 페이지네이션 조회
+     */
+    @GetMapping("/executions")
+    fun getExecutions(
+        @RequestParam(defaultValue = "1") page: Int,
+        @RequestParam(defaultValue = "20") pageSize: Int
+    ): Mono<ResponseEntity<PaginatedExecutions>> = mono {
+        val offset = (page - 1) * pageSize
+        val records = storage?.executionRepository?.findRecent(pageSize + offset) ?: emptyList()
+        val totalCount = storage?.executionRepository?.count() ?: 0L
+
+        val items = records.drop(offset).take(pageSize).map { record ->
+            ExecutionDto(
+                executionId = record.id,
+                prompt = record.prompt,
+                result = record.result,
+                status = record.status,
+                agentId = record.agentId,
+                source = record.source,
+                durationMs = record.durationMs,
+                createdAt = record.createdAt.toString(),
+                inputTokens = record.inputTokens,
+                outputTokens = record.outputTokens
+            )
+        }
+
+        ResponseEntity.ok(PaginatedExecutions(
+            items = items,
+            total = totalCount,
+            page = page,
+            pageSize = pageSize,
+            totalPages = ((totalCount + pageSize - 1) / pageSize).toInt()
+        ))
+    }
+
+    /**
+     * 단일 실행 조회
+     */
+    @GetMapping("/executions/{id}")
+    fun getExecutionById(@PathVariable id: String): Mono<ResponseEntity<ExecutionDto?>> = mono {
+        val record = storage?.executionRepository?.findById(id)
+        if (record != null) {
+            ResponseEntity.ok(ExecutionDto(
+                executionId = record.id,
+                prompt = record.prompt,
+                result = record.result,
+                status = record.status,
+                agentId = record.agentId,
+                source = record.source,
+                durationMs = record.durationMs,
+                createdAt = record.createdAt.toString(),
+                inputTokens = record.inputTokens,
+                outputTokens = record.outputTokens
+            ))
+        } else {
+            ResponseEntity.notFound().build()
+        }
+    }
+
+    /**
      * 최근 실행 이력 조회
      */
     @GetMapping("/executions/recent")
@@ -1077,11 +1137,20 @@ data class ExecutionDto(
     val prompt: String,
     val result: String?,
     val status: String,
-    val agentId: String,
+    val agentId: String?,
+    val source: String? = null,
     val durationMs: Long,
     val createdAt: String,
     val inputTokens: Int = 0,
     val outputTokens: Int = 0
+)
+
+data class PaginatedExecutions(
+    val items: List<ExecutionDto>,
+    val total: Long,
+    val page: Int,
+    val pageSize: Int,
+    val totalPages: Int
 )
 
 // Rate Limit DTOs

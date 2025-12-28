@@ -232,7 +232,7 @@ docker compose up -d
 
 **접속 URL:**
 - API: http://localhost:8080
-- Dashboard: http://localhost:5173
+- Dashboard: http://localhost:3000
 - n8n: http://localhost:5678 (admin@local.dev / Localdev123)
 
 ### 6. 사용
