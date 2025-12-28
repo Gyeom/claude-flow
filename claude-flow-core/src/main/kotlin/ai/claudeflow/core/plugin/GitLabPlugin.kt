@@ -140,7 +140,7 @@ class GitLabPlugin(
         super.initialize(config)
         baseUrl = requireConfig("GITLAB_URL").trimEnd('/')
         token = requireConfig("GITLAB_TOKEN")
-        group = config["GITLAB_GROUP"]  // 선택: sirius/ccds 형태
+        group = config["GITLAB_GROUP"]  // 선택: team/subgroup 형태
         logger.info { "GitLab plugin initialized: $baseUrl (group: ${group ?: "none"}, token: ${maskToken(token)})" }
     }
 

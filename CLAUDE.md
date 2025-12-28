@@ -330,15 +330,17 @@ OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
 
 복합 작업 처리 시 `.claude/agents/`에 정의된 전문 에이전트를 Task tool로 활용하세요:
 
-| 에이전트 | 역할 | 도구 | 트리거 키워드 |
-|---------|------|------|--------------|
-| bug-fixer | 버그 분석 및 수정 | Read, Edit, Bash | 버그, fix, 에러, 수정 |
-| code-reviewer | 코드 품질 리뷰 | Read, Grep, Glob | 리뷰, review, PR, MR |
-| refactor | 코드 리팩토링 | Read, Edit, Bash | 리팩토링, 개선, 정리 |
-| test-writer | 테스트 코드 작성 | Read, Write, Bash | 테스트, test |
-| security-reviewer | 보안 취약점 검토 | Read, Grep, Glob | 보안, security, OWASP |
-| jira-expert | Jira 이슈 관리 | Read, Bash | Jira, 이슈, JQL |
-| gitlab-expert | GitLab MR/파이프라인 | Read, Bash | GitLab, MR, 파이프라인 |
+| 에이전트 | 역할 | 모델 | 도구 | 트리거 키워드 |
+|---------|------|------|------|--------------|
+| bug-fixer | 버그 분석 및 수정 | **Opus** | Read, Edit, Bash | 버그, fix, 에러, 수정 |
+| code-reviewer | 코드 품질 리뷰 | **Opus** | Read, Grep, Glob | 리뷰, review, PR, MR |
+| refactor | 코드 리팩토링 | Sonnet | Read, Edit, Bash | 리팩토링, 개선, 정리 |
+| test-writer | 테스트 코드 작성 | Sonnet | Read, Write, Bash | 테스트, test |
+| security-reviewer | 보안 취약점 검토 | Sonnet | Read, Grep, Glob | 보안, security, OWASP |
+| jira-expert | Jira 이슈 관리 | Sonnet | Read, Bash | Jira, 이슈, JQL |
+| gitlab-expert | GitLab MR/파이프라인 | Sonnet | Read, Bash | GitLab, MR, 파이프라인 |
+
+> **Note**: `code-reviewer`와 `bug-fixer`는 높은 정확도가 필요하여 Opus 모델을 사용합니다.
 
 **복합 요청 처리 예시**:
 ```

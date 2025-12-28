@@ -31,7 +31,7 @@ class JiraPlugin : BasePlugin() {
             name = "issue",
             description = "이슈 상세 조회",
             usage = "/jira issue <issue-key>",
-            examples = listOf("/jira issue CCDC-123")
+            examples = listOf("/jira issue PROJ-123")
         ),
         PluginCommand(
             name = "my-issues",
@@ -49,49 +49,49 @@ class JiraPlugin : BasePlugin() {
             name = "search",
             description = "JQL로 이슈 검색",
             usage = "/jira search <jql>",
-            examples = listOf("/jira search project=CCDC AND status=Open")
+            examples = listOf("/jira search project=PROJ AND status=Open")
         ),
         PluginCommand(
             name = "transition",
             description = "이슈 상태 변경",
             usage = "/jira transition <issue-key> <status>",
-            examples = listOf("/jira transition CCDC-123 Done")
+            examples = listOf("/jira transition PROJ-123 Done")
         ),
         PluginCommand(
             name = "create",
             description = "새 이슈 생성",
             usage = "/jira create <project> <summary> [description]",
-            examples = listOf("/jira create CCDC \"버그 수정 필요\" \"로그인 실패 이슈\"")
+            examples = listOf("/jira create PROJ \"버그 수정 필요\" \"로그인 실패 이슈\"")
         ),
         PluginCommand(
             name = "comment",
             description = "이슈에 댓글 추가",
             usage = "/jira comment <issue-key> <comment>",
-            examples = listOf("/jira comment CCDC-123 \"분석 완료, PR 준비중\"")
+            examples = listOf("/jira comment PROJ-123 \"분석 완료, PR 준비중\"")
         ),
         PluginCommand(
             name = "comments",
             description = "이슈 댓글 조회",
             usage = "/jira comments <issue-key>",
-            examples = listOf("/jira comments CCDC-123")
+            examples = listOf("/jira comments PROJ-123")
         ),
         PluginCommand(
             name = "assign",
             description = "이슈 담당자 변경",
             usage = "/jira assign <issue-key> <account-id|email>",
-            examples = listOf("/jira assign CCDC-123 user@example.com")
+            examples = listOf("/jira assign PROJ-123 user@example.com")
         ),
         PluginCommand(
             name = "labels",
             description = "이슈 라벨 추가/제거",
             usage = "/jira labels <issue-key> <add|remove> <label>",
-            examples = listOf("/jira labels CCDC-123 add ai:analyzed")
+            examples = listOf("/jira labels PROJ-123 add ai:analyzed")
         ),
         PluginCommand(
             name = "link",
             description = "이슈 링크 생성 (relates to, blocks 등)",
             usage = "/jira link <issue-key> <link-type> <target-issue>",
-            examples = listOf("/jira link CCDC-123 blocks CCDC-456")
+            examples = listOf("/jira link PROJ-123 blocks PROJ-456")
         ),
         PluginCommand(
             name = "projects",
@@ -103,7 +103,7 @@ class JiraPlugin : BasePlugin() {
             name = "boards",
             description = "스크럼/칸반 보드 목록",
             usage = "/jira boards [project-key]",
-            examples = listOf("/jira boards", "/jira boards CCDC")
+            examples = listOf("/jira boards", "/jira boards PROJ")
         ),
         PluginCommand(
             name = "sprints",
@@ -155,7 +155,7 @@ class JiraPlugin : BasePlugin() {
     override fun shouldHandle(message: String): Boolean {
         val lower = message.lowercase()
         return lower.startsWith("/jira") ||
-                lower.matches(Regex(".*[A-Z]+-\\d+.*")) ||  // 이슈 키 패턴 (CCDC-123)
+                lower.matches(Regex(".*[A-Z]+-\\d+.*")) ||  // 이슈 키 패턴 (PROJ-123)
                 (lower.contains("이슈") && (lower.contains("조회") || lower.contains("확인"))) ||
                 lower.contains("스프린트") ||
                 lower.contains("sprint")

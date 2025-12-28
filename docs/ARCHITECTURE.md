@@ -2,7 +2,7 @@
 
 이 문서는 Claude Flow 프로젝트의 전체 아키텍처를 설명합니다.
 
-> **Last Updated**: 2025-12-22
+> **Last Updated**: 2025-12-28
 
 ## 1. 시스템 전체 구조
 
@@ -53,11 +53,11 @@ flowchart TB
     end
 
     subgraph Workflow["⚡ Workflow Engine"]
-        n8n["n8n<br/>(7 Workflows)"]
+        n8n["n8n<br/>(7 Active Workflows)"]
     end
 
     subgraph Dashboard["📊 Dashboard"]
-        React["React Dashboard<br/>(Vite + TailwindCSS)<br/>13 Pages"]
+        React["React Dashboard<br/>(Vite + TailwindCSS)<br/>8 Pages"]
     end
 
     subgraph VectorDB["🔍 Vector Services"]
@@ -191,10 +191,10 @@ flowchart TD
 ```mermaid
 graph LR
     subgraph Agents["Built-in Agents"]
-        G["general<br/>일반 질문"]
-        CR["code-reviewer<br/>코드 리뷰"]
-        RF["refactor<br/>리팩토링"]
-        BF["bug-fixer<br/>버그 수정"]
+        G["general<br/>일반 질문<br/>(Sonnet)"]
+        CR["code-reviewer<br/>코드 리뷰<br/>(Opus)"]
+        RF["refactor<br/>리팩토링<br/>(Sonnet)"]
+        BF["bug-fixer<br/>버그 수정<br/>(Opus)"]
     end
 
     subgraph Keywords["트리거 키워드"]
@@ -208,7 +208,12 @@ graph LR
     K2 --> CR
     K3 --> RF
     K4 --> BF
+
+    style CR fill:#ffe0b2
+    style BF fill:#ffe0b2
 ```
+
+> **Note**: `code-reviewer`와 `bug-fixer`는 높은 정확도를 위해 **Opus 모델**을 사용합니다.
 
 ## 6. 스토리지 계층
 
@@ -447,16 +452,16 @@ flowchart LR
         W1["Slack Mention"]
         W2["Slack Reaction"]
         W3["Slack Action"]
-        W4["Alert Bot"]
+        W4["Schedule (5분)"]
+        W5["Alert Bot"]
     end
 
-    subgraph Workflows["워크플로우 (8개)"]
-        WF0["slack-router<br/>🆕 중앙 분류기"]
+    subgraph Workflows["워크플로우 (7개)"]
         WF1["slack-mention-handler<br/>✅ 활성"]
-        WF2["slack-mr-review<br/>✅ 활성"]
-        WF3["slack-action-handler<br/>✅ 활성"]
-        WF4["slack-feedback-handler<br/>✅ 활성"]
-        WF5["user-context-handler<br/>⏸️ 비활성"]
+        WF2["slack-action-handler<br/>✅ 활성"]
+        WF3["slack-feedback-handler<br/>✅ 활성"]
+        WF4["scheduled-mr-review<br/>✅ 활성 (Opus)"]
+        WF5["gitlab-feedback-poller<br/>✅ 활성"]
         WF6["alert-channel-monitor<br/>⏸️ 비활성"]
         WF7["alert-to-mr-pipeline<br/>⏸️ 비활성"]
     end
@@ -465,24 +470,37 @@ flowchart LR
         A1["Claude API 호출"]
         A2["Slack 메시지 전송"]
         A3["DB 저장"]
-        A4["GitLab MR 생성"]
+        A4["GitLab 코멘트"]
+        A5["GitLab MR 생성"]
     end
 
-    W1 --> WF0
-    W2 --> WF0
-    W3 --> WF0
-    WF0 --> WF1
-    WF0 --> WF2
-    WF0 --> WF3
-    WF0 --> WF4
-    W4 --> WF6
+    W1 --> WF1
+    W2 --> WF3
+    W3 --> WF2
+    W4 --> WF4
+    W4 --> WF5
+    W5 --> WF6
 
     WF1 --> A1 --> A2
-    WF2 --> A1 --> A2
+    WF4 --> A1 --> A4
     WF3 --> A3
-    WF4 --> A3
-    WF6 --> WF7 --> A4
+    WF5 --> A3
+    WF6 --> WF7 --> A5
+
+    style WF4 fill:#ffe0b2
 ```
+
+**워크플로우 상세**:
+
+| 워크플로우 | 기능 | 모델 | 상태 |
+|-----------|------|------|------|
+| slack-mention-handler | Slack 멘션 → 분류 → Claude 실행 | Sonnet/Opus | ✅ 활성 |
+| slack-action-handler | Slack 버튼/액션 처리 | - | ✅ 활성 |
+| slack-feedback-handler | 👍/👎 피드백 수집 | - | ✅ 활성 |
+| scheduled-mr-review | 5분마다 MR 자동 리뷰 | **Opus** | ✅ 활성 |
+| gitlab-feedback-poller | GitLab 이모지 피드백 수집 | - | ✅ 활성 |
+| alert-channel-monitor | 장애 알람 모니터링 | Haiku | ⏸️ 비활성 |
+| alert-to-mr-pipeline | 알람 → Jira → MR 생성 | Sonnet | ⏸️ 비활성 |
 
 ## 8.1. 피드백 루프
 
@@ -782,30 +800,22 @@ flowchart TB
 
 ```mermaid
 flowchart TD
-    subgraph Dashboard["React Dashboard (13 Pages)"]
+    subgraph Dashboard["React Dashboard (8 Pages)"]
         subgraph Core["핵심 페이지"]
-            P1["📊 Dashboard<br/>(종합 통계)"]
-            P2["💬 Chat<br/>(웹 채팅)"]
-            P3["📈 Analytics<br/>(상세 분석)"]
-        end
-
-        subgraph Management["관리 페이지"]
-            P4["🤖 Agents<br/>(에이전트)"]
-            P5["📁 Projects<br/>(프로젝트)"]
-            P6["📋 Jira<br/>(이슈 관리)"]
-            P7["⚡ Workflows<br/>(n8n)"]
+            P1["📊 Dashboard<br/>(종합 통계, 백분위수, 모델)"]
+            P2["📋 Jira<br/>(이슈 관리, AI 분석)"]
+            P3["💬 Chat<br/>(웹 채팅)"]
         end
 
         subgraph Monitoring["모니터링"]
-            P8["📜 History<br/>(실행 이력)"]
-            P9["📝 Logs<br/>(실시간)"]
-            P10["👍 Feedback<br/>(피드백)"]
-            P11["⚠️ Errors<br/>(에러)"]
-            P12["🧠 Models<br/>(모델 통계)"]
+            P4["📈 Activity<br/>(실행 이력, 피드백, GitLab 리뷰)"]
+            P5["📝 Live Logs<br/>(실시간)"]
         end
 
-        subgraph System["시스템"]
-            P13["⚙️ Settings<br/>(설정)"]
+        subgraph Management["관리 페이지"]
+            P6["📚 Knowledge<br/>(RAG 인덱싱)"]
+            P7["⚡ Workflows<br/>(n8n)"]
+            P8["⚙️ Settings<br/>(환경변수, 프로젝트)"]
         end
     end
 
@@ -818,11 +828,12 @@ flowchart TD
     end
 
     Core --> API["lib/api.ts"]
-    Management --> API
     Monitoring --> API
-    System --> API
+    Management --> API
     API -->|HTTP/SSE| Backend["REST API :8080"]
 ```
+
+> **Note**: Analytics, Agents, Models, Errors 등의 기능이 Dashboard와 Settings로 통합되어 간소화되었습니다.
 
 ## 13. 전체 기술 스택
 
@@ -873,15 +884,16 @@ Claude Flow는 **4개의 핵심 모듈**로 구성된 AI 에이전트 플랫폼�
 **핵심 특징**:
 - 5단계 멀티레벨 라우팅 (피드백 학습 → 키워드 → 패턴 → 시맨틱 → 폴백)
 - Claude 세션 캐싱으로 토큰 30-40% 절감 (DB 영속화 지원)
-- n8n 기반 8개 워크플로우 (slack-router 중앙 분류기 포함)
-- 통합 라우팅 모드: n8n에서 이벤트 분류, Kotlin은 전달만
+- n8n 기반 7개 워크플로우 (scheduled-mr-review, gitlab-feedback-poller 포함)
+- **에이전트별 모델 최적화**: code-reviewer, bug-fixer는 Opus 모델 사용
+- 5분마다 자동 MR 리뷰 (scheduled-mr-review)
 - 실시간 P50/P90/P95/P99 분석
 - 플러그인 시스템 (GitLab, GitHub, Jira, n8n)
 - RAG 시스템 (Qdrant + Ollama)
   - 피드백 학습 기반 에이전트 추천
   - 컨텍스트 증강 파이프라인 (Enrichment API 공개)
   - 코드베이스 인덱싱
-- 13개 대시보드 페이지 (Chat, Analytics, Jira, Workflows 등)
+- 8개 대시보드 페이지 (Dashboard, Jira, Chat, Activity, Logs, Knowledge, Workflows, Settings)
 
 **데이터 흐름 (통합 라우팅 모드)**:
 ```

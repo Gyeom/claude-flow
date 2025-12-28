@@ -2,6 +2,8 @@
 
 Claude Flow uses n8n as its workflow engine for flexible event handling and automation. This document describes the available workflows and how to customize them.
 
+> **Last Updated**: 2025-12-28
+
 ## Overview
 
 Workflows are stored in `docker-compose/n8n-workflows/` and automatically loaded when n8n starts.
@@ -9,10 +11,25 @@ Workflows are stored in `docker-compose/n8n-workflows/` and automatically loaded
 ```
 docker-compose/n8n-workflows/
 ├── slack-mention-handler.json      # Handle @claude mentions
-├── slack-feedback-handler.json     # Process thumbs up/down reactions
 ├── slack-action-handler.json       # Handle emoji action triggers
-└── ... (more workflows)
+├── slack-feedback-handler.json     # Process thumbs up/down reactions
+├── scheduled-mr-review.json        # 5분마다 자동 MR 리뷰 (Opus)
+├── gitlab-feedback-poller.json     # GitLab 이모지 피드백 수집
+├── alert-channel-monitor.json      # 장애 알람 모니터링 (비활성)
+└── alert-to-mr-pipeline.json       # 알람 → MR 생성 (비활성)
 ```
+
+## Workflow Summary
+
+| Workflow | Trigger | Model | Status |
+|----------|---------|-------|--------|
+| slack-mention-handler | Slack @멘션 | Sonnet/Opus | ✅ Active |
+| slack-action-handler | Slack 이모지 | - | ✅ Active |
+| slack-feedback-handler | 👍/👎 리액션 | - | ✅ Active |
+| **scheduled-mr-review** | 5분 스케줄 | **Opus** | ✅ Active |
+| **gitlab-feedback-poller** | 5분 스케줄 | - | ✅ Active |
+| alert-channel-monitor | Slack 알람 | Haiku | ⏸️ Inactive |
+| alert-to-mr-pipeline | 수동/자동 | Sonnet | ⏸️ Inactive |
 
 ## Core Workflows
 
@@ -78,33 +95,78 @@ docker-compose/n8n-workflows/
 
 **Webhook URL**: `POST /webhook/slack-action`
 
-### 4. GitLab MR Review
+### 4. Scheduled MR Review (scheduled-mr-review.json)
 
-**Trigger**: Scheduled or webhook
-**Purpose**: Automated code review for GitLab merge requests
+**Trigger**: Schedule (every 5 minutes)
+**Model**: **Claude Opus** (high-quality reviews)
+**Purpose**: Automatically review new GitLab merge requests
 
-**Features**:
-- Fetch MR diff via GitLab API
-- Analyze code changes with Claude
-- Post review comments on GitLab
-- Support for `ai:review` label trigger
+**Flow**:
+```
+5분마다 실행
+    ↓
+GitLab 프로젝트 목록 조회 (/api/v1/projects/gitlab-enabled)
+    ↓
+각 프로젝트별 MR 목록 조회
+    ↓
+필터링:
+  - target_branch = develop
+  - ai-review::done, ai-review::skip 라벨 없음
+    ↓
+MR 상세 정보 + 컨텍스트 조회 (/api/v1/mr-review/context)
+    ↓
+Chat API 호출 (agentId: code-reviewer, Opus 모델)
+    ↓
+GitLab 코멘트로 리뷰 결과 게시
+    ↓
+ai-review::done 라벨 적용
+    ↓
+리뷰 레코드 저장 (/api/v1/feedback/gitlab-review)
+```
 
 **Configuration**:
-```
+```bash
 GITLAB_URL=https://gitlab.example.com
 GITLAB_TOKEN=glpat-xxx
 ```
 
-### 5. Daily Report
+### 5. GitLab Feedback Poller (gitlab-feedback-poller.json)
 
-**Trigger**: Scheduled (configurable, default: 9 AM weekdays)
-**Purpose**: Generate daily activity summary
+**Trigger**: Schedule (every 5 minutes)
+**Purpose**: Collect emoji feedback on AI review comments in GitLab
 
-**Includes**:
-- Execution statistics
-- Success/failure rates
-- Top users
-- Common issues
+**Flow**:
+```
+5분마다 실행
+    ↓
+AI 리뷰 레코드 조회 (feedback 없는 것)
+    ↓
+GitLab 코멘트 이모지 조회
+    ↓
+👍/👎 이모지 수집 → feedback 저장
+    ↓
+피드백 학습 시스템 반영
+```
+
+**Supported Emojis**:
+| Emoji | Feedback Type |
+|-------|---------------|
+| 👍, ❤️, 🎉, 🚀 | Positive |
+| 👎, 😕, ❌ | Negative |
+
+### 6. Alert Channel Monitor (alert-channel-monitor.json)
+
+**Status**: ⏸️ Inactive (manually enable if needed)
+**Trigger**: Scheduled monitoring
+**Model**: Claude Haiku (fast classification)
+**Purpose**: Monitor Slack alert channels for automated incident response
+
+### 7. Alert to MR Pipeline (alert-to-mr-pipeline.json)
+
+**Status**: ⏸️ Inactive (manually enable if needed)
+**Trigger**: From alert-channel-monitor
+**Model**: Claude Sonnet
+**Purpose**: Automatically create Jira issues and GitLab MRs from alerts
 
 ## Creating Custom Workflows
 

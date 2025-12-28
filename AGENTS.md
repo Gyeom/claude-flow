@@ -8,23 +8,62 @@
 
 ## 에이전트 개요
 
-| 에이전트 | 역할 | 도구 | 사용 시점 |
-|---------|------|------|----------|
-| [bug-fixer](#bug-fixer) | 버그 분석 및 수정 | Read, Edit, Write, Bash, Grep, Glob | 에러, 버그, 수정 요청 |
-| [refactor](#refactor) | 코드 리팩토링 | Read, Edit, Write, Bash, Grep, Glob | 개선, 정리, 클린업 |
-| [security-reviewer](#security-reviewer) | 보안 취약점 검토 | Read, Grep, Glob | 보안 검토, OWASP |
-| [test-writer](#test-writer) | 테스트 코드 작성 | Read, Write, Edit, Bash, Grep, Glob | 테스트 추가 |
+| 에이전트 | 역할 | 모델 | 도구 | 사용 시점 |
+|---------|------|------|------|----------|
+| [code-reviewer](#code-reviewer) | 코드 리뷰 및 MR 분석 | **Opus** | Read, Write, Edit, Grep, Glob, Bash | MR 리뷰, 코드 검토 |
+| [bug-fixer](#bug-fixer) | 버그 분석 및 수정 | **Opus** | Read, Edit, Write, Bash, Grep, Glob | 에러, 버그, 수정 요청 |
+| [refactor](#refactor) | 코드 리팩토링 | Sonnet | Read, Edit, Write, Bash, Grep, Glob | 개선, 정리, 클린업 |
+| [security-reviewer](#security-reviewer) | 보안 취약점 검토 | Sonnet | Read, Grep, Glob | 보안 검토, OWASP |
+| [test-writer](#test-writer) | 테스트 코드 작성 | Sonnet | Read, Write, Edit, Bash, Grep, Glob | 테스트 추가 |
 
 ---
 
 ## 에이전트 상세
 
+### code-reviewer
+
+**코드 리뷰 및 MR 분석 전문가** (Opus 모델)
+
+```yaml
+트리거: 리뷰, review, MR, PR, 코드리뷰, diff, 검토
+모델: claude-opus-4-20250514
+도구: Read, Write, Edit, Grep, Glob, Bash
+```
+
+**작업 프로세스**:
+1. MR/PR 변경사항 분석 (컨텍스트 데이터 활용)
+2. 파일별 변경 유형 분류 (추가/수정/삭제/이름변경)
+3. 자동 감지된 이슈 검증
+4. 보안, 성능, 유지보수성 관점 리뷰
+5. 리뷰 결과 포맷팅 및 점수 부여
+
+**리뷰 형식**:
+```markdown
+## MR !{번호} 코드 리뷰 결과
+
+📋 **개요**
+- 제목, 작성자, 브랜치, 변경 파일 수
+
+📁 **변경 파일 분석**
+- Rename / Add / Delete / Modify 분류
+
+🚨 **감지된 이슈**
+- 보안, Breaking Change, 네이밍 불일치 등
+
+✅ **긍정적인 측면** / ⚠️ **개선 필요 사항**
+
+📊 **리뷰 점수: X/10**
+```
+
+---
+
 ### bug-fixer
 
-**버그 분석 및 수정 전문가**
+**버그 분석 및 수정 전문가** (Opus 모델)
 
 ```yaml
 트리거: 버그, bug, fix, 에러, error, 오류, 수정, Exception, 문제 해결
+모델: claude-opus-4-20250514
 도구: Read, Edit, Write, Bash, Grep, Glob
 ```
 

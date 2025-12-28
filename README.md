@@ -88,20 +88,43 @@ n8n과 Kotlin 간의 HTTP 호출은 **로컬 네트워크**에서 이루어지�
 
 | 페이지 | 기능 |
 |--------|------|
-| Dashboard | 실시간 통계, 요약 차트 |
+| Dashboard | 실시간 통계, P50/P90/P95/P99 백분위수, 피드백 분석, 모델별 사용량 |
+| Jira | Jira 이슈 관리, AI 분석, 자연어 JQL, Smart Issue Creator |
 | Chat | 웹 기반 채팅 인터페이스 |
-| History | 실행 이력 조회 |
+| Activity | 실행 이력, 피드백 관리, GitLab AI 리뷰 |
 | Live Logs | 실시간 로그 스트리밍 |
-| Projects | 프로젝트 관리 |
-| Jira | Jira 이슈 관리, AI 분석, 자연어 JQL |
-| Agents | 글로벌 에이전트 설정 |
-| Analytics | 상세 통계 (백분위수, 시계열) |
-| Feedback | 피드백 분석 |
-| Models | 모델별 사용량 |
-| Errors | 에러 통계 |
-| Plugins | 플러그인 관리 (GitLab, Jira, n8n) |
+| Knowledge | 코드베이스 인덱싱, RAG 시스템 관리 |
 | Workflows | n8n 워크플로우 관리/생성 |
-| Settings | 시스템 설정 |
+| Settings | 환경변수 설정, 프로젝트 관리 |
+
+### 에이전트 및 모델
+
+| 에이전트 | 모델 | 용도 |
+|---------|------|------|
+| general | claude-sonnet-4 | 일반 질문, 설명 |
+| code-reviewer | **claude-opus-4** | MR/PR 코드 리뷰 (고품질) |
+| bug-fixer | **claude-opus-4** | 버그 분석 및 수정 (정확도) |
+| refactor | claude-sonnet-4 | 코드 리팩토링 |
+
+### 자동 MR 리뷰
+
+5분마다 GitLab MR을 자동으로 리뷰하는 기능:
+
+```
+scheduled-mr-review 워크플로우
+    ↓ 5분마다 실행
+GitLab 프로젝트 MR 목록 조회
+    ↓ ai-review 라벨 없는 MR 필터링
+Claude Opus로 코드 리뷰 실행
+    ↓
+GitLab 코멘트로 리뷰 결과 게시
+    ↓
+ai-review::done 라벨 적용
+```
+
+- **대상**: `develop` 브랜치로 향하는 MR
+- **필터**: `ai-review::done`, `ai-review::skip` 라벨 없는 MR
+- **모델**: Claude Opus (고품질 리뷰)
 
 ## 빠른 시작
 
@@ -287,7 +310,8 @@ flowchart TB
     subgraph n8n["⚡ n8n Workflows"]
         WF1["slack-mention-handler"]
         WF2["slack-feedback-handler"]
-        WF3["slack-mr-review"]
+        WF3["scheduled-mr-review"]
+        WF4["gitlab-feedback-poller"]
     end
 
     subgraph Storage["💾 Storage"]

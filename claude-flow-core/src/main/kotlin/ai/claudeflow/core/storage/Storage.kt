@@ -871,7 +871,7 @@ typealias TimeGranularity = ai.claudeflow.core.storage.repository.TimeGranularit
  */
 data class ProjectsFileConfig(
     val defaultBranch: String? = "develop",
-    val gitlabHost: String? = null,  // GitLab 인스턴스 URL (예: "https://gitlab.42dot.ai")
+    val gitlabHost: String? = null,  // GitLab 인스턴스 URL (예: "https://gitlab.example.com")
     val projects: List<ProjectFileEntry>
 )
 
@@ -881,7 +881,7 @@ data class ProjectFileEntry(
     val description: String? = null,
     val path: String,
     val gitRemote: String? = null,
-    val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "42dot/ccds-server")
+    val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "team/my-project")
     val defaultBranch: String? = null,
     val isDefault: Boolean? = false,
     val aliases: List<String>? = null
