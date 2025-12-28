@@ -553,9 +553,12 @@ class SlackSocketModeBridge(
 
     /**
      * Reaction event handlers
-     * 모든 리액션 이벤트를 slack-router로 전송, n8n에서 분류
+     * - thumbsup/thumbsdown → feedback 엔드포인트 (피드백 수집)
+     * - 기타 리액션 → unified 엔드포인트 (액션 트리거 등)
      */
     private fun App.registerReactionHandlers() {
+        val feedbackReactions = setOf("thumbsup", "thumbsdown", "+1", "-1")
+
         event(ReactionAddedEvent::class.java) { payload, ctx ->
             lastEventTime.set(System.currentTimeMillis())
             val event = payload.event
@@ -571,8 +574,15 @@ class SlackSocketModeBridge(
                 receivedAt = Clock.System.now()
             )
 
+            // 피드백 리액션은 feedback 엔드포인트로, 나머지는 unified로
+            val endpoint = if (event.reaction in feedbackReactions) {
+                webhookConfig.endpoints.feedback
+            } else {
+                webhookConfig.endpoints.unified
+            }
+
             scope.launch {
-                sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
+                sendToWebhook(slackEvent, endpoint)
             }
 
             ctx.ack()
@@ -593,8 +603,15 @@ class SlackSocketModeBridge(
                 receivedAt = Clock.System.now()
             )
 
+            // 피드백 리액션은 feedback 엔드포인트로, 나머지는 unified로
+            val endpoint = if (event.reaction in feedbackReactions) {
+                webhookConfig.endpoints.feedback
+            } else {
+                webhookConfig.endpoints.unified
+            }
+
             scope.launch {
-                sendToWebhook(slackEvent, webhookConfig.endpoints.unified)
+                sendToWebhook(slackEvent, endpoint)
             }
 
             ctx.ack()

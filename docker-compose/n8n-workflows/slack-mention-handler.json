@@ -422,6 +422,42 @@
       "typeVersion": 4.2,
       "position": [2850, 450],
       "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.messageType }}",
+              "rightValue": "skip",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "skip-check",
+      "name": "Not Skip?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [550, 300]
+    },
+    {
+      "parameters": {},
+      "id": "skip-noop",
+      "name": "Skip (Reaction/Empty)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [750, 450]
     }
   ],
   "connections": {
@@ -429,7 +465,13 @@
       "main": [[{ "node": "Classify Message", "type": "main", "index": 0 }]]
     },
     "Classify Message": {
-      "main": [[{ "node": "Is Command?", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Not Skip?", "type": "main", "index": 0 }]]
+    },
+    "Not Skip?": {
+      "main": [
+        [{ "node": "Is Command?", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Reaction/Empty)", "type": "main", "index": 0 }]
+      ]
     },
     "Is Command?": {
       "main": [

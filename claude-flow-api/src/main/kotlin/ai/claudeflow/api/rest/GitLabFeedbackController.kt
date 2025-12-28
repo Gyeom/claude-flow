@@ -112,6 +112,22 @@ class GitLabFeedbackController(
 
         // 피드백 저장 (action이 created인 경우만)
         if (request.action == "created" || request.action == "award") {
+            // 중복 체크 - 동일한 사용자가 동일한 코멘트에 동일한 이모지를 이미 추가했는지 확인
+            val alreadyExists = storage.feedbackRepository.existsGitLabFeedback(
+                noteId = request.noteId,
+                userId = request.userId.toString(),
+                reaction = request.emoji
+            )
+
+            if (alreadyExists) {
+                logger.debug { "Duplicate GitLab emoji feedback ignored: noteId=${request.noteId}, userId=${request.userId}, emoji=${request.emoji}" }
+                return@mono ResponseEntity.ok(mapOf(
+                    "status" to "ignored",
+                    "reason" to "duplicate_feedback",
+                    "noteId" to request.noteId
+                ))
+            }
+
             storage.feedbackRepository.saveGitLabFeedback(
                 id = UUID.randomUUID().toString(),
                 gitlabProjectId = request.projectId,

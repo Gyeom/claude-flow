@@ -597,6 +597,15 @@ class FeedbackRepository(
     }
 
     /**
+     * GitLab 피드백 중복 확인 (noteId + userId + reaction)
+     * 동일한 사용자가 동일한 코멘트에 동일한 이모지를 이미 추가했는지 확인
+     */
+    fun existsGitLabFeedback(noteId: Int, userId: String, reaction: String): Boolean {
+        val sql = "SELECT COUNT(*) FROM feedback WHERE gitlab_note_id = ? AND user_id = ? AND reaction = ?"
+        return (executeQueryOne(sql, noteId, userId, reaction) { it.getLong(1) } ?: 0L) > 0
+    }
+
+    /**
      * GitLab 피드백 통계
      */
     fun getGitLabFeedbackStats(dateRange: DateRange? = null): FeedbackStats {
