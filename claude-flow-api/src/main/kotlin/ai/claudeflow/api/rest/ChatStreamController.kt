@@ -484,6 +484,22 @@ class ChatStreamController(
 
                 val result = claudeExecutor.execute(executionRequest)
 
+                // ✅ ExecutionRecord 저장 (Chat 스트리밍과 동일한 수준의 데이터 수집)
+                saveExecutionRecordSync(
+                    requestId = result.requestId,
+                    prompt = lastUserMessage,
+                    result = result.result,
+                    status = result.status.name,
+                    agentMatch = agentMatch,
+                    projectId = projectId,
+                    userId = request.userId,
+                    model = executionRequest.model ?: agentMatch.agent.model,
+                    durationMs = result.durationMs,
+                    usage = result.usage,
+                    cost = result.cost,
+                    error = result.error
+                )
+
                 ResponseEntity.ok(ChatResponse(
                     requestId = result.requestId,
                     success = result.status == ExecutionStatus.SUCCESS,
@@ -752,6 +768,82 @@ class ChatStreamController(
                 } catch (e: Exception) {
                     logger.warn { "Failed to save chat execution: ${e.message}" }
                 }
+            }
+        }
+    }
+
+    /**
+     * 실행 기록 저장 (동기 - /execute API용)
+     * executeChat API에서 사용되며, 스트리밍과 동일한 수준의 데이터 수집
+     */
+    private suspend fun saveExecutionRecordSync(
+        requestId: String,
+        prompt: String,
+        result: String?,
+        status: String,
+        agentMatch: AgentMatch,
+        projectId: String,
+        userId: String?,
+        model: String,
+        durationMs: Long,
+        usage: ai.claudeflow.executor.TokenUsage?,
+        cost: Double?,
+        error: String?
+    ) {
+        storage?.let { store ->
+            try {
+                val record = ExecutionRecord(
+                    id = requestId,
+                    prompt = prompt.take(1000),
+                    result = result?.take(5000),
+                    status = status,
+                    agentId = agentMatch.agent.id,
+                    projectId = projectId.takeIf { it != "default" },
+                    userId = userId,
+                    channel = null,
+                    threadTs = null,
+                    replyTs = null,
+                    durationMs = durationMs,
+                    inputTokens = usage?.inputTokens ?: 0,
+                    outputTokens = usage?.outputTokens ?: 0,
+                    cost = cost ?: usage?.let { u ->
+                        (u.inputTokens * 0.000003) + (u.outputTokens * 0.000015)
+                    },
+                    error = error,
+                    model = model,
+                    source = "chat",
+                    routingMethod = agentMatch.method.name.lowercase(),
+                    routingConfidence = agentMatch.confidence
+                )
+                store.saveExecution(record)
+                logger.debug { "Chat execute saved: $requestId" }
+
+                // RAG 자동 인덱싱 (성공한 실행만)
+                if (status == "SUCCESS" && conversationVectorService != null) {
+                    try {
+                        val indexed = conversationVectorService.indexExecution(record)
+                        if (indexed) {
+                            logger.debug { "RAG indexed chat execute: $requestId" }
+                        }
+                    } catch (e: Exception) {
+                        logger.warn { "RAG indexing failed for chat execute (non-critical): ${e.message}" }
+                    }
+                }
+
+                // 사용자 컨텍스트 업데이트
+                userId?.let { uid ->
+                    try {
+                        store.updateUserInteraction(
+                            userId = uid,
+                            promptLength = prompt.length,
+                            responseLength = result?.length ?: 0
+                        )
+                    } catch (e: Exception) {
+                        logger.warn { "Failed to update user context for chat execute: ${e.message}" }
+                    }
+                }
+            } catch (e: Exception) {
+                logger.warn { "Failed to save chat execute: ${e.message}" }
             }
         }
     }

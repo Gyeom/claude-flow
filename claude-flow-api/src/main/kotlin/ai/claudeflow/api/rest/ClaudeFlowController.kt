@@ -86,6 +86,39 @@ class ClaudeFlowController(
 
             val result = claudeExecutor.execute(executionRequest)
 
+            // ✅ ExecutionRecord 저장 (/execute-with-routing과 동일한 수준의 데이터 수집)
+            storage?.let { store ->
+                try {
+                    val record = ExecutionRecord(
+                        id = result.requestId,
+                        prompt = request.prompt.take(1000),
+                        result = result.result?.take(5000),
+                        status = result.status.name,
+                        agentId = "direct",  // 직접 실행이므로 에이전트 없음
+                        projectId = null,
+                        userId = null,
+                        channel = null,
+                        threadTs = null,
+                        replyTs = null,
+                        durationMs = result.durationMs,
+                        inputTokens = result.usage?.inputTokens ?: 0,
+                        outputTokens = result.usage?.outputTokens ?: 0,
+                        cost = result.usage?.let { usage ->
+                            (usage.inputTokens * 0.000003) + (usage.outputTokens * 0.000015)
+                        },
+                        error = result.error,
+                        model = request.model ?: "default",
+                        source = "api",  // 직접 API 호출
+                        routingMethod = "direct",
+                        routingConfidence = 1.0
+                    )
+                    store.saveExecution(record)
+                    logger.debug { "Direct execute saved: ${result.requestId}" }
+                } catch (e: Exception) {
+                    logger.warn { "Failed to save direct execute: ${e.message}" }
+                }
+            }
+
             val response = ExecuteResponse(
                 requestId = result.requestId,
                 success = result.status == ExecutionStatus.SUCCESS,

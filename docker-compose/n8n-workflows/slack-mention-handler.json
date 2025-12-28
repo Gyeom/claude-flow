@@ -8,7 +8,7 @@
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "slack-mention",
+        "path": "slack-event",
         "responseMode": "onReceived",
         "options": {}
       },
@@ -17,11 +17,11 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [250, 300],
-      "webhookId": "slack-mention"
+      "webhookId": "slack-event"
     },
     {
       "parameters": {
-        "jsCode": "// 메시지 유형 분류: command, mr-review, general\nconst body = $input.item.json.body || {};\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
+        "jsCode": "// 메시지 유형 분류: command, mr-review, general, skip\nconst body = $input.item.json.body || {};\nconst eventType = body.eventType || '';\n\n// 리액션 이벤트는 스킵 (피드백 핸들러에서 처리)\nif (eventType.includes('REACTION')) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'reaction event' } };\n}\n\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 빈 텍스트는 스킵\nif (!text) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'empty text' } };\n}\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
       },
       "id": "classify-message",
       "name": "Classify Message",
@@ -50,12 +50,23 @@
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "value1": "={{ $json.isMrReview === true }}",
-              "value2": true
+              "id": "mr-review-check",
+              "leftValue": "={{ $json.isMrReview }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         }
       },
       "id": "is-mr-review",
