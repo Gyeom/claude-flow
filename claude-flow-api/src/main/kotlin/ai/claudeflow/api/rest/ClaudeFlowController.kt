@@ -18,6 +18,7 @@ import ai.claudeflow.core.storage.Storage
 import ai.claudeflow.core.rag.ContextAugmentationService
 import ai.claudeflow.core.rag.AugmentationOptions
 import ai.claudeflow.core.rag.ConversationVectorService
+import ai.claudeflow.core.rag.FeedbackLearningService
 import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
 import ai.claudeflow.executor.ExecutionResult
@@ -55,7 +56,8 @@ class ClaudeFlowController(
     private val storage: Storage? = null,
     rateLimiter: Any? = null,  // RateLimiter 또는 AdvancedRateLimiter
     private val contextAugmentationService: ContextAugmentationService? = null,
-    private val conversationVectorService: ConversationVectorService? = null
+    private val conversationVectorService: ConversationVectorService? = null,
+    private val feedbackLearningService: FeedbackLearningService? = null
 ) {
     // Rate Limiter: null이면 기본 정책 적용 (보안 강화)
     private val rateLimiter: Any = rateLimiter ?: createDefaultRateLimiter()
@@ -695,6 +697,8 @@ class ClaudeFlowController(
         }
 
         try {
+            val isPositive = request.reaction in listOf("thumbsup", "+1")
+
             if (request.action == "delete") {
                 storage.deleteFeedback(request.executionId, request.userId, request.reaction)
             } else {
@@ -703,8 +707,22 @@ class ClaudeFlowController(
                     executionId = request.executionId,
                     userId = request.userId,
                     reaction = request.reaction,
-                    source = request.source  // source 필드 추가
+                    source = request.source
                 ))
+
+                // 피드백 학습 서비스에 전달 (Slack/Chat 피드백도 학습에 활용)
+                feedbackLearningService?.let { service ->
+                    try {
+                        service.recordFeedback(
+                            executionId = request.executionId,
+                            userId = request.userId,
+                            isPositive = isPositive
+                        )
+                        logger.debug { "Feedback learning recorded: ${request.executionId}, positive=$isPositive" }
+                    } catch (e: Exception) {
+                        logger.warn { "Failed to record feedback for learning: ${e.message}" }
+                    }
+                }
             }
             logger.info { "Feedback ${request.action} (source=${request.source}): ${request.executionId} - ${request.reaction}" }
             ResponseEntity.ok(FeedbackResponse(success = true))

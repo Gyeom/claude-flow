@@ -139,6 +139,9 @@ ai-review::done 라벨 적용
 ```bash
 git clone https://github.com/Gyeom/claude-flow.git
 cd claude-flow
+
+# Git Hooks 설치 (선택 - 문서 자동 업데이트 활성화)
+./scripts/install-hooks.sh
 ```
 
 ### 2. Slack 앱 생성

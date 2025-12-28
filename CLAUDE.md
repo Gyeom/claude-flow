@@ -390,29 +390,51 @@ OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
 
 ## 문서 자동 업데이트
 
-이 프로젝트의 문서는 Claude Code Hooks와 Rules를 통해 자동으로 관리됩니다.
+이 프로젝트의 문서는 **Git pre-commit hook + Claude CLI**를 통해 자동으로 관리됩니다.
 
 ### 자동화 시스템 구성
 
 ```
-코드 변경 (Edit/Write)
+git commit 실행
     ↓
-[PostToolUse Hook] → doc-sync.sh
+[Git pre-commit hook]
     ↓
-파일 타입 감지 (Repository/Plugin/Controller 등)
+1단계: 민감정보 검사 (check-sensitive-values)
     ↓
-문서 동기화 필요 여부 판단
+2단계: 문서 자동 업데이트 (doc-auto-update.sh)
     ↓
-알림 또는 자동 업데이트
+    ├── API/클래스/함수 삭제 감지
+    ├── Claude CLI로 문서 참조 검색
+    ├── 발견된 참조 자동 업데이트
+    └── 업데이트된 문서 staging에 추가
+    ↓
+커밋 완료 (코드 + 문서 함께)
 ```
 
 ### 관련 파일
 | 파일 | 역할 |
 |------|------|
+| `.git/hooks/pre-commit` | Git 커밋 전 훅 (민감정보 + 문서 업데이트) |
+| `.git/hooks/doc-auto-update.sh` | Claude CLI로 문서 자동 업데이트 |
 | `.claude/hooks/doc-sync.sh` | 코드 변경 감지 및 문서 업데이트 알림 |
 | `.claude/commands/sync-docs.md` | `/sync-docs` 명령으로 문서 동기화 |
 | `.claude/rules/documentation.md` | 파일 패턴별 문서화 규칙 정의 |
-| `docs/ARCHITECTURE.md` | Mermaid 아키텍처 다이어그램 |
+
+### Git Pre-commit Hook 동작
+
+커밋 시 자동으로:
+1. **변경 감지**: API 엔드포인트, 클래스, 함수 삭제/변경 감지
+2. **참조 검색**: Claude가 README, CLAUDE.md, docs/*.md에서 참조 검색
+3. **자동 업데이트**: 발견된 참조 수정
+4. **커밋 포함**: 업데이트된 문서가 커밋에 자동 포함
+
+```bash
+# 문서 업데이트 스킵 (필요시)
+SKIP_DOC_UPDATE=true git commit -m "message"
+
+# 타임아웃 조정 (기본 120초)
+DOC_UPDATE_TIMEOUT=60 git commit -m "message"
+```
 
 ### 자동 감지 패턴
 
