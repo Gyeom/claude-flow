@@ -80,10 +80,10 @@ class JiraAnalysisController(
             |- 프로젝트 키가 언급되면 해당 프로젝트로 필터링
             |- "XX 프로젝트", "XX 티켓", "XX 이슈" 패턴 → project = XX (대문자로 변환)
             |- 예: "dc 티켓 조회해줘" → project = DC
-            |- 예: "ccdc 이슈" → project = CCDC
+            |- 예: "proj 이슈" → project = PROJ
             |- 예: "mpa 관련" → project = MPA
             |- **중요**: 사용자가 입력한 프로젝트 키를 그대로 대문자로 변환하여 사용. 유사한 다른 프로젝트로 추측하거나 변경하지 말 것
-            |- 프로젝트 키는 정확히 사용자가 말한 것만 사용 (dc → DC, ccdc → CCDC)
+            |- 프로젝트 키는 정확히 사용자가 말한 것만 사용 (proj → PROJ)
             |
             |### 담당자 (assignee)
             |- "내 이슈", "나한테 할당된", "내가 담당" → assignee = currentUser()
@@ -387,7 +387,7 @@ class JiraAnalysisController(
      * 자연어 → JQL 변환 (Claude 기반)
      *
      * 사용자의 자연어 검색 쿼리를 JQL로 변환합니다.
-     * 예: "내가 진행중인 CCDC 버그" → project = CCDC AND assignee = currentUser() AND status = "In Progress" AND issuetype = Bug
+     * 예: "내가 진행중인 PROJ 버그" → project = PROJ AND assignee = currentUser() AND status = "In Progress" AND issuetype = Bug
      *
      * 성능 최적화:
      * - JQL 캐시: 동일한 쿼리는 5분간 캐싱

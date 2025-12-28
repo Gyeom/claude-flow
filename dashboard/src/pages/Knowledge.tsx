@@ -1222,7 +1222,7 @@ function FigmaApiSpecModal({
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., CCDC Figma 기획 문서 (v0.6)"
+              placeholder="e.g., Product Design Document (v1.0)"
               disabled={isProcessing}
               className="w-full px-4 py-2.5 rounded-lg border border-border bg-background focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
             />

@@ -953,7 +953,7 @@ class ChatStreamController(
     }
 
     /**
-     * 메시지에서 프로젝트 힌트 추출 (예: "[프로젝트: ccds-server]")
+     * 메시지에서 프로젝트 힌트 추출 (예: "[프로젝트: my-project]")
      */
     private fun extractProjectHint(message: String): String? {
         val hintPattern = Regex("""\[프로젝트:\s*([^\]]+)\]""")
@@ -1069,7 +1069,7 @@ class ChatStreamController(
      * GitLabPlugin의 mr-review 명령을 호출하여 규칙 기반 분석 결과를 가져옵니다.
      * 이 결과를 Claude 컨텍스트에 주입하여 2-Pass 리뷰 아키텍처를 구현합니다.
      *
-     * @param gitlabPath GitLab 프로젝트 경로 (예: sirius/ccds-server)
+     * @param gitlabPath GitLab 프로젝트 경로 (예: team/my-project)
      * @param mrId MR 번호
      * @param sink SSE 이벤트 전송용 sink
      * @return MR 분석 결과 컨텍스트 문자열 (실패 시 null)

@@ -29,6 +29,10 @@
           {
             "type": "command",
             "command": "./.claude/hooks/doc-sync.sh"
+          },
+          {
+            "type": "command",
+            "command": "./.claude/hooks/check-sensitive-values.sh"
           }
         ]
       }

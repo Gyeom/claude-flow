@@ -592,7 +592,7 @@ data class VectorStatsDto(
 
 data class FigmaApiSpecRequestDto(
     val figmaUrl: String,
-    val title: String? = null,        // 문서 제목 (e.g., "CCDC Figma 기획 문서 (v0.6)")
+    val title: String? = null,        // 문서 제목 (e.g., "Product Design Document (v1.0)")
     val projectId: String? = null,
     val indexToKnowledgeBase: Boolean? = true,
     val description: String? = null   // Figma 파일 설명 - AI 분석 컨텍스트로 활용 (e.g., "차량 관리, 진단 시나리오, 데이터 수집 정책 관련 화면")

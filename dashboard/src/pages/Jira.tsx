@@ -1866,7 +1866,7 @@ export function Jira() {
                   // 검색 결과를 바로 아래에 표시 (Browse 탭으로 이동하지 않음)
                 }}
                 projectKeys={allProjects.map(p => p.key)}
-                placeholder="예: 내가 진행중인 CCDC 버그, 이번주 생성된 이슈..."
+                placeholder="예: 내가 진행중인 PROJ 버그, 이번주 생성된 이슈..."
               />
               {/* 현재 검색 JQL 표시 */}
               {searchJql && (

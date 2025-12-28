@@ -434,7 +434,7 @@ export function SmartSearch({
               {!jqlResult && !isLoading && (
                 <div className="text-xs text-muted-foreground text-center">
                   <span>예시: </span>
-                  {['내 이슈 보여줘', 'CCDC 진행중인 버그', '이번주 완료된 이슈'].map((example, i) => (
+                  {['내 이슈 보여줘', 'PROJ 진행중인 버그', '이번주 완료된 이슈'].map((example, i) => (
                     <span key={i}>
                       {i > 0 && ', '}
                       <button

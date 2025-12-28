@@ -159,17 +159,17 @@ claude-flow/
     ↓
 💬 Slack에 분석 결과 + 액션 버튼 전송
     ↓ 🔨 리액션 또는 버튼 클릭
-🎫 Jira 이슈 자동 생성 (CCDC-xxx)
+🎫 Jira 이슈 자동 생성 (PROJ-xxx)
     ↓ alert-to-mr-pipeline
 📂 git checkout develop && git pull
     ↓
-🌿 git checkout -b fix/ccdc-xxx
+🌿 git checkout -b fix/proj-xxx
     ↓
 🔧 Claude Code가 코드 분석 및 수정
     ↓
 💾 git commit && git push
     ↓
-🔀 MR 생성 (fix/ccdc-xxx → develop)
+🔀 MR 생성 (fix/proj-xxx → develop)
     ↓
 📢 Slack에 완료 알림 + MR 링크
 ```
@@ -216,6 +216,27 @@ cd docker-compose && docker-compose up -d
 # 대시보드
 cd dashboard && npm run dev
 ```
+
+## 오픈소스 기여 가이드
+
+### 민감한 정보 방지
+
+이 프로젝트는 오픈소스입니다. 코드에 회사/도메인 특정 값을 포함하지 마세요.
+
+**자동 검사:**
+- **Git pre-commit hook**: 커밋 시 자동 검사 (`.git/hooks/pre-commit`)
+- **Claude hook**: 파일 편집 시 경고 (`.claude/hooks/check-sensitive-values.sh`)
+
+**피해야 할 패턴:**
+| 피해야 할 값 | 대체 예시 |
+|-------------|----------|
+| `gitlab.company.com` | `gitlab.example.com` |
+| `CCDC-123` (회사 Jira 키) | `PROJ-123` |
+| `internal/group/server` | `team/my-project` |
+| `company@email.com` | `user@example.com` |
+
+**설정 파일 예외:**
+- `config/projects.json`: 사용자 설정 파일이므로 예외
 
 ## 주요 패턴
 

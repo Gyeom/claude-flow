@@ -109,7 +109,7 @@ data class FigmaAnalysisJob(
     val figmaUrl: String,                     // 분석할 Figma URL
     val figmaFileKey: String,                 // Figma 파일 키
     val fileName: String,                     // 파일명 (Figma에서 자동 조회)
-    val title: String?,                       // 사용자 지정 제목 (e.g., "CCDC Figma 기획 문서 (v0.6)")
+    val title: String?,                       // 사용자 지정 제목 (e.g., "Product Design Document (v1.0)")
     val projectId: String?,                   // 프로젝트 ID
 
     // 상태

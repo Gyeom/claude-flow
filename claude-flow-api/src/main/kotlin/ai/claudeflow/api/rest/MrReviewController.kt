@@ -34,7 +34,7 @@ class MrReviewController(
      *
      * GitLab API 플래그를 직접 활용하여 효율적으로 분석합니다.
      *
-     * @param project GitLab 프로젝트 경로 (예: sirius/ccds-server)
+     * @param project GitLab 프로젝트 경로 (예: team/my-project)
      * @param mrId MR 번호
      * @return MrAnalysisResult
      */
@@ -215,7 +215,7 @@ class MrReviewController(
      * - AI 리뷰 지침
      * - 생성된 리뷰 프롬프트 (diff 포함)
      *
-     * @param project GitLab 프로젝트 경로 (예: sirius/ccds-server)
+     * @param project GitLab 프로젝트 경로 (예: team/my-project)
      * @param mrId MR 번호
      * @return 포맷팅된 컨텍스트 문자열
      */

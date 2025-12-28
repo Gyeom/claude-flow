@@ -211,7 +211,7 @@ cd dashboard && npm test                  # React
 Jira, GitLab 연동 에이전트는 각 프로젝트에 별도로 정의되어 있습니다:
 
 ```
-ccds-server/.claude/agents/           # CCDS 프로젝트용
-ad-data-management-server/.claude/agents/  # AD Data Management용
-authorization-server/.claude/agents/  # Authorization Server용
+my-api-server/.claude/agents/           # API 서버용
+my-web-app/.claude/agents/                 # 웹 앱용
+my-auth-server/.claude/agents/             # 인증 서버용
 ```

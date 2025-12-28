@@ -64,7 +64,7 @@
           "parameters": [
             {
               "name": "prompt",
-              "value": "=다음 장애 알람 메시지를 분석해주세요:\n\n```\n{{ $json.text }}\n```\n\n다음 JSON 형식으로만 응답해주세요:\n```json\n{\n  \"isActionable\": true/false,\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\n  \"project\": \"프로젝트 추정 (ccds-server, authorization-server, ad-data-management-server, vlc-gateway-server 중 하나 또는 null)\",\n  \"summary\": \"Jira 이슈 제목\",\n  \"description\": \"상세 설명\",\n  \"suggestedFix\": \"수정 제안 (있으면)\"\n}\n```"
+              "value": "=다음 장애 알람 메시지를 분석해주세요:\n\n```\n{{ $json.text }}\n```\n\n다음 JSON 형식으로만 응답해주세요:\n```json\n{\n  \"isActionable\": true/false,\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\n  \"project\": \"프로젝트 추정 (config/projects.json에 정의된 프로젝트 중 하나 또는 null)\",\n  \"summary\": \"Jira 이슈 제목\",\n  \"description\": \"상세 설명\",\n  \"suggestedFix\": \"수정 제안 (있으면)\"\n}\n```"
             },
             {
               "name": "model",

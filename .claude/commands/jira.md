@@ -20,7 +20,7 @@ case "$COMMAND" in
   "issue"|"i")
     if [ -z "$ARG" ]; then
       echo "❌ Usage: /jira issue <issue-key>"
-      echo "   Example: /jira issue CCDC-123"
+      echo "   Example: /jira issue PROJ-123"
       exit 1
     fi
     echo "🔍 Fetching issue: $ARG"
@@ -114,7 +114,7 @@ for status in status_order + [s for s in by_status if s not in status_order]:
   "search"|"q")
     if [ -z "$ARG" ]; then
       echo "❌ Usage: /jira search <jql-query>"
-      echo "   Example: /jira search 'project=CCDC AND status=\"In Progress\"'"
+      echo "   Example: /jira search 'project=PROJ AND status=\"In Progress\"'"
       exit 1
     fi
 
@@ -151,7 +151,7 @@ for issue in issues[:20]:
 
     if [ -z "$ISSUE_KEY" ] || [ -z "$STATUS" ]; then
       echo "❌ Usage: /jira move <issue-key> <status>"
-      echo "   Example: /jira move CCDC-123 Done"
+      echo "   Example: /jira move PROJ-123 Done"
       echo "   Statuses: To Do, In Progress, In Review, Done"
       exit 1
     fi
@@ -232,12 +232,12 @@ print(f'''Jira 이슈를 분석하고 구현 방향을 제안해줘:
   /jira analyze <key>    Claude로 이슈 분석
 
 Examples:
-  /jira issue CCDC-123
+  /jira issue PROJ-123
   /jira my
   /jira sprint
-  /jira search 'project=CCDC AND assignee=currentUser()'
-  /jira move CCDC-123 Done
-  /jira analyze CCDC-456
+  /jira search 'project=PROJ AND assignee=currentUser()'
+  /jira move PROJ-123 Done
+  /jira analyze PROJ-456
 "
     ;;
 
@@ -269,7 +269,7 @@ esac
 
 | Command | Description |
 |---------|-------------|
-| `/jira CCDC-123` | Quick issue lookup |
+| `/jira PROJ-123` | Quick issue lookup |
 | `/jira my` | My assigned issues |
 | `/jira sprint` | Current sprint board |
-| `/jira analyze CCDC-123` | AI-powered analysis |
+| `/jira analyze PROJ-123` | AI-powered analysis |

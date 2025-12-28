@@ -128,13 +128,13 @@ Claude Code의 Hook 시스템을 활용하여 프롬프트가 처리되기 **전
 {
   "workspaceRoot": "${WORKSPACE_PATH:-$HOME/workspace}",
   "aliases": {
-    "authorization-server": {
+    "auth-server": {
       "patterns": ["인가", "인가서버", "인가 서버", "auth서버", "authorization"],
       "description": "권한 관리 서버"
     },
-    "ccds-server": {
-      "patterns": ["ccds", "CCDS", "ccds서버"],
-      "description": "CCDS 서버"
+    "api-server": {
+      "patterns": ["api", "API", "api서버"],
+      "description": "API 서버"
     }
   }
 }
@@ -168,7 +168,7 @@ extract_project_candidates() {
         candidates="$candidates authorization-server"
     fi
 
-    # 2-2. 하이픈 이름 패턴 (authorization-server, ccds-server)
+    # 2-2. 하이픈 이름 패턴 (auth-server, api-server)
     echo "$prompt" | grep -oE '[a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9-]+'
 
     # 2-3. CamelCase 패턴 (AuthorizationServer)

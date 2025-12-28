@@ -306,8 +306,8 @@ flowchart TB
 ```json
 // 예시: 이 프로젝트들만 자동 리뷰 대상
 {
-  "id": "ccds-server",
-  "gitlabPath": "sirius/ccds/ccds-server"  // ← 이 필드가 있으면 리뷰 대상
+  "id": "example-api",
+  "gitlabPath": "team/example-api"  // ← 이 필드가 있으면 리뷰 대상
 }
 ```
 

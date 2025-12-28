@@ -234,7 +234,7 @@ export function convertNlToJql(input: string, projectKeys?: string[]): JqlConver
   const suggestions: string[] = []
   if (parts.length === 0) {
     suggestions.push('"내 이슈 보여줘"')
-    suggestions.push('"CCDC 진행중인 버그"')
+    suggestions.push('"PROJ 진행중인 버그"')
     suggestions.push('"이번주 생성된 이슈"')
   }
 

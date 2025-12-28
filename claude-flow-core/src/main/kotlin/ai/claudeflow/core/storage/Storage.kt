@@ -111,7 +111,7 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
             val config: ProjectsFileConfig = mapper.readValue(configFile)
             val defaultBranch = config.defaultBranch ?: "develop"
 
-            // 환경변수에서 GitLab 기본 그룹 로드 (예: sirius/ccds)
+            // 환경변수에서 GitLab 기본 그룹 로드 (예: team/subgroup)
             val gitlabGroup = System.getenv("GITLAB_GROUP")
 
             var inserted = 0
