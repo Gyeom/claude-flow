@@ -47,7 +47,8 @@ Claude Flow는 여러 데이터 소스(Slack, Dashboard Chat, API)에서 입력�
 |------|------|----------|---------|
 | Slack | n8n → `/api/v1/execute-with-routing` | "slack" | ✅ |
 | Dashboard Chat | `/api/v1/chat/stream` | "chat" | ✅ |
-| REST API | `/api/v1/execute` 또는 `/execute-with-routing` | "api" | ✅ |
+| n8n 워크플로우 | `/api/v1/chat/execute` | "slack"/"alert" 등 | ✅ |
+| REST API | `/api/v1/execute-with-routing` | "api" | ✅ |
 
 ### 문제점
 

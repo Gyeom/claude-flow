@@ -18,12 +18,13 @@ if [ -z "$PROJECT" ] || [ -z "$MR_NUMBER" ]; then
 fi
 
 # Trigger review via Claude Flow API
-curl -s -X POST "http://localhost:8080/api/v1/execute" \
+curl -s -X POST "http://localhost:8080/api/v1/chat/execute" \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "'"$PROJECT"' !'"$MR_NUMBER"' 리뷰해줘",
+    "messages": [{"role": "user", "content": "'"$PROJECT"' !'"$MR_NUMBER"' 리뷰해줘"}],
     "agentId": "code-reviewer",
-    "userId": "'"${CLAUDE_FLOW_USER_ID:-cli-user}"'"
+    "userId": "'"${CLAUDE_FLOW_USER_ID:-cli-user}"'",
+    "source": "cli"
   }'
 ```
 

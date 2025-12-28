@@ -356,10 +356,9 @@ claude-flow/
 ### Execute & Chat
 | Method | Endpoint | 설명 |
 |--------|----------|------|
-| POST | `/api/v1/execute` | Claude 실행 |
 | POST | `/api/v1/execute-with-routing` | 라우팅 + 실행 통합 |
 | POST | `/api/v1/chat/stream` | SSE 스트리밍 채팅 |
-| POST | `/api/v1/chat/execute` | 비스트리밍 채팅 |
+| POST | `/api/v1/chat/execute` | 비스트리밍 채팅 (권장) |
 | GET | `/api/v1/health` | 헬스체크 |
 
 ### Projects

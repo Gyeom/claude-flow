@@ -125,28 +125,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/execute",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/chat/execute",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "prompt",
-              "value": "=장애 수정 작업을 진행해주세요.\n\n## 작업 정보\n- 프로젝트: {{ $json.project }}\n- 프로젝트 경로: {{ $json.projectPath }}\n- Jira 이슈: {{ $json.issueKey }}\n- 브랜치: {{ $json.branchName }}\n\n## 장애 내용\n{{ $json.summary }}\n\n{{ $json.description }}\n\n## 수정 제안\n{{ $json.suggestedFix || '분석 후 수정 진행' }}\n\n## 작업 단계\n1. `cd {{ $json.projectPath }}`\n2. `git checkout {{ $json.baseBranch }}`\n3. `git pull origin {{ $json.baseBranch }}`\n4. `git checkout -b {{ $json.branchName }}`\n5. 코드 분석 및 수정\n6. `git add .`\n7. `git commit -m \"fix({{ $json.issueKey }}): {{ $json.summary }}\"`\n8. `git push origin {{ $json.branchName }}`\n9. GitLab MR 생성 ({{ $json.branchName }} → {{ $json.baseBranch }})\n\n모든 작업이 완료되면 MR URL을 알려주세요."
-            },
-            {
-              "name": "projectId",
-              "value": "={{ $json.project }}"
-            },
-            {
-              "name": "model",
-              "value": "sonnet"
-            },
-            {
-              "name": "timeout",
-              "value": 300
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '장애 수정 작업을 진행해주세요.\\n\\n## 작업 정보\\n- 프로젝트: ' + $json.project + '\\n- 프로젝트 경로: ' + $json.projectPath + '\\n- Jira 이슈: ' + $json.issueKey + '\\n- 브랜치: ' + $json.branchName + '\\n\\n## 장애 내용\\n' + $json.summary + '\\n\\n' + $json.description + '\\n\\n## 수정 제안\\n' + ($json.suggestedFix || '분석 후 수정 진행') + '\\n\\n## 작업 단계\\n1. `cd ' + $json.projectPath + '`\\n2. `git checkout ' + $json.baseBranch + '`\\n3. `git pull origin ' + $json.baseBranch + '`\\n4. `git checkout -b ' + $json.branchName + '`\\n5. 코드 분석 및 수정\\n6. `git add .`\\n7. `git commit -m \"fix(' + $json.issueKey + '): ' + $json.summary + '\"`\\n8. `git push origin ' + $json.branchName + '`\\n9. GitLab MR 생성 (' + $json.branchName + ' → ' + $json.baseBranch + ')\\n\\n모든 작업이 완료되면 MR URL을 알려주세요.' }], projectId: $json.project, model: 'sonnet', source: 'alert-pipeline', maxTurns: 10 }) }}",
         "options": {
           "timeout": 300000
         }
@@ -159,7 +141,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const claudeResponse = $input.item.json;\nconst pipelineData = $('Extract Jira Key').item.json;\n\n// Claude 응답에서 MR URL 추출\nconst response = claudeResponse.response || claudeResponse.output || '';\nconst mrUrlMatch = response.match(/https:\\/\\/gitlab[^\\s)]+merge_requests\\/\\d+/);\nconst mrUrl = mrUrlMatch ? mrUrlMatch[0] : null;\n\nconst success = !!mrUrl || response.includes('MR') || response.includes('merge request');\n\nreturn {\n  json: {\n    ...pipelineData,\n    success,\n    mrUrl,\n    claudeResponse: response.substring(0, 1000) // 로그용 일부만\n  }\n};"
+        "jsCode": "const claudeResponse = $input.item.json;\nconst pipelineData = $('Extract Jira Key').item.json;\n\n// Claude 응답에서 MR URL 추출\nconst response = claudeResponse.content || claudeResponse.response || claudeResponse.output || '';\nconst mrUrlMatch = response.match(/https:\\/\\/gitlab[^\\s)]+merge_requests\\/\\d+/);\nconst mrUrl = mrUrlMatch ? mrUrlMatch[0] : null;\n\nconst success = !!mrUrl || response.includes('MR') || response.includes('merge request');\n\nreturn {\n  json: {\n    ...pipelineData,\n    success,\n    mrUrl,\n    claudeResponse: response.substring(0, 1000) // 로그용 일부만\n  }\n};"
       },
       "id": "parse-claude-response",
       "name": "Parse Claude Response",

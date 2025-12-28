@@ -210,12 +210,13 @@ print(f'''Jira 이슈를 분석하고 구현 방향을 제안해줘:
 ''')
 ")
 
-    curl -s -X POST "http://localhost:8080/api/v1/execute" \
+    curl -s -X POST "http://localhost:8080/api/v1/chat/execute" \
       -H "Content-Type: application/json" \
       -d "{
-        \"prompt\": $(echo "$PROMPT" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'),
+        \"messages\": [{\"role\": \"user\", \"content\": $(echo "$PROMPT" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}],
         \"agentId\": \"general\",
-        \"userId\": \"${CLAUDE_FLOW_USER_ID:-cli-user}\"
+        \"userId\": \"${CLAUDE_FLOW_USER_ID:-cli-user}\",
+        \"source\": \"cli\"
       }"
     ;;
 

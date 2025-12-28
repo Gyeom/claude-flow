@@ -49,29 +49,10 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/execute",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/chat/execute",
         "sendBody": true,
-        "bodyParameters": {
-          "parameters": [
-            {
-              "name": "prompt",
-              "value": "=다음 장애 알람 메시지를 분석해주세요:\n\n```\n{{ $json.text }}\n```\n\n다음 JSON 형식으로만 응답해주세요:\n```json\n{\n  \"isActionable\": true/false,\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\n  \"project\": \"프로젝트 추정 (config/projects.json에 정의된 프로젝트 중 하나 또는 null)\",\n  \"summary\": \"Jira 이슈 제목\",\n  \"description\": \"상세 설명\",\n  \"suggestedFix\": \"수정 제안 (있으면)\"\n}\n```"
-            },
-            {
-              "name": "model",
-              "value": "haiku"
-            }
-          ]
-        },
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '다음 장애 알람 메시지를 분석해주세요:\\n\\n```\\n' + $json.text + '\\n```\\n\\n다음 JSON 형식으로만 응답해주세요:\\n```json\\n{\\n  \"isActionable\": true/false,\\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\\n  \"project\": \"프로젝트 추정 (config/projects.json에 정의된 프로젝트 중 하나 또는 null)\",\\n  \"summary\": \"Jira 이슈 제목\",\\n  \"description\": \"상세 설명\",\\n  \"suggestedFix\": \"수정 제안 (있으면)\"\\n}\\n```' }], model: 'haiku', source: 'alert', maxTurns: 1 }) }}",
         "options": {
           "timeout": 30000
         }
@@ -79,12 +60,12 @@
       "id": "analyze-alert",
       "name": "Claude Analyze Alert",
       "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "typeVersion": 4.2,
       "position": [800, 200]
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.item.json;\nconst text = response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 정보 가져오기\nconst prevData = $('Filter Alert Message').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: prevData.channel,\n    messageTs: prevData.messageTs,\n    threadTs: prevData.threadTs,\n    originalText: prevData.text\n  }\n};"
+        "jsCode": "const response = $input.item.json;\nconst text = response.content || response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 정보 가져오기\nconst prevData = $('Filter Alert Message').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: prevData.channel,\n    messageTs: prevData.messageTs,\n    threadTs: prevData.threadTs,\n    originalText: prevData.text\n  }\n};"
       },
       "id": "parse-analysis",
       "name": "Parse Analysis",

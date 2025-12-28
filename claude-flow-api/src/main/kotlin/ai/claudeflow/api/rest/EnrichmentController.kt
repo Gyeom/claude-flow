@@ -22,7 +22,7 @@ private val logger = KotlinLogging.logger {}
  * 사용 흐름:
  * 1. n8n에서 Slack 메시지 수신
  * 2. /api/v1/enrich 호출하여 컨텍스트 주입
- * 3. enrichedPrompt로 /api/v1/execute 또는 /api/v1/execute-with-routing 호출
+ * 3. enrichedPrompt로 /api/v1/chat/execute 또는 /api/v1/execute-with-routing 호출
  */
 @RestController
 @RequestMapping("/api/v1")

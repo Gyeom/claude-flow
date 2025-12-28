@@ -903,7 +903,7 @@ Slack → SlackBridge → n8n(slack-router) → [분류] → Handler → REST AP
 ```
 
 **주요 API**:
-- `POST /api/v1/execute`: Claude 실행
+- `POST /api/v1/chat/execute`: Claude 실행 (권장)
 - `POST /api/v1/execute-with-routing`: 라우팅 포함 실행
 - `POST /api/v1/enrich`: 컨텍스트 증강
 - `POST /api/v1/feedback`: 피드백 저장

@@ -104,8 +104,9 @@ In Slack:
 ### Execute API
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/v1/execute` | Execute Claude (single turn) |
 | POST | `/api/v1/execute-with-routing` | Smart routing + execution |
+| POST | `/api/v1/chat/stream` | SSE streaming chat |
+| POST | `/api/v1/chat/execute` | Non-streaming chat (recommended) |
 
 ### Agents API (v2)
 | Method | Endpoint | Description |
