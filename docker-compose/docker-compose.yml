@@ -77,6 +77,9 @@ services:
       - GITLAB_PROJECT=${GITLAB_PROJECT:-}
       - GITLAB_GROUP=${GITLAB_GROUP:-}
       - GITLAB_TOKEN=${GITLAB_TOKEN:-}
+      # Claude Flow API 설정 (워크플로우에서 사용)
+      # 로컬 개발: host.docker.internal:8080, Docker 전체 배포: claude-flow:8080
+      - CLAUDE_FLOW_API_URL=${CLAUDE_FLOW_API_URL:-http://host.docker.internal:8080}
       # Slack 설정
       - SLACK_REVIEW_CHANNEL=${SLACK_REVIEW_CHANNEL:-general}
       # n8n 관리자 계정 (워크플로우 자동 동기화용)

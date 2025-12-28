@@ -434,11 +434,12 @@ class JiraAnalysisController(
 
         try {
             // 4. 비동기 실행 + 시스템 프롬프트 분리
+            // Haiku 사용: 단순 규칙 기반 변환이라 빠르고 저렴한 모델로 충분
             val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = userPrompt,
                 systemPrompt = JQL_SYSTEM_PROMPT,  // 캐시 가능한 시스템 프롬프트
                 workingDirectory = System.getProperty("user.dir"),
-                model = "claude-sonnet-4-20250514"
+                model = "claude-3-5-haiku-20241022"
             ))
 
             val response = parseJqlResponse(result.result ?: "")
@@ -519,10 +520,11 @@ class JiraAnalysisController(
 
         try {
             // 비동기 실행
+            // Haiku 사용: 단순 라벨 분류라 빠르고 저렴한 모델로 충분
             val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = prompt,
                 workingDirectory = System.getProperty("user.dir"),
-                model = "claude-sonnet-4-20250514"
+                model = "claude-3-5-haiku-20241022"
             ))
 
             // JSON 파싱 시도
@@ -593,11 +595,12 @@ class JiraAnalysisController(
 
         try {
             // 3. 비동기 실행 + 시스템 프롬프트 분리
+            // Haiku 사용: 단순 텍스트 분류/추출이라 빠르고 저렴한 모델로 충분
             val result = claudeExecutor.executeAsync(ExecutionRequest(
                 prompt = userPrompt,
                 systemPrompt = ISSUE_TEXT_SYSTEM_PROMPT,  // 캐시 가능한 시스템 프롬프트
                 workingDirectory = System.getProperty("user.dir"),
-                model = "claude-sonnet-4-20250514"
+                model = "claude-3-5-haiku-20241022"
             ))
 
             val response = parseIssueTextResponse(result.result ?: "")
