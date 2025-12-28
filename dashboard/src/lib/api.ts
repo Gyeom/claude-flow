@@ -223,7 +223,11 @@ function transformDashboardStats(
     feedback: {
       thumbsUp: overview?.feedback.positive ?? data.thumbsUp,
       thumbsDown: overview?.feedback.negative ?? data.thumbsDown,
-      satisfactionScore: overview?.feedback.satisfactionRate ?? data.satisfactionScore,
+      // satisfactionRate (0.0~1.0) → satisfactionScore (NPS 스타일: -100~100) 변환
+      // NPS = (2 * satisfactionRate - 1) * 100
+      satisfactionScore: overview?.feedback.satisfactionRate != null
+        ? (2 * overview.feedback.satisfactionRate - 1) * 100
+        : data.satisfactionScore,
     },
   }
 }

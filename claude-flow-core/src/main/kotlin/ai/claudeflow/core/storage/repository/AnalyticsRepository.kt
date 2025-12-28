@@ -51,10 +51,22 @@ class AnalyticsRepository(
         )
     }
 
+    /**
+     * 백분위수 계산 (보간법 사용)
+     * NumPy의 linear interpolation 방식과 동일
+     */
     private fun calculatePercentile(sortedList: List<Long>, percentile: Int): Long {
         if (sortedList.isEmpty()) return 0
-        val index = (percentile / 100.0 * sortedList.size).toInt().coerceIn(0, sortedList.size - 1)
-        return sortedList[index]
+        if (sortedList.size == 1) return sortedList[0]
+
+        // 정확한 백분위수 인덱스 계산 (0-based)
+        val exactIndex = percentile / 100.0 * (sortedList.size - 1)
+        val lowerIndex = exactIndex.toInt()
+        val upperIndex = (lowerIndex + 1).coerceAtMost(sortedList.size - 1)
+        val fraction = exactIndex - lowerIndex
+
+        // 선형 보간
+        return (sortedList[lowerIndex] + (sortedList[upperIndex] - sortedList[lowerIndex]) * fraction).toLong()
     }
 
     /**
