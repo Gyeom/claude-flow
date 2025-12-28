@@ -606,6 +606,67 @@ class FeedbackRepository(
     }
 
     /**
+     * GitLab 피드백 조회 (project_id + mr_iid로)
+     * Interactions API에서 MR 리뷰 실행의 피드백을 조회할 때 사용
+     */
+    fun findGitLabFeedbackByProjectMr(projectId: String, mrIid: Int): List<FeedbackRecord> {
+        val sql = """
+            SELECT f.*, f.gitlab_project_id, f.gitlab_mr_iid, f.gitlab_note_id, f.comment
+            FROM feedback f
+            WHERE f.gitlab_project_id = ? AND f.gitlab_mr_iid = ?
+        """.trimIndent()
+        return executeQuery(sql, projectId, mrIid) { mapRowWithGitLab(it) }
+    }
+
+    /**
+     * 여러 프로젝트+MR에 대한 GitLab 피드백을 한 번에 조회 (batch)
+     * @param projectMrPairs (projectId, mrIid) 쌍의 리스트
+     * @return "projectId:mrIid"를 키로 하는 맵
+     */
+    fun findGitLabFeedbackByProjectMrs(projectMrPairs: List<Pair<String, Int>>): Map<String, List<FeedbackRecord>> {
+        if (projectMrPairs.isEmpty()) return emptyMap()
+
+        // 각 쌍에 대해 OR 조건으로 쿼리
+        val conditions = projectMrPairs.joinToString(" OR ") {
+            "(gitlab_project_id = ? AND gitlab_mr_iid = ?)"
+        }
+        val params = projectMrPairs.flatMap { listOf(it.first, it.second) }.toTypedArray()
+
+        val sql = """
+            SELECT f.*, f.gitlab_project_id, f.gitlab_mr_iid, f.gitlab_note_id, f.comment
+            FROM feedback f
+            WHERE $conditions
+        """.trimIndent()
+
+        val feedbacks = executeQuery(sql, *params) { mapRowWithGitLab(it) }
+
+        // projectId:mrIid 형태로 그룹화
+        return feedbacks.groupBy { fb ->
+            "${fb.gitlabProjectId}:${fb.gitlabMrIid}"
+        }
+    }
+
+    /**
+     * GitLab 관련 컬럼을 포함한 FeedbackRecord 매핑
+     */
+    private fun mapRowWithGitLab(rs: java.sql.ResultSet): FeedbackRecord {
+        return FeedbackRecord(
+            id = rs.getString("id"),
+            executionId = rs.getString("execution_id"),
+            userId = rs.getString("user_id"),
+            reaction = rs.getString("reaction"),
+            category = rs.getString("category") ?: FeedbackRecord.categorizeReaction(rs.getString("reaction")),
+            source = rs.getString("source") ?: "unknown",
+            isVerified = rs.getInt("is_verified") == 1,
+            verifiedAt = rs.getString("verified_at")?.let { java.time.Instant.parse(it) },
+            createdAt = java.time.Instant.parse(rs.getString("created_at")),
+            gitlabProjectId = rs.getString("gitlab_project_id"),
+            gitlabMrIid = rs.getInt("gitlab_mr_iid").takeIf { !rs.wasNull() },
+            gitlabNoteId = rs.getInt("gitlab_note_id").takeIf { !rs.wasNull() }
+        )
+    }
+
+    /**
      * GitLab 피드백 통계
      */
     fun getGitLabFeedbackStats(dateRange: DateRange? = null): FeedbackStats {

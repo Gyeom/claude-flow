@@ -112,7 +112,11 @@ data class FeedbackRecord(
     val source: String = "unknown",  // slack, chat, gitlab_emoji, gitlab_note, api
     val isVerified: Boolean = false,  // 요청자의 피드백만 검증됨
     val verifiedAt: Instant? = null,
-    val createdAt: Instant = Instant.now()
+    val createdAt: Instant = Instant.now(),
+    // GitLab 관련 필드 (GitLab 소스 피드백용)
+    val gitlabProjectId: String? = null,
+    val gitlabMrIid: Int? = null,
+    val gitlabNoteId: Int? = null
 ) {
     companion object {
         /**

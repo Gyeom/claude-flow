@@ -42,7 +42,7 @@ function App() {
         } />
         {/* Redirects for old routes */}
         <Route path="/history" element={<Navigate to="/interactions" replace />} />
-        <Route path="/gitlab-reviews" element={<Navigate to="/interactions?sources=mr_review" replace />} />
+        <Route path="/gitlab-reviews" element={<Navigate to="/interactions" replace />} />
         <Route path="/workflows" element={
           <Suspense fallback={<PageLoader />}>
             <Workflows />

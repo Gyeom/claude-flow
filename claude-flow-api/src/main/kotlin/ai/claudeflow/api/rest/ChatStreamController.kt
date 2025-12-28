@@ -497,7 +497,8 @@ class ChatStreamController(
                     durationMs = result.durationMs,
                     usage = result.usage,
                     cost = result.cost,
-                    error = result.error
+                    error = result.error,
+                    source = request.source
                 )
 
                 ResponseEntity.ok(ChatResponse(
@@ -788,10 +789,18 @@ class ChatStreamController(
         durationMs: Long,
         usage: ai.claudeflow.executor.TokenUsage?,
         cost: Double?,
-        error: String?
+        error: String?,
+        source: String? = null
     ) {
         storage?.let { store ->
             try {
+                // source 결정: scheduled + code-reviewer → mr_review
+                val effectiveSource = when {
+                    source == "scheduled" && agentMatch.agent.id == "code-reviewer" -> "mr_review"
+                    source != null -> source
+                    else -> "chat"
+                }
+
                 val record = ExecutionRecord(
                     id = requestId,
                     prompt = prompt.take(1000),
@@ -811,7 +820,7 @@ class ChatStreamController(
                     },
                     error = error,
                     model = model,
-                    source = "chat",
+                    source = effectiveSource,
                     routingMethod = agentMatch.method.name.lowercase(),
                     routingConfidence = agentMatch.confidence
                 )

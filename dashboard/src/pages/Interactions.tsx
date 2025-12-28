@@ -54,6 +54,7 @@ export function Interactions() {
     queryFn: () => interactionsApi.getStatsBySource(days),
   })
 
+
   // Interactions 조회
   const { data: interactionsData, isLoading, error, refetch } = useQuery({
     queryKey: ['interactions', sourceFilter, days, page, pageSize],

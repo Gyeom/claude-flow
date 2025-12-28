@@ -16,7 +16,12 @@ data class ChatRequest(
     val model: String? = null,
     val maxTurns: Int? = null,
     // 세션 컨텍스트 (후속 질문 시 에이전트 유지용)
-    val sessionContext: SessionContext? = null
+    val sessionContext: SessionContext? = null,
+    // 요청 소스 (chat, scheduled, slack, api 등)
+    // scheduled → mr_review로 변환됨
+    val source: String? = null,
+    // MR 재분석 건너뛰기 (이미 컨텍스트 포함된 경우)
+    val skipMrAnalysis: Boolean = false
 )
 
 /**

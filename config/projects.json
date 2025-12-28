@@ -8,6 +8,7 @@
       "description": "Slack AI Agent Platform",
       "path": "claude-flow",
       "gitRemote": "https://github.com/anthropics/claude-flow",
+      "gitlabPath": "",
       "isDefault": true
     },
     {

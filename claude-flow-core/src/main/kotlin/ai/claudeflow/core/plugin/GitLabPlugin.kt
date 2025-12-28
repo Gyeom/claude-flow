@@ -111,6 +111,18 @@ class GitLabPlugin(
             description = "MR에 라벨 추가",
             usage = "/gitlab mr-add-label <mr_id> <label>",
             examples = listOf("/gitlab mr-add-label 123 \"ai-review::done\"")
+        ),
+        PluginCommand(
+            name = "mr-notes",
+            description = "MR 코멘트 목록 조회",
+            usage = "/gitlab mr-notes <project> <mr_id>",
+            examples = listOf("/gitlab mr-notes my-project 123")
+        ),
+        PluginCommand(
+            name = "note-emojis",
+            description = "코멘트의 이모지 조회",
+            usage = "/gitlab note-emojis <project> <mr_id> <note_id>",
+            examples = listOf("/gitlab note-emojis my-project 123 456789")
         )
     )
 
@@ -438,6 +450,19 @@ class GitLabPlugin(
                     }
                 }
                 addMrLabel(project, mrId, label)
+            }
+            // MR 노트 조회
+            "mr-notes" -> {
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
+                val project = args["project"] as? String ?: return PluginResult(false, error = "Project required")
+                getMrNotes(project, mrId)
+            }
+            // 노트 이모지 조회
+            "note-emojis" -> {
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
+                val noteId = (args["note_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "Note ID required")
+                val project = args["project"] as? String ?: return PluginResult(false, error = "Project required")
+                getNoteEmojis(project, mrId, noteId)
             }
             else -> PluginResult(false, error = "Unknown command: $command")
         }
@@ -1261,6 +1286,71 @@ class GitLabPlugin(
         } catch (e: Exception) {
             logger.error(e) { "Failed to add label to MR !$mrId" }
             PluginResult(false, error = "라벨 추가 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * MR 노트(코멘트) 목록 조회
+     * GET /api/v4/projects/:id/merge_requests/:merge_request_iid/notes
+     */
+    private fun getMrNotes(project: String, mrId: Int): PluginResult {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId/notes?per_page=100"
+
+        return try {
+            val response = apiGet(url)
+            val notes = mapper.readValue<List<Map<String, Any>>>(response)
+
+            val formatted = notes.map { note ->
+                mapOf(
+                    "id" to note["id"],
+                    "body" to (note["body"] as? String)?.take(200),
+                    "author" to (note["author"] as? Map<*, *>)?.get("username"),
+                    "created_at" to note["created_at"],
+                    "system" to note["system"],
+                    "resolvable" to note["resolvable"]
+                )
+            }
+
+            PluginResult(
+                success = true,
+                data = formatted,
+                message = "MR !${mrId}에 ${notes.size}개 코멘트"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get notes for MR !$mrId" }
+            PluginResult(false, error = "노트 조회 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * 노트의 이모지(Award Emoji) 조회
+     * GET /api/v4/projects/:id/merge_requests/:merge_request_iid/notes/:note_id/award_emoji
+     */
+    private fun getNoteEmojis(project: String, mrId: Int, noteId: Int): PluginResult {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId/notes/$noteId/award_emoji"
+
+        return try {
+            val response = apiGet(url)
+            val emojis = mapper.readValue<List<Map<String, Any>>>(response)
+
+            val formatted = emojis.map { emoji ->
+                mapOf(
+                    "id" to emoji["id"],
+                    "name" to emoji["name"],
+                    "user_id" to (emoji["user"] as? Map<*, *>)?.get("id"),
+                    "username" to (emoji["user"] as? Map<*, *>)?.get("username"),
+                    "created_at" to emoji["created_at"]
+                )
+            }
+
+            PluginResult(
+                success = true,
+                data = formatted,
+                message = "노트 ${noteId}에 ${emojis.size}개 이모지"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get emojis for note $noteId" }
+            PluginResult(false, error = "이모지 조회 실패: ${e.message}")
         }
     }
 

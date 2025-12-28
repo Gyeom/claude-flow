@@ -154,6 +154,48 @@ class PluginController(
         ))
     }
 
+    /**
+     * GitLab MR 노트(코멘트) 목록 조회
+     */
+    @GetMapping("/gitlab/mrs/{project}/{mrId}/notes")
+    fun getGitLabMRNotes(
+        @PathVariable project: String,
+        @PathVariable mrId: Int
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("gitlab", "mr-notes", mapOf(
+            "project" to project,
+            "mr_id" to mrId
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * GitLab 노트 이모지(Award Emoji) 조회
+     */
+    @GetMapping("/gitlab/mrs/{project}/{mrId}/notes/{noteId}/emojis")
+    fun getGitLabNoteEmojis(
+        @PathVariable project: String,
+        @PathVariable mrId: Int,
+        @PathVariable noteId: Int
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("gitlab", "note-emojis", mapOf(
+            "project" to project,
+            "mr_id" to mrId,
+            "note_id" to noteId
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
     // ==================== Jira 플러그인 전용 API ====================
 
     /**

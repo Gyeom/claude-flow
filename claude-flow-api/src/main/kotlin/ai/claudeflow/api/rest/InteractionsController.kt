@@ -58,7 +58,52 @@ class InteractionsController(
 
         // Batch fetch feedbacks for all execution IDs
         val executionIds = items.map { it.id }
-        val feedbacksByExecutionId = storage.feedbackRepository.findByExecutionIds(executionIds)
+        val feedbacksByExecutionId = storage.feedbackRepository.findByExecutionIds(executionIds).toMutableMap()
+
+        // MR 리뷰 실행의 경우 GitLab 피드백도 조회 (gitlabPath + mrIid 기반)
+        // Chat에서 MR 리뷰 요청 시 prompt에 GitLab path와 MR IID가 포함되어 있음
+        val mrReviewItems = items.filter {
+            (it.source == "mr_review" || it.source == "chat") &&
+            (it.mrIid != null || it.prompt.contains("**MR**:"))
+        }
+        if (mrReviewItems.isNotEmpty()) {
+            // 프로젝트 ID -> GitLab path 매핑 캐시
+            val projectGitlabPaths = mutableMapOf<String, String>()
+            mrReviewItems.mapNotNull { it.projectId }.distinct().forEach { projectId ->
+                storage.projectRepository.findById(projectId)?.gitlabPath?.let { path ->
+                    projectGitlabPaths[projectId] = path
+                }
+            }
+
+            // GitLab path + MR IID 쌍 추출
+            val projectMrPairs = mrReviewItems.mapNotNull { exec ->
+                val gitlabPath = exec.projectId?.let { projectGitlabPaths[it] }
+                    ?: extractGitlabPathFromPrompt(exec.prompt)
+                val mrIid = exec.mrIid ?: extractMrIidFromPrompt(exec.prompt)
+                if (gitlabPath != null && mrIid != null) {
+                    Pair(gitlabPath, mrIid)
+                } else null
+            }.distinct()
+
+            if (projectMrPairs.isNotEmpty()) {
+                val gitlabFeedbacks = storage.feedbackRepository.findGitLabFeedbackByProjectMrs(projectMrPairs)
+
+                // GitLab 피드백을 execution ID 기준으로 매핑
+                mrReviewItems.forEach { exec ->
+                    val gitlabPath = exec.projectId?.let { projectGitlabPaths[it] }
+                        ?: extractGitlabPathFromPrompt(exec.prompt)
+                    val mrIid = exec.mrIid ?: extractMrIidFromPrompt(exec.prompt)
+                    if (gitlabPath != null && mrIid != null) {
+                        val key = "$gitlabPath:$mrIid"
+                        val gitlabFbs = gitlabFeedbacks[key] ?: emptyList()
+                        if (gitlabFbs.isNotEmpty()) {
+                            val existing = feedbacksByExecutionId[exec.id] ?: emptyList()
+                            feedbacksByExecutionId[exec.id] = existing + gitlabFbs
+                        }
+                    }
+                }
+            }
+        }
 
         val response = InteractionsResponse(
             items = items.map { it.toDto(feedbacksByExecutionId[it.id]) },
@@ -155,6 +200,38 @@ class InteractionsController(
             )},
             createdAt = createdAt.toString()
         )
+    }
+
+    /**
+     * 프롬프트에서 GitLab path 추출
+     * 예: "**프로젝트**: group/subgroup/project-name" -> "group/subgroup/project-name"
+     */
+    private fun extractGitlabPathFromPrompt(prompt: String): String? {
+        // **프로젝트**: group/subgroup/xxx 패턴
+        val projectPattern = Regex("""\*\*프로젝트\*\*:\s*([^\s\n]+)""")
+        projectPattern.find(prompt)?.groupValues?.get(1)?.let { return it }
+
+        // gitlab.xxx/path 패턴
+        val gitlabUrlPattern = Regex("""gitlab\.[^/]+/([^/]+/[^/]+/[^\s\n/-]+)""")
+        gitlabUrlPattern.find(prompt)?.groupValues?.get(1)?.let { return it }
+
+        return null
+    }
+
+    /**
+     * 프롬프트에서 MR IID 추출
+     * 예: "**MR**: !1 - refactor: ..." -> 1
+     */
+    private fun extractMrIidFromPrompt(prompt: String): Int? {
+        // **MR**: !N 패턴
+        val mrPattern = Regex("""\*\*MR\*\*:\s*!(\d+)""")
+        mrPattern.find(prompt)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+
+        // merge_requests/N 패턴
+        val urlPattern = Regex("""merge_requests/(\d+)""")
+        urlPattern.find(prompt)?.groupValues?.get(1)?.toIntOrNull()?.let { return it }
+
+        return null
     }
 }
 
