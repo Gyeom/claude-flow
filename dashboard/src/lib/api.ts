@@ -102,7 +102,21 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit, base = API_B
   })
 
   if (!response.ok) {
-    throw new Error(`API Error: ${response.status} ${response.statusText}`)
+    // 에러 응답 본문 파싱 시도
+    let errorMessage = `API Error: ${response.status} ${response.statusText}`
+    try {
+      const errorBody = await response.json()
+      if (errorBody.error) {
+        errorMessage = errorBody.error
+      } else if (errorBody.errorMessages && Array.isArray(errorBody.errorMessages)) {
+        errorMessage = errorBody.errorMessages.join(', ')
+      } else if (errorBody.message) {
+        errorMessage = errorBody.message
+      }
+    } catch {
+      // JSON 파싱 실패 시 기본 에러 메시지 사용
+    }
+    throw new Error(errorMessage)
   }
 
   return response.json()

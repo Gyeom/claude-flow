@@ -477,8 +477,9 @@ export function Jira() {
         }
       }
     },
-    onError: () => {
-      toast.error('상태 변경 중 오류가 발생했습니다')
+    onError: (error) => {
+      console.error('Transition error:', error)
+      toast.error(`상태 변경 중 오류가 발생했습니다: ${error instanceof Error ? error.message : String(error)}`)
     },
   })
 

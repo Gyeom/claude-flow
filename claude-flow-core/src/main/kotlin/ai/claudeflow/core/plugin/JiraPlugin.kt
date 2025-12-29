@@ -193,7 +193,8 @@ class JiraPlugin : BasePlugin() {
                 args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
                 args["status"] as? String ?: return PluginResult(false, error = "Status required"),
                 args["due_date"] as? String,
-                args["start_date"] as? String
+                args["start_date"] as? String,
+                args["resolution"] as? String
             )
             "get_transitions" -> getAvailableTransitions(
                 args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required")
@@ -383,10 +384,11 @@ class JiraPlugin : BasePlugin() {
         issueKey: String,
         targetStatus: String,
         dueDate: String? = null,
-        startDate: String? = null
+        startDate: String? = null,
+        resolution: String? = null
     ): PluginResult {
         // 먼저 가능한 전환 조회
-        val transitionsUrl = "$baseUrl/rest/api/3/issue/$issueKey/transitions"
+        val transitionsUrl = "$baseUrl/rest/api/3/issue/$issueKey/transitions?expand=transitions.fields"
 
         return try {
             val response = apiGet(transitionsUrl)
@@ -405,6 +407,11 @@ class JiraPlugin : BasePlugin() {
                 )
             }
 
+            // 전환에 필요한 필드 확인
+            val transitionFields = transition["fields"] as? Map<String, Any> ?: emptyMap()
+            val resolutionField = transitionFields["resolution"] as? Map<String, Any>
+            val resolutionRequired = resolutionField?.get("required") == true
+
             // 전환 실행 - 필수 필드 포함
             val bodyMap = mutableMapOf<String, Any>(
                 "transition" to mapOf("id" to transition["id"])
@@ -419,6 +426,23 @@ class JiraPlugin : BasePlugin() {
                 // customfield_10015는 일반적인 Start date 커스텀 필드 ID
                 // 프로젝트에 따라 다를 수 있음
                 fields["customfield_10015"] = startDate
+            }
+
+            // Resolution 필드 처리
+            if (resolution != null) {
+                fields["resolution"] = mapOf("name" to resolution)
+            } else if (resolutionRequired) {
+                // Resolution이 필수이지만 지정되지 않은 경우 기본값 사용
+                val targetTo = (transition["to"] as? Map<*, *>)?.get("name") as? String ?: ""
+                val defaultResolution = when {
+                    targetTo.contains("완료", ignoreCase = true) ||
+                    targetTo.contains("Done", ignoreCase = true) -> "Done"
+                    targetTo.contains("취소", ignoreCase = true) ||
+                    targetTo.contains("Cancel", ignoreCase = true) -> "Won't Do"
+                    else -> "Done"
+                }
+                fields["resolution"] = mapOf("name" to defaultResolution)
+                logger.info { "Auto-setting resolution to '$defaultResolution' for transition to '$targetStatus'" }
             }
 
             if (fields.isNotEmpty()) {
