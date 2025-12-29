@@ -511,6 +511,89 @@ class PluginController(
             error = result.error
         ))
     }
+
+    // ============================================================
+    // 트랜지션 사전 검증 및 MR 링크 관련 API
+    // ============================================================
+
+    /**
+     * Jira 이슈의 연결된 링크 조회 (Issue Links + Remote Links)
+     */
+    @GetMapping("/jira/issues/{issueKey}/links")
+    fun getJiraIssueLinks(
+        @PathVariable issueKey: String
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "get_issue_links", mapOf("issue_key" to issueKey))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * Jira 이슈에 웹 링크(Remote Link) 추가
+     * GitLab MR, GitHub PR 등 외부 URL 연결
+     */
+    @PostMapping("/jira/issues/{issueKey}/remote-links")
+    fun addJiraRemoteLink(
+        @PathVariable issueKey: String,
+        @RequestBody request: JiraRemoteLinkRequest
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "add_remote_link", mapOf(
+            "issue_key" to issueKey,
+            "url" to request.url,
+            "title" to request.title
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * 트랜지션 실행 가능 여부 사전 검증
+     * MR 링크 필요 여부, 필수 필드 등 확인
+     */
+    @GetMapping("/jira/issues/{issueKey}/transitions/{transitionId}/requirements")
+    fun checkTransitionRequirements(
+        @PathVariable issueKey: String,
+        @PathVariable transitionId: String
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "check_transition_requirements", mapOf(
+            "issue_key" to issueKey,
+            "transition_id" to transitionId
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
+     * GitLab에서 Jira 이슈 키로 MR 검색
+     */
+    @GetMapping("/gitlab/mrs/search")
+    fun searchGitLabMRsByIssueKey(
+        @RequestParam issueKey: String,
+        @RequestParam(required = false) project: String?
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val args = mutableMapOf<String, Any>("issue_key" to issueKey)
+        project?.let { args["project"] = it }
+
+        val result = pluginManager.execute("gitlab", "search-mrs-by-issue", args)
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
 }
 
 // DTOs
@@ -594,4 +677,9 @@ data class JiraLabelRequest(
 data class JiraLinkRequest(
     val linkType: String,  // "blocks", "relates", "duplicates" etc.
     val targetIssue: String
+)
+
+data class JiraRemoteLinkRequest(
+    val url: String,       // 외부 URL (GitLab MR, GitHub PR 등)
+    val title: String      // 링크 제목 (예: "MR: Fix login bug")
 )

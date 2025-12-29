@@ -53,6 +53,7 @@ import {
 import { Card } from '@/components/Card'
 import { SmartSearch } from '@/components/jira/SmartSearch'
 import { SmartIssueCreator } from '@/components/jira/SmartIssueCreator'
+import { MRLinkDialog } from '@/components/jira/MRLinkDialog'
 import { jiraApi, type JiraIssueListItem, type JiraIssue, type JiraComment, type JiraProject, type JiraBoard, type JiraSprint } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -174,6 +175,14 @@ export function Jira() {
     startDate: string
     dueDate: string
   }>({ startDate: '', dueDate: '' })
+
+  // MR Link dialog state
+  const [mrLinkDialog, setMrLinkDialog] = useState<{
+    issueKey: string
+    transitionId: string
+    transitionName: string
+    pendingStatus: string
+  } | null>(null)
 
   // Page Tab state
   const [activeTab, setActiveTab] = useState<PageTab>('browse')
@@ -393,7 +402,7 @@ export function Jira() {
       dueDate?: string
       startDate?: string
     }) => jiraApi.transitionIssue(issueKey, status, { dueDate, startDate }),
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
       if (data.success) {
         toast.success(`${variables.issueKey}를 "${variables.status}"로 이동했습니다`)
         queryClient.invalidateQueries({ queryKey: ['jira'] })
@@ -401,6 +410,38 @@ export function Jira() {
         setTransitionDates({ startDate: '', dueDate: '' })
       } else {
         const errorMsg = data.error || ''
+
+        // ScriptRunner validator 에러 감지 (MR 링크 필요)
+        if (errorMsg.includes('ScriptRunner') || errorMsg.includes('Script Validator')) {
+          // 트랜지션 ID 가져오기
+          const transitionsResult = await jiraApi.getTransitions(variables.issueKey)
+          const transition = transitionsResult.data?.transitions?.find(
+            t => t.name.toLowerCase() === variables.status.toLowerCase()
+          )
+
+          if (transition) {
+            // 사전 검증: MR 링크 필요 여부 확인
+            const reqResult = await jiraApi.checkTransitionRequirements(
+              variables.issueKey,
+              transition.id
+            )
+
+            if (reqResult.success && reqResult.data && !reqResult.data.hasMRLink) {
+              // MR 링크 다이얼로그 표시
+              setMrLinkDialog({
+                issueKey: variables.issueKey,
+                transitionId: transition.id,
+                transitionName: variables.status,
+                pendingStatus: variables.status,
+              })
+              return
+            }
+          }
+
+          // 일반 ScriptRunner 에러
+          toast.error('워크플로우 검증에 실패했습니다. Jira 관리자에게 문의하세요.')
+          return
+        }
 
         // 필수 필드 에러 감지 (기한, Start date)
         if (errorMsg.includes('필드') && (errorMsg.includes('기한') || errorMsg.includes('Start date') || errorMsg.includes('date'))) {
@@ -1628,6 +1669,24 @@ export function Jira() {
             setShowCreateModal(false)
             setSelectedIssue(issueKey)
             queryClient.invalidateQueries({ queryKey: ['jira'] })
+          }}
+        />
+      )}
+
+      {/* MR Link Dialog */}
+      {mrLinkDialog && (
+        <MRLinkDialog
+          issueKey={mrLinkDialog.issueKey}
+          transitionId={mrLinkDialog.transitionId}
+          transitionName={mrLinkDialog.transitionName}
+          onClose={() => setMrLinkDialog(null)}
+          onLinked={() => {
+            setMrLinkDialog(null)
+            // MR 연결 후 트랜지션 재시도
+            transitionMutation.mutate({
+              issueKey: mrLinkDialog.issueKey,
+              status: mrLinkDialog.pendingStatus,
+            })
           }}
         />
       )}

@@ -123,6 +123,12 @@ class GitLabPlugin(
             description = "코멘트의 이모지 조회",
             usage = "/gitlab note-emojis <project> <mr_id> <note_id>",
             examples = listOf("/gitlab note-emojis my-project 123 456789")
+        ),
+        PluginCommand(
+            name = "search-mrs-by-issue",
+            description = "Jira 이슈 키로 관련 MR 검색 (커밋 메시지, 브랜치명, 설명에서)",
+            usage = "/gitlab search-mrs-by-issue <issue-key> [project]",
+            examples = listOf("/gitlab search-mrs-by-issue PROJ-123", "/gitlab search-mrs-by-issue PROJ-123 my-project")
         )
     )
 
@@ -464,6 +470,11 @@ class GitLabPlugin(
                 val project = args["project"] as? String ?: return PluginResult(false, error = "Project required")
                 getNoteEmojis(project, mrId, noteId)
             }
+            // Jira 이슈 키로 MR 검색
+            "search-mrs-by-issue" -> searchMRsByIssueKey(
+                args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
+                args["project"] as? String
+            )
             else -> PluginResult(false, error = "Unknown command: $command")
         }
     }
@@ -1360,5 +1371,103 @@ class GitLabPlugin(
     private fun encodeProject(project: String): String {
         val resolved = resolveProject(project)
         return java.net.URLEncoder.encode(resolved, "UTF-8")
+    }
+
+    // ============================================================
+    // Jira 이슈 키로 MR 검색
+    // ============================================================
+
+    /**
+     * Jira 이슈 키로 관련 MR 검색
+     *
+     * 검색 대상:
+     * - MR 제목 (title)
+     * - MR 설명 (description)
+     * - 소스 브랜치명 (source_branch)
+     *
+     * @param issueKey Jira 이슈 키 (예: PROJ-123)
+     * @param project 특정 프로젝트만 검색 (null이면 그룹 전체 검색)
+     * @return 매칭된 MR 목록
+     */
+    private fun searchMRsByIssueKey(issueKey: String, project: String?): PluginResult {
+        return try {
+            val issueKeyUpper = issueKey.uppercase()
+            val issueKeyLower = issueKey.lowercase()
+
+            // 1. MR 검색 (제목과 설명에서 검색)
+            val searchUrl = if (project != null) {
+                "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests?state=all&search=$issueKeyUpper&per_page=50"
+            } else if (group != null) {
+                "$baseUrl/api/v4/groups/${java.net.URLEncoder.encode(group, "UTF-8")}/merge_requests?state=all&search=$issueKeyUpper&per_page=50"
+            } else {
+                "$baseUrl/api/v4/merge_requests?state=all&scope=all&search=$issueKeyUpper&per_page=50"
+            }
+
+            val response = apiGet(searchUrl)
+            val allMrs = mapper.readValue<List<Map<String, Any>>>(response)
+
+            // 2. 정확히 이슈 키가 포함된 MR만 필터링 (브랜치명 포함)
+            val matchingMrs = allMrs.filter { mr ->
+                val title = mr["title"]?.toString() ?: ""
+                val description = mr["description"]?.toString() ?: ""
+                val sourceBranch = mr["source_branch"]?.toString() ?: ""
+
+                // 제목, 설명, 브랜치명에서 이슈 키 확인 (대소문자 무시)
+                title.contains(issueKeyUpper, ignoreCase = true) ||
+                        title.contains(issueKeyLower, ignoreCase = true) ||
+                        description.contains(issueKeyUpper, ignoreCase = true) ||
+                        description.contains(issueKeyLower, ignoreCase = true) ||
+                        sourceBranch.contains(issueKeyUpper, ignoreCase = true) ||
+                        sourceBranch.contains(issueKeyLower, ignoreCase = true)
+            }
+
+            // 3. 결과 포맷팅
+            val formatted = matchingMrs.map { mr ->
+                val webUrl = mr["web_url"]?.toString() ?: ""
+                val projectPath = webUrl
+                    .substringAfter("$baseUrl/")
+                    .substringBefore("/-/merge_requests")
+
+                mapOf(
+                    "iid" to mr["iid"],
+                    "title" to mr["title"],
+                    "state" to mr["state"],
+                    "source_branch" to mr["source_branch"],
+                    "target_branch" to mr["target_branch"],
+                    "author" to (mr["author"] as? Map<*, *>)?.get("name"),
+                    "web_url" to webUrl,
+                    "project" to projectPath,
+                    "created_at" to mr["created_at"],
+                    "updated_at" to mr["updated_at"],
+                    "merged_at" to mr["merged_at"]
+                )
+            }
+
+            // 4. 상태별 그룹화 (merged, open, closed)
+            val grouped = formatted.groupBy { it["state"] }
+            val mergedCount = grouped["merged"]?.size ?: 0
+            val openedCount = grouped["opened"]?.size ?: 0
+            val closedCount = grouped["closed"]?.size ?: 0
+
+            PluginResult(
+                success = true,
+                data = mapOf(
+                    "issueKey" to issueKey,
+                    "totalFound" to formatted.size,
+                    "merged" to mergedCount,
+                    "opened" to openedCount,
+                    "closed" to closedCount,
+                    "mrs" to formatted
+                ),
+                message = if (formatted.isEmpty()) {
+                    "이슈 $issueKey 와 연관된 MR을 찾을 수 없습니다."
+                } else {
+                    "이슈 $issueKey 와 연관된 MR ${formatted.size}개 발견 (Merged: $mergedCount, Open: $openedCount)"
+                }
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to search MRs by issue key: $issueKey" }
+            PluginResult(false, error = "MR 검색 실패: ${e.message}")
+        }
     }
 }

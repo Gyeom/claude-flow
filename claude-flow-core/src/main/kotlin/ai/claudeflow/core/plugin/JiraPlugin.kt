@@ -116,6 +116,24 @@ class JiraPlugin : BasePlugin() {
             description = "사용자 검색",
             usage = "/jira search_users <query> [project-key]",
             examples = listOf("/jira search_users john", "/jira search_users john PROJ")
+        ),
+        PluginCommand(
+            name = "get_issue_links",
+            description = "이슈의 연결된 링크 조회 (MR, PR 등)",
+            usage = "/jira get_issue_links <issue-key>",
+            examples = listOf("/jira get_issue_links PROJ-123")
+        ),
+        PluginCommand(
+            name = "add_remote_link",
+            description = "이슈에 웹 링크 추가 (GitLab MR 등)",
+            usage = "/jira add_remote_link <issue-key> <url> <title>",
+            examples = listOf("/jira add_remote_link PROJ-123 https://gitlab.example.com/group/project/-/merge_requests/456 \"MR: Fix bug\"")
+        ),
+        PluginCommand(
+            name = "check_transition_requirements",
+            description = "트랜지션 실행 가능 여부 사전 검증",
+            usage = "/jira check_transition_requirements <issue-key> <transition-id>",
+            examples = listOf("/jira check_transition_requirements PROJ-123 81")
         )
     )
 
@@ -227,6 +245,18 @@ class JiraPlugin : BasePlugin() {
             "search_users" -> searchUsers(
                 args["query"] as? String ?: return PluginResult(false, error = "Search query required"),
                 args["project_key"] as? String
+            )
+            "get_issue_links" -> getIssueLinks(
+                args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required")
+            )
+            "add_remote_link" -> addRemoteLink(
+                args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
+                args["url"] as? String ?: return PluginResult(false, error = "URL required"),
+                args["title"] as? String ?: return PluginResult(false, error = "Title required")
+            )
+            "check_transition_requirements" -> checkTransitionRequirements(
+                args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
+                args["transition_id"] as? String ?: return PluginResult(false, error = "Transition ID required")
             )
             else -> PluginResult(false, error = "Unknown command: $command")
         }
@@ -943,5 +973,242 @@ class JiraPlugin : BasePlugin() {
         }
 
         return response.body() ?: ""
+    }
+
+    // ==================== 이슈 링크 관련 기능 ====================
+
+    /**
+     * 이슈의 연결된 링크 조회 (Issue Links + Remote Links)
+     */
+    private fun getIssueLinks(issueKey: String): PluginResult {
+        return try {
+            // 1. Issue Links (다른 Jira 이슈와의 연결)
+            val issueUrl = "$baseUrl/rest/api/3/issue/$issueKey?fields=issuelinks"
+            val issueResponse = apiGet(issueUrl)
+            val issueData = mapper.readValue(issueResponse, Map::class.java) as Map<String, Any>
+            val fields = issueData["fields"] as? Map<String, Any> ?: emptyMap()
+            val issueLinks = fields["issuelinks"] as? List<Map<String, Any>> ?: emptyList()
+
+            val formattedIssueLinks = issueLinks.map { link ->
+                val linkType = link["type"] as? Map<String, Any>
+                val inwardIssue = link["inwardIssue"] as? Map<String, Any>
+                val outwardIssue = link["outwardIssue"] as? Map<String, Any>
+                val linkedIssue = inwardIssue ?: outwardIssue
+                val linkedFields = linkedIssue?.get("fields") as? Map<String, Any>
+
+                mapOf(
+                    "type" to "issue_link",
+                    "linkType" to (linkType?.get("name") ?: "Unknown"),
+                    "direction" to if (inwardIssue != null) "inward" else "outward",
+                    "linkedIssueKey" to (linkedIssue?.get("key") ?: ""),
+                    "linkedIssueSummary" to (linkedFields?.get("summary") ?: ""),
+                    "linkedIssueStatus" to ((linkedFields?.get("status") as? Map<*, *>)?.get("name") ?: "")
+                )
+            }
+
+            // 2. Remote Links (외부 URL: GitLab MR, GitHub PR 등)
+            val remoteLinksUrl = "$baseUrl/rest/api/3/issue/$issueKey/remotelink"
+            val remoteLinks = try {
+                val remoteResponse = apiGet(remoteLinksUrl)
+                val links = mapper.readValue(remoteResponse, List::class.java) as? List<Map<String, Any>> ?: emptyList()
+                links.map { link ->
+                    val linkObject = link["object"] as? Map<String, Any> ?: emptyMap()
+                    val icon = linkObject["icon"] as? Map<String, Any>
+                    mapOf(
+                        "type" to "remote_link",
+                        "id" to (link["id"] ?: ""),
+                        "globalId" to (link["globalId"] ?: ""),
+                        "title" to (linkObject["title"] ?: ""),
+                        "url" to (linkObject["url"] ?: ""),
+                        "iconUrl" to (icon?.get("url16x16") ?: ""),
+                        "summary" to (linkObject["summary"] ?: "")
+                    )
+                }
+            } catch (e: Exception) {
+                logger.warn { "Failed to get remote links for $issueKey: ${e.message}" }
+                emptyList()
+            }
+
+            // MR/PR 여부 확인
+            val hasMRLink = remoteLinks.any { link ->
+                val url = link["url"]?.toString()?.lowercase() ?: ""
+                url.contains("merge_request") || url.contains("pull") || url.contains("/mr/")
+            }
+
+            PluginResult(
+                success = true,
+                data = mapOf(
+                    "issueKey" to issueKey,
+                    "issueLinks" to formattedIssueLinks,
+                    "remoteLinks" to remoteLinks,
+                    "hasMRLink" to hasMRLink,
+                    "totalLinks" to (formattedIssueLinks.size + remoteLinks.size)
+                )
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get issue links: $issueKey" }
+            PluginResult(false, error = e.message)
+        }
+    }
+
+    /**
+     * 이슈에 웹 링크(Remote Link) 추가
+     * GitLab MR, GitHub PR 등 외부 URL을 연결
+     */
+    private fun addRemoteLink(issueKey: String, url: String, title: String): PluginResult {
+        val remoteLinksUrl = "$baseUrl/rest/api/3/issue/$issueKey/remotelink"
+
+        // URL에서 아이콘 URL 추론
+        val iconUrl = when {
+            url.contains("gitlab") -> "https://gitlab.com/favicon.ico"
+            url.contains("github") -> "https://github.com/favicon.ico"
+            url.contains("bitbucket") -> "https://bitbucket.org/favicon.ico"
+            else -> null
+        }
+
+        // 링크 타입 추론
+        val relationship = when {
+            url.contains("merge_request") || url.contains("/mr/") -> "Merge Request"
+            url.contains("pull") -> "Pull Request"
+            url.contains("commit") -> "Commit"
+            url.contains("issue") -> "Issue"
+            else -> "Related Link"
+        }
+
+        val body = mutableMapOf<String, Any>(
+            "globalId" to "link-${System.currentTimeMillis()}",
+            "relationship" to relationship,
+            "object" to mutableMapOf<String, Any>(
+                "url" to url,
+                "title" to title
+            )
+        )
+
+        // 아이콘 추가
+        if (iconUrl != null) {
+            (body["object"] as MutableMap<String, Any>)["icon"] = mapOf(
+                "url16x16" to iconUrl,
+                "title" to relationship
+            )
+        }
+
+        return try {
+            val response = apiPost(remoteLinksUrl, mapper.writeValueAsString(body))
+            val result = mapper.readValue(response, Map::class.java) as Map<String, Any>
+
+            PluginResult(
+                success = true,
+                data = mapOf(
+                    "id" to result["id"],
+                    "issueKey" to issueKey,
+                    "url" to url,
+                    "title" to title
+                ),
+                message = "Remote link added to $issueKey: $title"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to add remote link to $issueKey" }
+            PluginResult(false, error = e.message)
+        }
+    }
+
+    /**
+     * 트랜지션 실행 가능 여부 사전 검증
+     * ScriptRunner 등의 Validator 조건을 미리 확인
+     */
+    private fun checkTransitionRequirements(issueKey: String, transitionId: String): PluginResult {
+        return try {
+            // 1. 트랜지션 정보 조회 (필수 필드 확인)
+            val transitionsUrl = "$baseUrl/rest/api/3/issue/$issueKey/transitions?expand=transitions.fields"
+            val transitionsResponse = apiGet(transitionsUrl)
+            val transitionsData = mapper.readValue(transitionsResponse, Map::class.java) as Map<String, Any>
+            val transitions = transitionsData["transitions"] as? List<Map<String, Any>> ?: emptyList()
+
+            val targetTransition = transitions.find { it["id"] == transitionId }
+                ?: return PluginResult(false, error = "Transition $transitionId not found")
+
+            val transitionName = targetTransition["name"] as? String ?: "Unknown"
+            val requiredFields = targetTransition["fields"] as? Map<String, Any> ?: emptyMap()
+
+            // 2. 이슈 현재 상태 확인 (링크, 필수 필드 등)
+            val issueUrl = "$baseUrl/rest/api/3/issue/$issueKey?fields=issuelinks,resolution,fixVersions,assignee,reporter"
+            val issueResponse = apiGet(issueUrl)
+            val issueData = mapper.readValue(issueResponse, Map::class.java) as Map<String, Any>
+            val fields = issueData["fields"] as? Map<String, Any> ?: emptyMap()
+
+            // 3. Remote Links 확인 (MR/PR 연결 여부)
+            val remoteLinksUrl = "$baseUrl/rest/api/3/issue/$issueKey/remotelink"
+            val remoteLinks = try {
+                val remoteResponse = apiGet(remoteLinksUrl)
+                mapper.readValue(remoteResponse, List::class.java) as? List<Map<String, Any>> ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            val hasMRLink = remoteLinks.any { link ->
+                val linkObject = link["object"] as? Map<String, Any> ?: emptyMap()
+                val url = linkObject["url"]?.toString()?.lowercase() ?: ""
+                url.contains("merge_request") || url.contains("pull") || url.contains("/mr/")
+            }
+
+            // 4. 검증 결과 수집
+            val requirements = mutableListOf<Map<String, Any>>()
+            val missingRequirements = mutableListOf<Map<String, Any>>()
+
+            // 필수 필드 확인
+            requiredFields.forEach { (fieldId, fieldConfig) ->
+                val config = fieldConfig as? Map<String, Any> ?: return@forEach
+                val isRequired = config["required"] as? Boolean ?: false
+                val fieldName = config["name"] as? String ?: fieldId
+
+                if (isRequired) {
+                    requirements.add(mapOf(
+                        "type" to "field",
+                        "fieldId" to fieldId,
+                        "fieldName" to fieldName,
+                        "required" to true
+                    ))
+                }
+            }
+
+            // MR 링크 확인 (일반적인 "완료" 트랜지션에서 필요)
+            // transitionName이 "End Integration", "Done", "완료" 등인 경우 MR 링크 권장
+            val requiresMR = transitionName.lowercase().let {
+                it.contains("integration") || it.contains("done") || it.contains("완료") || it.contains("close")
+            }
+
+            if (requiresMR) {
+                requirements.add(mapOf(
+                    "type" to "link",
+                    "linkType" to "MR/PR",
+                    "description" to "Merge Request 또는 Pull Request 연결",
+                    "satisfied" to hasMRLink
+                ))
+
+                if (!hasMRLink) {
+                    missingRequirements.add(mapOf(
+                        "type" to "link",
+                        "linkType" to "MR/PR",
+                        "description" to "코드 변경 사항을 검증하기 위해 MR/PR 연결이 필요합니다"
+                    ))
+                }
+            }
+
+            PluginResult(
+                success = true,
+                data = mapOf(
+                    "issueKey" to issueKey,
+                    "transitionId" to transitionId,
+                    "transitionName" to transitionName,
+                    "canTransition" to missingRequirements.isEmpty(),
+                    "requirements" to requirements,
+                    "missingRequirements" to missingRequirements,
+                    "hasMRLink" to hasMRLink
+                )
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to check transition requirements: $issueKey -> $transitionId" }
+            PluginResult(false, error = e.message)
+        }
     }
 }

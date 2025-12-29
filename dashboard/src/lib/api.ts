@@ -1068,6 +1068,106 @@ export const jiraApi = {
       }
     ),
 
+  // Get issue links (Issue Links + Remote Links)
+  getIssueLinks: (issueKey: string) =>
+    fetchApi<{
+      success: boolean
+      data?: {
+        issueKey: string
+        issueLinks: Array<{
+          type: string
+          linkType: string
+          direction: string
+          linkedIssueKey: string
+          linkedIssueSummary: string
+          linkedIssueStatus: string
+        }>
+        remoteLinks: Array<{
+          type: string
+          id: string
+          globalId: string
+          title: string
+          url: string
+          iconUrl: string
+          summary: string
+        }>
+        hasMRLink: boolean
+        totalLinks: number
+      }
+      error?: string
+    }>(`/plugins/jira/issues/${issueKey}/links`),
+
+  // Add remote link (GitLab MR, GitHub PR 등)
+  addRemoteLink: (issueKey: string, url: string, title: string) =>
+    fetchApi<{
+      success: boolean
+      data?: { id: string; issueKey: string; url: string; title: string }
+      message?: string
+      error?: string
+    }>(`/plugins/jira/issues/${issueKey}/remote-links`, {
+      method: 'POST',
+      body: JSON.stringify({ url, title }),
+    }),
+
+  // Check transition requirements (사전 검증)
+  checkTransitionRequirements: (issueKey: string, transitionId: string) =>
+    fetchApi<{
+      success: boolean
+      data?: {
+        issueKey: string
+        transitionId: string
+        transitionName: string
+        canTransition: boolean
+        requirements: Array<{
+          type: string
+          fieldId?: string
+          fieldName?: string
+          linkType?: string
+          description?: string
+          required?: boolean
+          satisfied?: boolean
+        }>
+        missingRequirements: Array<{
+          type: string
+          linkType?: string
+          description?: string
+        }>
+        hasMRLink: boolean
+      }
+      error?: string
+    }>(`/plugins/jira/issues/${issueKey}/transitions/${transitionId}/requirements`),
+
+  // Search GitLab MRs by Jira issue key
+  searchMRsByIssueKey: (issueKey: string, project?: string) => {
+    const params = new URLSearchParams({ issueKey })
+    if (project) params.set('project', project)
+    return fetchApi<{
+      success: boolean
+      data?: {
+        issueKey: string
+        totalFound: number
+        merged: number
+        opened: number
+        closed: number
+        mrs: Array<{
+          iid: number
+          title: string
+          state: string
+          source_branch: string
+          target_branch: string
+          author: string
+          web_url: string
+          project: string
+          created_at: string
+          updated_at: string
+          merged_at: string | null
+        }>
+      }
+      message?: string
+      error?: string
+    }>(`/plugins/gitlab/mrs/search?${params.toString()}`)
+  },
+
   // Get projects
   getProjects: () =>
     fetchApi<{ success: boolean; data: JiraProject[]; message?: string; error?: string }>('/plugins/jira/projects'),
