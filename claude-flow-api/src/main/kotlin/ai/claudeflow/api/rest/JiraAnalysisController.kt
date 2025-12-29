@@ -415,21 +415,11 @@ class JiraAnalysisController(
             ))
         }
 
-        // 2. 사용 가능한 프로젝트 목록 가져오기 (컨텍스트 제공)
-        val projectsInfo = if (request.includeProjects == true) {
-            val projectsResult = pluginManager.execute("jira", "projects", emptyMap())
-            if (projectsResult.success) {
-                val projects = projectsResult.data as? List<*>
-                projects?.mapNotNull { (it as? Map<*, *>)?.get("key") as? String }?.take(20)?.joinToString(", ")
-            } else null
-        } else null
-
-        // 3. 사용자 프롬프트만 구성 (시스템 프롬프트는 분리됨)
+        // 2. 사용자 프롬프트 구성 (프로젝트 목록은 전달하지 않음 - 토큰 절약 & 모든 프로젝트 지원)
+        // 시스템 프롬프트에 "사용자가 입력한 프로젝트 키를 그대로 대문자로 변환" 규칙이 있음
         val userPrompt = """
             |## 자연어 쿼리
             |"${request.query}"
-            |
-            |${projectsInfo?.let { "## 사용 가능한 프로젝트\n$it\n" } ?: ""}
         """.trimMargin()
 
         try {
