@@ -150,6 +150,14 @@ async function syncWorkflows() {
             if (updateResult.status === 200) {
                 console.log(`  Updated: ${workflow.name}`);
                 updated++;
+
+                // active 상태가 다르면 업데이트
+                if (workflow.active !== existing.active) {
+                    await request('PATCH', `/rest/workflows/${existing.id}`, {
+                        active: workflow.active
+                    });
+                    console.log(`    ${workflow.active ? 'Activated' : 'Deactivated'}`);
+                }
             } else {
                 console.log(`  Update failed: ${workflow.name}`, updateResult.status);
             }

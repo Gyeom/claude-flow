@@ -473,6 +473,27 @@ class PluginController(
     }
 
     /**
+     * Jira 이슈의 스프린트 설정/변경
+     * - sprintId: 스프린트 ID 또는 "backlog" (백로그로 이동)
+     */
+    @PutMapping("/jira/issues/{issueKey}/sprint")
+    fun setJiraIssueSprint(
+        @PathVariable issueKey: String,
+        @RequestBody request: JiraSetSprintRequest
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("jira", "set_sprint", mapOf(
+            "issue_key" to issueKey,
+            "sprint_id" to request.sprintId
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
      * Jira 사용자 검색
      */
     @GetMapping("/jira/users/search")
@@ -682,4 +703,8 @@ data class JiraLinkRequest(
 data class JiraRemoteLinkRequest(
     val url: String,       // 외부 URL (GitLab MR, GitHub PR 등)
     val title: String      // 링크 제목 (예: "MR: Fix login bug")
+)
+
+data class JiraSetSprintRequest(
+    val sprintId: String   // 스프린트 ID (숫자) 또는 "backlog" (백로그로 이동)
 )

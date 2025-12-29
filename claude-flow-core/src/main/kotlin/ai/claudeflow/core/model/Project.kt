@@ -40,6 +40,8 @@ data class Project(
     val disallowedTools: List<String> = emptyList(),
     val fallbackAgentId: String = "general",
     val aliases: List<String> = emptyList(),  // 프로젝트 별칭 (RAG 검색용)
+    val jiraProject: String? = null,  // Jira 프로젝트 키 (예: "CCDC", "PROJ")
+    val alertChannels: List<String> = emptyList(),  // 장애 알람 채널 ID 목록
     val createdAt: String? = null,
     val updatedAt: String? = null
 ) {

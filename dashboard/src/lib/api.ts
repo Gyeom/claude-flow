@@ -907,6 +907,13 @@ export interface JiraIssue {
   updated: string
   url: string
   labels?: string[]
+  sprint?: {
+    id: number
+    name: string
+    state: 'active' | 'closed' | 'future'
+    startDate: string | null
+    endDate: string | null
+  } | null
 }
 
 export interface JiraIssueListItem {
@@ -1195,6 +1202,16 @@ export const jiraApi = {
   // Get sprints for a board
   getSprints: (boardId: number) =>
     fetchApi<{ success: boolean; data: JiraSprint[]; message?: string; error?: string }>(`/plugins/jira/boards/${boardId}/sprints`),
+
+  // Set issue sprint (move to sprint or backlog)
+  setIssueSprint: (issueKey: string, sprintId: string | number | 'backlog') =>
+    fetchApi<{ success: boolean; data?: { issueKey: string; sprintId?: number }; message?: string; error?: string }>(
+      `/plugins/jira/issues/${issueKey}/sprint`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ sprintId: String(sprintId) }),
+      }
+    ),
 
   // Get sprint issues
   getSprintIssues: (boardId?: number, sprintId?: number) => {

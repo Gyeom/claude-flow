@@ -483,6 +483,27 @@ export function Jira() {
     },
   })
 
+  // Set sprint mutation
+  const setSprintMutation = useMutation({
+    mutationFn: ({ issueKey, sprintId }: { issueKey: string; sprintId: string | number }) =>
+      jiraApi.setIssueSprint(issueKey, sprintId),
+    onSuccess: (data, variables) => {
+      if (data.success) {
+        const sprintName = variables.sprintId === 'backlog'
+          ? '백로그'
+          : sprints.find(s => s.id === Number(variables.sprintId))?.name || variables.sprintId
+        toast.success(`${variables.issueKey}를 "${sprintName}"(으)로 이동했습니다`)
+        queryClient.invalidateQueries({ queryKey: ['jira'] })
+      } else {
+        toast.error(data.error || '스프린트 변경에 실패했습니다')
+      }
+    },
+    onError: (error) => {
+      console.error('Set sprint error:', error)
+      toast.error(`스프린트 변경 중 오류가 발생했습니다: ${error instanceof Error ? error.message : String(error)}`)
+    },
+  })
+
   // Get current issues based on filters
   const currentIssues = useMemo(() => {
     // Priority: manual search > sprint > filter-based search
@@ -1655,6 +1676,9 @@ export function Jira() {
               isAddingComment={addCommentMutation.isPending}
               isAnalyzing={isAnalyzing}
               analysisResult={analysisResult}
+              sprints={sprints}
+              onSprintChange={(sprintId) => setSprintMutation.mutate({ issueKey: selectedIssue, sprintId })}
+              isChangingSprint={setSprintMutation.isPending}
             />
           </div>
         )}
@@ -2560,6 +2584,9 @@ function IssueDetailPanel({
   isAddingComment,
   isAnalyzing,
   analysisResult,
+  sprints,
+  onSprintChange,
+  isChangingSprint,
 }: {
   issue?: JiraIssue
   comments: JiraComment[]
@@ -2573,8 +2600,12 @@ function IssueDetailPanel({
   isAddingComment: boolean
   isAnalyzing: boolean
   analysisResult: string | null
+  sprints: JiraSprint[]
+  onSprintChange: (sprintId: string | number) => void
+  isChangingSprint: boolean
 }) {
   const [activeTab, setActiveTab] = useState<'details' | 'comments' | 'ai'>('details')
+  const [showSprintSelect, setShowSprintSelect] = useState(false)
 
   if (isLoading) {
     return (
@@ -2740,6 +2771,106 @@ function IssueDetailPanel({
                   </div>
                 ) : (
                   <span className="text-sm text-muted-foreground">-</span>
+                )}
+              </div>
+            </div>
+
+            {/* Sprint */}
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground uppercase tracking-wider">Sprint</label>
+              <div className="relative">
+                <button
+                  onClick={() => setShowSprintSelect(!showSprintSelect)}
+                  disabled={isChangingSprint || sprints.length === 0}
+                  className={cn(
+                    "w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg transition-colors text-left",
+                    "hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-blue-500",
+                    (isChangingSprint || sprints.length === 0) && "opacity-50 cursor-not-allowed"
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    {isChangingSprint ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-500 flex-shrink-0" />
+                    ) : (
+                      <FolderKanban className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    )}
+                    {issue.sprint ? (
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="truncate font-medium">{issue.sprint.name}</span>
+                        <span className={cn(
+                          "px-1.5 py-0.5 text-[10px] rounded-full flex-shrink-0",
+                          issue.sprint.state === 'active' ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                          issue.sprint.state === 'future' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
+                          "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                        )}>
+                          {issue.sprint.state}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground italic">Backlog</span>
+                    )}
+                  </div>
+                  <ChevronDown className={cn(
+                    "h-4 w-4 text-muted-foreground flex-shrink-0 transition-transform",
+                    showSprintSelect && "rotate-180"
+                  )} />
+                </button>
+
+                {/* Sprint Dropdown */}
+                {showSprintSelect && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-background border rounded-lg shadow-lg overflow-hidden max-h-64 overflow-y-auto">
+                    {/* Backlog Option */}
+                    <button
+                      onClick={() => {
+                        onSprintChange('backlog')
+                        setShowSprintSelect(false)
+                      }}
+                      className={cn(
+                        "w-full px-3 py-2 text-left text-sm hover:bg-muted/50 flex items-center gap-2",
+                        !issue.sprint && "bg-muted/30"
+                      )}
+                    >
+                      <div className="w-2 h-2 rounded-full bg-gray-400 flex-shrink-0" />
+                      <span className="italic text-muted-foreground">Backlog</span>
+                    </button>
+
+                    {/* Sprints */}
+                    {sprints.map((sprint) => (
+                      <button
+                        key={sprint.id}
+                        onClick={() => {
+                          onSprintChange(sprint.id)
+                          setShowSprintSelect(false)
+                        }}
+                        className={cn(
+                          "w-full px-3 py-2 text-left text-sm hover:bg-muted/50 flex items-center gap-2",
+                          issue.sprint?.id === sprint.id && "bg-muted/30"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-2 h-2 rounded-full flex-shrink-0",
+                          sprint.state === 'active' ? "bg-green-500" :
+                          sprint.state === 'future' ? "bg-blue-500" : "bg-gray-400"
+                        )} />
+                        <span className="truncate">{sprint.name}</span>
+                        <span className={cn(
+                          "ml-auto px-1.5 py-0.5 text-[10px] rounded-full flex-shrink-0",
+                          sprint.state === 'active' ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                          sprint.state === 'future' ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" :
+                          "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                        )}>
+                          {sprint.state}
+                        </span>
+                      </button>
+                    ))}
+
+                    {sprints.length === 0 && (
+                      <div className="px-3 py-4 text-center text-sm text-muted-foreground">
+                        <FolderKanban className="h-6 w-6 mx-auto mb-1 opacity-50" />
+                        <p>보드를 먼저 선택하세요</p>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

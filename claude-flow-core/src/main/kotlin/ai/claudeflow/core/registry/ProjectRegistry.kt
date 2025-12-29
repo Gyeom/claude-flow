@@ -274,6 +274,19 @@ class ProjectRegistry(
     }
 
     /**
+     * 알람 채널 ID로 프로젝트 조회
+     *
+     * projects.json의 alertChannels 필드에서 매칭되는 프로젝트 반환
+     */
+    fun findByAlertChannel(channelId: String): Project? {
+        return projects.values.find { project ->
+            project.alertChannels.contains(channelId)
+        } ?: projectRepository?.findAll()?.find { project ->
+            project.alertChannels.contains(channelId)
+        }
+    }
+
+    /**
      * 프로젝트 통계 조회
      */
     fun getProjectStats(projectId: String) = projectRepository?.getProjectStats(projectId)

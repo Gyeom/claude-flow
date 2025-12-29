@@ -112,6 +112,12 @@ class JiraPlugin : BasePlugin() {
             examples = listOf("/jira sprints 123")
         ),
         PluginCommand(
+            name = "set_sprint",
+            description = "이슈의 스프린트 설정/변경",
+            usage = "/jira set_sprint <issue-key> <sprint-id>",
+            examples = listOf("/jira set_sprint PROJ-123 456", "/jira set_sprint PROJ-123 backlog")
+        ),
+        PluginCommand(
             name = "search_users",
             description = "사용자 검색",
             usage = "/jira search_users <query> [project-key]",
@@ -243,6 +249,10 @@ class JiraPlugin : BasePlugin() {
             "sprints" -> listSprints(
                 args["board_id"] as? Int ?: return PluginResult(false, error = "Board ID required")
             )
+            "set_sprint" -> setIssueSprint(
+                args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
+                args["sprint_id"] as? String ?: args["sprint_id"]?.toString() ?: return PluginResult(false, error = "Sprint ID required (number or 'backlog')")
+            )
             "search_users" -> searchUsers(
                 args["query"] as? String ?: return PluginResult(false, error = "Search query required"),
                 args["project_key"] as? String
@@ -271,6 +281,9 @@ class JiraPlugin : BasePlugin() {
             val issue = mapper.readValue(response, Map::class.java) as Map<String, Any>
             val fields = issue["fields"] as Map<String, Any>
 
+            // Sprint 정보 추출 (customfield_10020는 일반적인 Sprint 필드)
+            val sprintData = extractSprintInfo(fields["customfield_10020"])
+
             val info = mapOf(
                 "key" to issue["key"],
                 "summary" to fields["summary"],
@@ -282,7 +295,9 @@ class JiraPlugin : BasePlugin() {
                 "issuetype" to (fields["issuetype"] as? Map<*, *>)?.get("name"),
                 "created" to fields["created"],
                 "updated" to fields["updated"],
-                "url" to "$baseUrl/browse/$issueKey"
+                "url" to "$baseUrl/browse/$issueKey",
+                "sprint" to sprintData,
+                "labels" to (fields["labels"] as? List<*> ?: emptyList<String>())
             )
 
             PluginResult(success = true, data = info)
@@ -507,6 +522,26 @@ class JiraPlugin : BasePlugin() {
             }.joinToString("\n")
         }
         return description?.toString()
+    }
+
+    /**
+     * Sprint 필드에서 정보 추출
+     * Jira Cloud의 Sprint 필드는 배열 형태로, 마지막 스프린트가 현재 스프린트
+     */
+    private fun extractSprintInfo(sprintField: Any?): Map<String, Any?>? {
+        val sprints = sprintField as? List<*> ?: return null
+        if (sprints.isEmpty()) return null
+
+        // 마지막 스프린트 (가장 최근 스프린트)
+        val currentSprint = sprints.lastOrNull() as? Map<*, *> ?: return null
+
+        return mapOf(
+            "id" to currentSprint["id"],
+            "name" to currentSprint["name"],
+            "state" to currentSprint["state"],
+            "startDate" to currentSprint["startDate"],
+            "endDate" to currentSprint["endDate"]
+        )
     }
 
     // ==================== 새로운 기능 구현 ====================
@@ -937,6 +972,82 @@ class JiraPlugin : BasePlugin() {
             )
         } catch (e: Exception) {
             logger.error(e) { "Failed to list sprints for board: $boardId" }
+            PluginResult(false, error = e.message)
+        }
+    }
+
+    /**
+     * 이슈의 스프린트 설정/변경
+     *
+     * @param issueKey 이슈 키 (예: PROJ-123)
+     * @param sprintIdOrBacklog 스프린트 ID 또는 "backlog" (백로그로 이동)
+     */
+    private fun setIssueSprint(issueKey: String, sprintIdOrBacklog: String): PluginResult {
+        return try {
+            if (sprintIdOrBacklog.lowercase() == "backlog") {
+                // 백로그로 이동 - 스프린트에서 이슈 제거
+                // 먼저 현재 이슈의 스프린트 정보 확인 필요
+                val issueUrl = "$baseUrl/rest/api/3/issue/$issueKey?fields=customfield_10020"
+                val issueResponse = apiGet(issueUrl)
+                val issueData = mapper.readValue(issueResponse, Map::class.java) as Map<String, Any>
+                val fields = issueData["fields"] as? Map<String, Any> ?: emptyMap()
+
+                // customfield_10020는 일반적인 Sprint 필드 ID (Jira 인스턴스마다 다를 수 있음)
+                val sprintField = fields["customfield_10020"] as? List<*>
+                if (sprintField.isNullOrEmpty()) {
+                    return PluginResult(
+                        success = true,
+                        message = "Issue $issueKey is already in backlog"
+                    )
+                }
+
+                // 현재 활성 스프린트에서 이슈 제거
+                val currentSprint = sprintField.lastOrNull() as? Map<*, *>
+                val currentSprintId = currentSprint?.get("id")?.toString()?.toIntOrNull()
+
+                if (currentSprintId != null) {
+                    val removeUrl = "$baseUrl/rest/agile/1.0/sprint/$currentSprintId/issue"
+                    val removeBody = mapOf("issues" to listOf(issueKey))
+
+                    // POST로 이슈 제거가 안 되면 백로그 이동 API 사용
+                    try {
+                        // Jira Agile API: backlog로 이동
+                        val backlogUrl = "$baseUrl/rest/agile/1.0/backlog/issue"
+                        val backlogBody = mapOf("issues" to listOf(issueKey))
+                        apiPost(backlogUrl, mapper.writeValueAsString(backlogBody))
+                    } catch (e: Exception) {
+                        logger.warn { "Backlog move API failed, trying alternative: ${e.message}" }
+                        // 대안: Sprint 필드를 null로 설정
+                        val updateUrl = "$baseUrl/rest/api/3/issue/$issueKey"
+                        val updateBody = mapOf("fields" to mapOf("customfield_10020" to null))
+                        apiPut(updateUrl, mapper.writeValueAsString(updateBody))
+                    }
+                }
+
+                PluginResult(
+                    success = true,
+                    message = "Issue $issueKey moved to backlog"
+                )
+            } else {
+                // 특정 스프린트로 이동
+                val sprintId = sprintIdOrBacklog.toIntOrNull()
+                    ?: return PluginResult(false, error = "Invalid sprint ID: $sprintIdOrBacklog")
+
+                val sprintUrl = "$baseUrl/rest/agile/1.0/sprint/$sprintId/issue"
+                val body = mapOf("issues" to listOf(issueKey))
+                apiPost(sprintUrl, mapper.writeValueAsString(body))
+
+                PluginResult(
+                    success = true,
+                    data = mapOf(
+                        "issueKey" to issueKey,
+                        "sprintId" to sprintId
+                    ),
+                    message = "Issue $issueKey added to sprint $sprintId"
+                )
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to set sprint for issue: $issueKey" }
             PluginResult(false, error = e.message)
         }
     }

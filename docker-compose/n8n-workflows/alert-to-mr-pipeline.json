@@ -1,9 +1,9 @@
 {
   "name": "Alert to MR Pipeline",
   "meta": {
-    "description": "Jira 이슈 기반으로 자동 수정 파이프라인을 실행합니다. 브랜치 생성 → Claude Code 수정 → MR 생성까지 자동화합니다."
+    "description": "Jira 이슈 기반으로 자동 수정 파이프라인을 실행합니다. 브랜치 생성 → Claude Code 수정 → MR 생성까지 자동화합니다. projects.json의 jiraProject, gitlabPath 설정을 사용합니다."
   },
-  "active": false,
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 파이프라인 요청 파싱\nconst body = $input.item.json.body || $input.item.json;\n\nconst project = body.project;\nconst summary = body.summary;\nconst description = body.description;\nconst severity = body.severity || 'HIGH';\nconst suggestedFix = body.suggestedFix;\nconst channel = body.channel;\nconst threadTs = body.threadTs;\nconst userId = body.userId;\n\n// 프로젝트 → Jira 키 매핑 (환경변수 또는 기본값)\nconst projectJiraMapStr = process.env.PROJECT_JIRA_MAP || '{}';\nconst PROJECT_JIRA_MAP = JSON.parse(projectJiraMapStr);\nconst defaultJiraProject = process.env.DEFAULT_JIRA_PROJECT || 'PROJ';\nconst jiraProject = PROJECT_JIRA_MAP[project] || defaultJiraProject;\n\n// 워크스페이스 경로 (환경변수 필수)\nconst workspacePath = process.env.WORKSPACE_PATH;\nif (!workspacePath) {\n  throw new Error('WORKSPACE_PATH environment variable is required');\n}\n\nreturn {\n  json: {\n    project,\n    projectPath: `${workspacePath}/${project}`,\n    jiraProject,\n    summary,\n    description,\n    severity,\n    suggestedFix,\n    channel,\n    threadTs,\n    userId,\n    baseBranch: process.env.DEFAULT_BASE_BRANCH || 'develop'\n  }\n};"
+        "jsCode": "// 파이프라인 요청 파싱 (alert-channel-monitor에서 프로젝트 정보 전달받음)\nconst body = $input.item.json.body || $input.item.json;\n\n// 프로젝트 정보 (projects.json에서 이미 조회됨)\nconst projectId = body.projectId;\nconst projectName = body.projectName;\nconst jiraProject = body.jiraProject || 'PROJ';  // projects.json의 jiraProject\nconst gitlabPath = body.gitlabPath;\nconst workingDirectory = body.workingDirectory;\nconst defaultBranch = body.defaultBranch || 'develop';\n\n// 분석 결과\nconst summary = body.summary;\nconst description = body.description;\nconst severity = body.severity || 'HIGH';\nconst suggestedFix = body.suggestedFix;\nconst errorType = body.errorType;\n\n// Slack 정보\nconst channel = body.channel;\nconst threadTs = body.threadTs;\nconst userId = body.userId;\n\n// 워크스페이스 경로 (환경변수 폴백)\nconst workspacePath = process.env.WORKSPACE_PATH || '/workspace';\nconst projectPath = workingDirectory || `${workspacePath}/${projectId}`;\n\nreturn {\n  json: {\n    projectId,\n    projectName,\n    projectPath,\n    jiraProject,\n    gitlabPath,\n    baseBranch: defaultBranch,\n    summary,\n    description,\n    severity,\n    suggestedFix,\n    errorType,\n    channel,\n    threadTs,\n    userId\n  }\n};"
       },
       "id": "parse-request",
       "name": "Parse Pipeline Request",
@@ -70,7 +70,7 @@
             },
             {
               "name": "args",
-              "value": "={{ JSON.stringify({ project: $('Parse Pipeline Request').item.json.jiraProject, summary: $('Parse Pipeline Request').item.json.summary, description: $('Parse Pipeline Request').item.json.description, issue_type: 'Bug', labels: ['auto-created', 'alert-trigger'] }) }}"
+              "value": "={{ JSON.stringify({ project: $('Parse Pipeline Request').item.json.jiraProject, summary: $('Parse Pipeline Request').item.json.summary, description: $('Parse Pipeline Request').item.json.description + '\\n\\n에러 타입: ' + ($('Parse Pipeline Request').item.json.errorType || 'Unknown'), issue_type: 'Bug', labels: ['auto-created', 'alert-trigger', $('Parse Pipeline Request').item.json.projectId] }) }}"
             }
           ]
         },
@@ -86,7 +86,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const jiraResponse = $input.item.json;\nconst pipelineData = $('Parse Pipeline Request').item.json;\n\n// Jira 응답에서 이슈 키 추출\nconst issueKey = jiraResponse.data?.key || jiraResponse.key || 'UNKNOWN';\nconst issueUrl = jiraResponse.data?.url || jiraResponse.url || '';\n\n// 브랜치 이름 생성\nconst branchName = `fix/${issueKey.toLowerCase()}`;\n\nreturn {\n  json: {\n    ...pipelineData,\n    issueKey,\n    issueUrl,\n    branchName\n  }\n};"
+        "jsCode": "const jiraResponse = $input.item.json;\nconst pipelineData = $('Parse Pipeline Request').item.json;\n\n// Jira 응답에서 이슈 키 추출\nconst issueKey = jiraResponse.data?.key || jiraResponse.key || 'UNKNOWN';\nconst issueUrl = jiraResponse.data?.url || jiraResponse.url || '';\n\n// 브랜치 이름 생성 (Jira 이슈 키 기반)\nconst branchName = `fix/${issueKey.toLowerCase()}`;\n\nreturn {\n  json: {\n    ...pipelineData,\n    issueKey,\n    issueUrl,\n    branchName\n  }\n};"
       },
       "id": "extract-jira-key",
       "name": "Extract Jira Key",
@@ -128,7 +128,7 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/chat/execute",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '장애 수정 작업을 진행해주세요.\\n\\n## 작업 정보\\n- 프로젝트: ' + $json.project + '\\n- 프로젝트 경로: ' + $json.projectPath + '\\n- Jira 이슈: ' + $json.issueKey + '\\n- 브랜치: ' + $json.branchName + '\\n\\n## 장애 내용\\n' + $json.summary + '\\n\\n' + $json.description + '\\n\\n## 수정 제안\\n' + ($json.suggestedFix || '분석 후 수정 진행') + '\\n\\n## 작업 단계\\n1. `cd ' + $json.projectPath + '`\\n2. `git checkout ' + $json.baseBranch + '`\\n3. `git pull origin ' + $json.baseBranch + '`\\n4. `git checkout -b ' + $json.branchName + '`\\n5. 코드 분석 및 수정\\n6. `git add .`\\n7. `git commit -m \"fix(' + $json.issueKey + '): ' + $json.summary + '\"`\\n8. `git push origin ' + $json.branchName + '`\\n9. GitLab MR 생성 (' + $json.branchName + ' → ' + $json.baseBranch + ')\\n\\n모든 작업이 완료되면 MR URL을 알려주세요.' }], projectId: $json.project, model: 'sonnet', source: 'alert-pipeline', maxTurns: 10 }) }}",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '장애 수정 작업을 진행해주세요.\\n\\n## 작업 정보\\n- 프로젝트: ' + $json.projectName + ' (' + $json.projectId + ')\\n- 프로젝트 경로: ' + $json.projectPath + '\\n- GitLab: ' + ($json.gitlabPath || 'N/A') + '\\n- Jira 이슈: ' + $json.issueKey + '\\n- 브랜치: ' + $json.branchName + '\\n\\n## 장애 내용\\n' + $json.summary + '\\n\\n' + $json.description + '\\n\\n## 에러 타입\\n' + ($json.errorType || 'Unknown') + '\\n\\n## 수정 제안\\n' + ($json.suggestedFix || '분석 후 수정 진행') + '\\n\\n## 작업 단계\\n1. `cd ' + $json.projectPath + '`\\n2. `git checkout ' + $json.baseBranch + '`\\n3. `git pull origin ' + $json.baseBranch + '`\\n4. `git checkout -b ' + $json.branchName + '`\\n5. 코드 분석 및 수정\\n6. `git add .`\\n7. `git commit -m \"fix(' + $json.issueKey + '): ' + $json.summary + '\"`\\n8. `git push origin ' + $json.branchName + '`\\n9. GitLab MR 생성 (' + $json.branchName + ' → ' + $json.baseBranch + ')\\n\\n모든 작업이 완료되면 MR URL을 알려주세요.' }], projectId: $json.projectId, model: 'sonnet', source: 'alert-pipeline', maxTurns: 10 }) }}",
         "options": {
           "timeout": 300000
         }

@@ -1,9 +1,9 @@
 {
   "name": "Alert Channel Monitor",
   "meta": {
-    "description": "장애 알람 채널을 모니터링하여 Sentry/DataDog 알림을 분석하고, Jira 이슈 생성 및 MR 파이프라인을 트리거합니다."
+    "description": "장애 알람 채널을 모니터링하여 Sentry/DataDog 알림을 분석하고, Jira 이슈 생성 및 MR 파이프라인을 트리거합니다. projects.json의 alertChannels 설정을 사용합니다."
   },
-  "active": false,
+  "active": true,
   "nodes": [
     {
       "parameters": {
@@ -21,13 +21,54 @@
     },
     {
       "parameters": {
-        "jsCode": "// 알람 채널 설정 (환경변수 또는 하드코딩)\nconst ALERT_CHANNELS = [\n  'C_ALERT_CHANNEL_ID',  // 실제 채널 ID로 변경\n  'C_MONITORING_CHANNEL_ID'\n];\n\n// 알람 봇 ID (Sentry, DataDog, GitLab 등)\nconst ALERT_BOT_IDS = [\n  'B_SENTRY_BOT',\n  'B_DATADOG_BOT', \n  'B_GITLAB_BOT'\n];\n\nconst body = $input.item.json.body || $input.item.json;\nconst event = body.event || body;\nconst channel = event.channel;\nconst botId = event.bot_id;\nconst text = event.text || '';\nconst ts = event.ts;\nconst threadTs = event.thread_ts;\n\n// 알람 채널이 아니면 스킵\n// const isAlertChannel = ALERT_CHANNELS.includes(channel);\n// 임시: 모든 채널에서 알람 봇 메시지 처리\nconst isAlertChannel = true;\n\n// 봇 메시지가 아니면 스킵 (사람이 보낸 메시지는 무시)\nconst isAlertBot = !!botId; // ALERT_BOT_IDS.includes(botId);\n\n// 에러/장애 키워드 확인\nconst errorKeywords = ['error', 'exception', 'failed', 'failure', 'critical', 'alert', '장애', '오류', '에러', '실패'];\nconst hasErrorKeyword = errorKeywords.some(kw => text.toLowerCase().includes(kw));\n\nconst shouldProcess = isAlertChannel && isAlertBot && hasErrorKeyword;\n\nreturn {\n  json: {\n    shouldProcess,\n    channel,\n    botId,\n    text,\n    messageTs: ts,\n    threadTs: threadTs || ts,\n    reason: !shouldProcess ? \n      (!isAlertChannel ? 'Not alert channel' : \n       !isAlertBot ? 'Not from alert bot' : \n       !hasErrorKeyword ? 'No error keywords' : 'Unknown') : null\n  }\n};"
+        "jsCode": "// Slack 이벤트에서 정보 추출\nconst body = $input.item.json.body || $input.item.json;\nconst event = body.event || body;\nconst channel = event.channel;\nconst botId = event.bot_id;\nconst text = event.text || '';\nconst ts = event.ts;\nconst threadTs = event.thread_ts;\n\n// 봇 메시지가 아니면 스킵 (사람이 보낸 메시지는 무시)\nconst isAlertBot = !!botId;\n\n// 에러/장애 키워드 확인\nconst errorKeywords = ['error', 'exception', 'failed', 'failure', 'critical', 'alert', '장애', '오류', '에러', '실패', 'Failure'];\nconst hasErrorKeyword = errorKeywords.some(kw => text.toLowerCase().includes(kw.toLowerCase()));\n\n// 기본 필터링 (봇 + 에러 키워드)\nconst basicFilter = isAlertBot && hasErrorKeyword;\n\nreturn {\n  json: {\n    basicFilter,\n    channel,\n    botId,\n    text,\n    messageTs: ts,\n    threadTs: threadTs || ts\n  }\n};"
       },
       "id": "filter-alert",
       "name": "Filter Alert Message",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.basicFilter }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "basic-filter-check",
+      "name": "Basic Filter?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/projects/by-alert-channel/{{ $json.channel }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "lookup-project",
+      "name": "Lookup Project by Channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 프로젝트 조회 결과 병합\nconst projectResponse = $input.item.json;\nconst alertData = $('Filter Alert Message').item.json;\n\n// 프로젝트가 없으면 (404) 스킵\nconst hasProject = projectResponse.projectId != null;\n\nreturn {\n  json: {\n    shouldProcess: hasProject,\n    channel: alertData.channel,\n    botId: alertData.botId,\n    text: alertData.text,\n    messageTs: alertData.messageTs,\n    threadTs: alertData.threadTs,\n    // 프로젝트 정보\n    projectId: projectResponse.projectId,\n    projectName: projectResponse.projectName,\n    jiraProject: projectResponse.jiraProject,\n    gitlabPath: projectResponse.gitlabPath,\n    workingDirectory: projectResponse.workingDirectory,\n    defaultBranch: projectResponse.defaultBranch,\n    reason: hasProject ? null : 'Channel not mapped to any project'\n  }\n};"
+      },
+      "id": "merge-project-info",
+      "name": "Merge Project Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 200]
     },
     {
       "parameters": {
@@ -52,7 +93,7 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/chat/execute",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '다음 장애 알람 메시지를 분석해주세요:\\n\\n```\\n' + $json.text + '\\n```\\n\\n다음 JSON 형식으로만 응답해주세요:\\n```json\\n{\\n  \"isActionable\": true/false,\\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\\n  \"project\": \"프로젝트 추정 (config/projects.json에 정의된 프로젝트 중 하나 또는 null)\",\\n  \"summary\": \"Jira 이슈 제목\",\\n  \"description\": \"상세 설명\",\\n  \"suggestedFix\": \"수정 제안 (있으면)\"\\n}\\n```' }], model: 'haiku', source: 'alert', maxTurns: 1 }) }}",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '다음 장애 알람 메시지를 분석해주세요:\\n\\n## 프로젝트 정보\\n- 프로젝트: ' + ($json.projectName || 'Unknown') + ' (' + ($json.projectId || 'unknown') + ')\\n- Jira 프로젝트: ' + ($json.jiraProject || 'PROJ') + '\\n\\n## 알람 메시지\\n```\\n' + $json.text + '\\n```\\n\\n다음 JSON 형식으로만 응답해주세요:\\n```json\\n{\\n  \"isActionable\": true/false,\\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\\n  \"summary\": \"Jira 이슈 제목 (50자 이내)\",\\n  \"description\": \"상세 설명\",\\n  \"suggestedFix\": \"수정 제안 (있으면)\",\\n  \"errorType\": \"에러 타입 (Kafka, NullPointer, Timeout 등)\"\\n}\\n```' }], model: 'haiku', source: 'alert', maxTurns: 1 }) }}",
         "options": {
           "timeout": 30000
         }
@@ -61,17 +102,17 @@
       "name": "Claude Analyze Alert",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [800, 200]
+      "position": [1200, 200]
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.item.json;\nconst text = response.content || response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 정보 가져오기\nconst prevData = $('Filter Alert Message').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: prevData.channel,\n    messageTs: prevData.messageTs,\n    threadTs: prevData.threadTs,\n    originalText: prevData.text\n  }\n};"
+        "jsCode": "const response = $input.item.json;\nconst text = response.content || response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 및 프로젝트 정보 가져오기\nconst projectData = $('Merge Project Info').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: projectData.channel,\n    messageTs: projectData.messageTs,\n    threadTs: projectData.threadTs,\n    originalText: projectData.text,\n    // 프로젝트 정보 전달\n    projectId: projectData.projectId,\n    projectName: projectData.projectName,\n    jiraProject: projectData.jiraProject,\n    gitlabPath: projectData.gitlabPath,\n    workingDirectory: projectData.workingDirectory,\n    defaultBranch: projectData.defaultBranch\n  }\n};"
       },
       "id": "parse-analysis",
       "name": "Parse Analysis",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 200]
+      "position": [1400, 200]
     },
     {
       "parameters": {
@@ -116,7 +157,7 @@
             },
             {
               "name": "text",
-              "value": "=:rotating_light: *장애 알람 분석 완료*\n\n*심각도:* {{ $json.severity }}\n*프로젝트:* {{ $json.project || '판단 불가' }}\n*제목:* {{ $json.summary }}\n\n*설명:*\n{{ $json.description }}\n\n{{ $json.suggestedFix ? '*수정 제안:*\\n' + $json.suggestedFix : '' }}\n\n---\n:ticket: Jira 이슈 생성 → 리액션 추가\n:rocket: 자동 수정 시작 → :hammer_and_wrench: 리액션 추가"
+              "value": "=:rotating_light: *장애 알람 분석 완료*\n\n*심각도:* {{ $json.severity }}\n*프로젝트:* {{ $json.projectName }} (`{{ $json.projectId }}`)\n*Jira:* {{ $json.jiraProject || 'N/A' }}\n*에러 타입:* {{ $json.errorType || '분석 중' }}\n\n*제목:* {{ $json.summary }}\n\n*설명:*\n{{ $json.description }}\n\n{{ $json.suggestedFix ? '*수정 제안:*\\n' + $json.suggestedFix : '' }}\n\n---\n:ticket: Jira 이슈 생성 → :ticket: 리액션 추가\n:rocket: 자동 수정 시작 → :hammer_and_wrench: 리액션 추가"
             }
           ]
         }
@@ -129,13 +170,13 @@
     },
     {
       "parameters": {
-        "jsCode": "// 분석 결과를 임시 저장 (reaction-handler에서 사용)\nconst data = $input.item.json;\nconst slackResponse = $('Send Analysis to Slack').item.json;\n\n// 메시지 ts를 키로 저장\nconst analysisData = {\n  messageTs: slackResponse.ts || data.messageTs,\n  channel: data.channel,\n  project: data.project,\n  summary: data.summary,\n  description: data.description,\n  severity: data.severity,\n  suggestedFix: data.suggestedFix,\n  originalText: data.originalText,\n  timestamp: new Date().toISOString()\n};\n\n// 실제 구현에서는 Redis나 DB에 저장\n// 여기서는 로그만 출력\nconsole.log('Alert analysis saved:', JSON.stringify(analysisData));\n\nreturn { json: { success: true, analysisData } };"
+        "jsCode": "// 분석 결과를 임시 저장 (reaction-handler에서 사용)\nconst data = $input.item.json;\nconst slackResponse = $('Send Analysis to Slack').item.json;\n\n// 메시지 ts를 키로 저장\nconst analysisData = {\n  messageTs: slackResponse.ts || data.messageTs,\n  channel: data.channel,\n  // 프로젝트 정보 (projects.json에서 조회됨)\n  projectId: data.projectId,\n  projectName: data.projectName,\n  jiraProject: data.jiraProject,\n  gitlabPath: data.gitlabPath,\n  workingDirectory: data.workingDirectory,\n  defaultBranch: data.defaultBranch,\n  // 분석 결과\n  summary: data.summary,\n  description: data.description,\n  severity: data.severity,\n  suggestedFix: data.suggestedFix,\n  errorType: data.errorType,\n  originalText: data.originalText,\n  timestamp: new Date().toISOString()\n};\n\n// 실제 구현에서는 Redis나 DB에 저장\nconsole.log('Alert analysis saved:', JSON.stringify(analysisData));\n\nreturn { json: { success: true, analysisData } };"
       },
       "id": "save-analysis",
       "name": "Save Analysis for Reaction",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1600, 100]
+      "position": [1800, 100]
     },
     {
       "parameters": {
@@ -165,6 +206,22 @@
       ]
     },
     "Filter Alert Message": {
+      "main": [
+        [{ "node": "Basic Filter?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Basic Filter?": {
+      "main": [
+        [{ "node": "Lookup Project by Channel", "type": "main", "index": 0 }],
+        [{ "node": "Skip (Not Alert)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lookup Project by Channel": {
+      "main": [
+        [{ "node": "Merge Project Info", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge Project Info": {
       "main": [
         [{ "node": "Should Process?", "type": "main", "index": 0 }]
       ]

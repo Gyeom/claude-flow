@@ -38,6 +38,28 @@ class ProjectsController(
     }
 
     /**
+     * 알람 채널 ID로 프로젝트 조회
+     * 장애 알람 파이프라인에서 채널 → 프로젝트 매핑에 사용
+     */
+    @GetMapping("/by-alert-channel/{channelId}")
+    fun getProjectByAlertChannel(@PathVariable channelId: String): Mono<ResponseEntity<AlertChannelProjectResponse>> = mono {
+        logger.info { "Find project by alert channel: $channelId" }
+        val project = projectRegistry.findByAlertChannel(channelId)
+        if (project != null) {
+            ResponseEntity.ok(AlertChannelProjectResponse(
+                projectId = project.id,
+                projectName = project.name,
+                jiraProject = project.jiraProject,
+                gitlabPath = project.gitlabPath,
+                workingDirectory = project.workingDirectory,
+                defaultBranch = project.defaultBranch
+            ))
+        } else {
+            ResponseEntity.notFound().build()
+        }
+    }
+
+    /**
      * GitLab 경로가 있는 프로젝트 목록 조회
      * 스케줄 기반 MR 자동 리뷰 대상 프로젝트
      */
@@ -439,5 +461,18 @@ data class GitLabProjectResponse(
     val id: String,
     val name: String,
     val gitlabPath: String,
+    val defaultBranch: String
+)
+
+/**
+ * 알람 채널 프로젝트 조회 응답
+ * 장애 알람 파이프라인에서 사용
+ */
+data class AlertChannelProjectResponse(
+    val projectId: String,
+    val projectName: String,
+    val jiraProject: String?,
+    val gitlabPath: String?,
+    val workingDirectory: String,
     val defaultBranch: String
 )

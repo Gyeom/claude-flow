@@ -47,6 +47,10 @@ class ProjectRepository(
             aliases = rs.getString("aliases")?.let {
                 objectMapper.readValue(it)
             } ?: emptyList(),
+            jiraProject = rs.getString("jira_project"),
+            alertChannels = rs.getString("alert_channels")?.let {
+                objectMapper.readValue(it)
+            } ?: emptyList(),
             createdAt = rs.getString("created_at"),
             updatedAt = rs.getString("updated_at")
         )
@@ -74,6 +78,8 @@ class ProjectRepository(
                 "disallowed_tools" to objectMapper.writeValueAsString(entity.disallowedTools),
                 "fallback_agent_id" to entity.fallbackAgentId,
                 "aliases" to objectMapper.writeValueAsString(entity.aliases),
+                "jira_project" to entity.jiraProject,
+                "alert_channels" to objectMapper.writeValueAsString(entity.alertChannels),
                 "created_at" to (entity.createdAt ?: now),
                 "updated_at" to now
             )

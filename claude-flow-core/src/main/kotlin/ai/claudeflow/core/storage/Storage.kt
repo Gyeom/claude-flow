@@ -133,7 +133,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     gitlabPath = resolvedGitlabPath,
                     defaultBranch = entry.defaultBranch ?: defaultBranch,
                     isDefault = entry.isDefault ?: false,
-                    aliases = entry.aliases ?: emptyList()
+                    aliases = entry.aliases ?: emptyList(),
+                    jiraProject = entry.jiraProject,
+                    alertChannels = entry.alertChannels ?: emptyList()
                 )
 
                 try {
@@ -252,6 +254,8 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     disallowed_tools TEXT,
                     fallback_agent_id TEXT DEFAULT 'general',
                     aliases TEXT,
+                    jira_project TEXT,
+                    alert_channels TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -451,7 +455,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 "updated_at" to "TEXT",
                 "created_at" to "TEXT",
                 "gitlab_path" to "TEXT",
-                "aliases" to "TEXT"
+                "aliases" to "TEXT",
+                "jira_project" to "TEXT",
+                "alert_channels" to "TEXT"
             )
 
             for ((column, definition) in newProjectColumns) {
@@ -906,5 +912,7 @@ data class ProjectFileEntry(
     val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "team/my-project")
     val defaultBranch: String? = null,
     val isDefault: Boolean? = false,
-    val aliases: List<String>? = null
+    val aliases: List<String>? = null,
+    val jiraProject: String? = null,  // Jira 프로젝트 키 (예: "CCDC")
+    val alertChannels: List<String>? = null  // 장애 알람 채널 ID 목록
 )
