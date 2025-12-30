@@ -702,8 +702,8 @@ class ChatStreamController(
                     // 1. ExecutionRecord 저장
                     val record = ExecutionRecord(
                         id = event.requestId,
-                        prompt = prompt.take(1000),
-                        result = event.result?.take(5000),
+                        prompt = prompt,
+                        result = event.result,
                         status = "SUCCESS",
                         agentId = agentMatch.agent.id,
                         projectId = projectId.takeIf { it != "default" },
@@ -803,8 +803,8 @@ class ChatStreamController(
 
                 val record = ExecutionRecord(
                     id = requestId,
-                    prompt = prompt.take(1000),
-                    result = result?.take(5000),
+                    prompt = prompt,
+                    result = result,
                     status = status,
                     agentId = agentMatch.agent.id,
                     projectId = projectId.takeIf { it != "default" },
@@ -875,7 +875,7 @@ class ChatStreamController(
                 try {
                     val record = ExecutionRecord(
                         id = requestId,
-                        prompt = prompt.take(1000),
+                        prompt = prompt,
                         result = null,
                         status = "ERROR",
                         agentId = agentMatch.agent.id,

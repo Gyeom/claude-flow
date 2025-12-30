@@ -697,7 +697,7 @@ function InteractionDetail({
         {item.source === 'mr_review' && item.mrContext && (
           <div>
             <p className="text-sm text-muted-foreground mb-2">MR Context</p>
-            <Card className="p-3 bg-orange-500/5 border-orange-500/20 max-h-48 overflow-y-auto">
+            <Card className="p-3 bg-orange-500/5 border-orange-500/20 max-h-80 overflow-y-auto scrollbar-visible">
               <p className="whitespace-pre-wrap text-sm break-words">{item.mrContext}</p>
             </Card>
           </div>
@@ -708,7 +708,7 @@ function InteractionDetail({
           <p className="text-sm text-muted-foreground mb-2">
             {item.source === 'mr_review' ? 'Review Request' : 'Prompt'}
           </p>
-          <Card className="p-3 max-h-48 overflow-y-auto">
+          <Card className="p-3 max-h-80 overflow-y-auto scrollbar-visible">
             <p className="whitespace-pre-wrap text-sm break-words">{item.prompt}</p>
           </Card>
         </div>

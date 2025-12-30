@@ -518,8 +518,8 @@ class ClaudeFlowController(
         // 9. 실행 결과 저장
         val executionRecord = ExecutionRecord(
             id = result.requestId,
-            prompt = request.prompt.take(1000),
-            result = result.result?.take(5000),
+            prompt = request.prompt,
+            result = result.result,
             status = result.status.name,
             agentId = match.agent.id,
             projectId = project?.id,
