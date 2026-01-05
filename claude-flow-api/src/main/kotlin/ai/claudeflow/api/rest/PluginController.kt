@@ -615,6 +615,30 @@ class PluginController(
             error = result.error
         ))
     }
+
+    /**
+     * AI 리뷰 완료된 MR 목록 조회
+     * n8n 피드백 폴러에서 사용 (GitLab 직접 호출 대신 이 API 사용)
+     *
+     * @param project GitLab 프로젝트 경로 (URL 인코딩된 형태 또는 프로젝트명)
+     * @param days 최근 N일 내 업데이트된 MR만 조회 (기본 3)
+     */
+    @GetMapping("/gitlab/mrs/reviewed")
+    fun listReviewedMRs(
+        @RequestParam project: String,
+        @RequestParam(defaultValue = "3") days: Int
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("gitlab", "reviewed-mrs", mapOf(
+            "project" to project,
+            "days" to days
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
 }
 
 // DTOs

@@ -1,7 +1,7 @@
 {
   "name": "GitLab Feedback Poller",
   "meta": {
-    "description": "5분마다 GitLab MR 코멘트의 이모지 리액션을 수집합니다. AI 리뷰에 대한 개발자 피드백을 추적합니다. 최근 3일 내 MR 대상, 중복은 API에서 자동 처리됩니다."
+    "description": "5분마다 GitLab MR 코멘트의 이모지 리액션을 수집합니다. AI 리뷰에 대한 개발자 피드백을 추적합니다. 최근 3일 내 MR 대상, 중복은 API에서 자동 처리됩니다. [v2] claude-flow API를 통해 GitLab 호출 (Docker DNS 문제 해결)"
   },
   "nodes": [
     {
@@ -33,7 +33,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [440, 300],
-      "notes": "GitLab 연동 프로젝트 목록 조회"
+      "notes": "GitLab 연동 프로젝트 목록 조회 (claude-flow API)"
     },
     {
       "parameters": {
@@ -49,24 +49,12 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ encodeURIComponent($json.gitlabPath) }}/merge_requests",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "PRIVATE-TOKEN",
-              "value": "={{ $env.GITLAB_TOKEN }}"
-            }
-          ]
-        },
+        "url": "={{ $env.CLAUDE_FLOW_API_URL }}/api/v1/plugins/gitlab/mrs/reviewed",
         "sendQuery": true,
         "queryParameters": {
           "parameters": [
-            { "name": "state", "value": "opened" },
-            { "name": "labels", "value": "ai-review::done" },
-            { "name": "updated_after", "value": "={{ DateTime.now().minus({days: 3}).toISO() }}" },
-            { "name": "per_page", "value": "50" }
+            { "name": "project", "value": "={{ $json.gitlabPath }}" },
+            { "name": "days", "value": "3" }
           ]
         },
         "options": {}
@@ -76,7 +64,18 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [840, 300],
-      "notes": "AI 리뷰 완료된 MR 중 최근 3일 내 업데이트된 것 (중복 체크는 API에서 수행)"
+      "notes": "[v2] claude-flow API를 통해 AI 리뷰 완료 MR 조회 (GitLab 직접 호출 제거)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// claude-flow API 응답에서 data 추출\nconst response = $input.first().json;\nif (response.success && response.data && Array.isArray(response.data)) {\n  return response.data.map(mr => ({ json: mr }));\n}\nreturn [];"
+      },
+      "id": "extract-mrs",
+      "name": "Extract MRs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300],
+      "notes": "API 응답에서 MR 배열 추출"
     },
     {
       "parameters": {
@@ -105,7 +104,7 @@
       "name": "Has MRs?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1040, 300]
+      "position": [1160, 300]
     },
     {
       "parameters": {
@@ -116,46 +115,30 @@
       "name": "Loop MRs",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [1240, 200]
+      "position": [1360, 200]
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ encodeURIComponent($('Loop Projects').item.json.gitlabPath) }}/merge_requests/{{ $json.iid }}/notes",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "PRIVATE-TOKEN",
-              "value": "={{ $env.GITLAB_TOKEN }}"
-            }
-          ]
-        },
-        "sendQuery": true,
-        "queryParameters": {
-          "parameters": [
-            { "name": "per_page", "value": "100" }
-          ]
-        },
+        "url": "={{ $env.CLAUDE_FLOW_API_URL }}/api/v1/plugins/gitlab/mrs/{{ encodeURIComponent($('Loop Projects').item.json.gitlabPath) }}/{{ $json.iid }}/notes",
         "options": {}
       },
       "id": "get-mr-notes",
       "name": "Get MR Notes",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1440, 200],
-      "notes": "MR의 모든 코멘트 조회"
+      "position": [1560, 200],
+      "notes": "[v2] claude-flow API를 통해 MR 노트 조회"
     },
     {
       "parameters": {
-        "jsCode": "// AI 코멘트 식별 및 본문 포함\nconst notes = $input.all();\nconst projectId = $('Loop Projects').item.json.gitlabPath;\nconst mrIid = $('Loop MRs').item.json.iid;\nconst mrTitle = $('Loop MRs').item.json.title || '';\n\nconst aiNotes = [];\n\nfor (const item of notes) {\n  const note = item.json;\n  \n  // AI 코멘트 식별 (author가 봇이거나 특정 마커가 있는 경우)\n  const isAiComment = note.body && (\n    note.body.includes('## 🤖 AI Code Review') ||\n    note.body.includes('Claude Flow') ||\n    note.author?.username === 'claude-bot'\n  );\n  \n  if (isAiComment) {\n    aiNotes.push({\n      projectId: projectId,\n      mrIid: mrIid,\n      noteId: note.id,\n      reviewContent: note.body.substring(0, 2000),\n      mrContext: `MR #${mrIid}: ${mrTitle}`,\n      discussionId: note.discussion_id || null\n    });\n  }\n}\n\nreturn aiNotes.map(n => ({ json: n }));"
+        "jsCode": "// claude-flow API 응답에서 data 추출 후 AI 코멘트 필터링\nconst response = $input.first().json;\nconst projectId = $('Loop Projects').item.json.gitlabPath;\nconst mrIid = $('Loop MRs').item.json.iid;\nconst mrTitle = $('Loop MRs').item.json.title || '';\n\nconst notes = (response.success && response.data) ? response.data : [];\nconst aiNotes = [];\n\nfor (const note of notes) {\n  // AI 코멘트 식별 (author가 봇이거나 특정 마커가 있는 경우)\n  const isAiComment = note.body && (\n    note.body.includes('## 🤖 AI Code Review') ||\n    note.body.includes('Claude Flow') ||\n    note.author === 'claude-bot'\n  );\n  \n  if (isAiComment) {\n    aiNotes.push({\n      projectId: projectId,\n      mrIid: mrIid,\n      noteId: note.id,\n      reviewContent: note.body.substring(0, 2000),\n      mrContext: `MR #${mrIid}: ${mrTitle}`,\n      discussionId: null\n    });\n  }\n}\n\nreturn aiNotes.map(n => ({ json: n }));"
       },
       "id": "find-ai-notes",
       "name": "Find AI Notes",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1640, 200],
+      "position": [1760, 200],
       "notes": "AI 코멘트만 필터링 (본문 포함)"
     },
     {
@@ -185,7 +168,7 @@
       "name": "Has AI Notes?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1840, 200]
+      "position": [1960, 200]
     },
     {
       "parameters": {
@@ -196,7 +179,7 @@
       "name": "Loop AI Notes",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [2040, 100]
+      "position": [2160, 100]
     },
     {
       "parameters": {
@@ -217,41 +200,31 @@
       "name": "Register AI Review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2240, 100],
+      "position": [2360, 100],
       "notes": "AI 리뷰를 DB에 등록 (중복 시 무시)"
     },
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.GITLAB_URL }}/api/v4/projects/{{ encodeURIComponent($('Loop AI Notes').item.json.projectId) }}/merge_requests/{{ $('Loop AI Notes').item.json.mrIid }}/notes/{{ $('Loop AI Notes').item.json.noteId }}/award_emoji",
-        "authentication": "none",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "PRIVATE-TOKEN",
-              "value": "={{ $env.GITLAB_TOKEN }}"
-            }
-          ]
-        },
+        "url": "={{ $env.CLAUDE_FLOW_API_URL }}/api/v1/plugins/gitlab/mrs/{{ encodeURIComponent($('Loop AI Notes').item.json.projectId) }}/{{ $('Loop AI Notes').item.json.mrIid }}/notes/{{ $('Loop AI Notes').item.json.noteId }}/emojis",
         "options": {}
       },
       "id": "get-note-emojis",
       "name": "Get Note Emojis",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2440, 100],
-      "notes": "AI 코멘트의 이모지 조회"
+      "position": [2560, 100],
+      "notes": "[v2] claude-flow API를 통해 이모지 조회"
     },
     {
       "parameters": {
-        "jsCode": "// 피드백 이모지 필터링 (👍/👎)\n// n8n httpRequest는 배열 응답을 개별 아이템으로 분리함\nconst allItems = $input.all();\nconst noteData = $('Loop AI Notes').item.json;\nconst feedbackEmojis = [];\n\nfor (const item of allItems) {\n  const emoji = item.json;\n  if (emoji && emoji.name && ['thumbsup', 'thumbsdown', '+1', '-1'].includes(emoji.name)) {\n    feedbackEmojis.push({\n      projectId: noteData.projectId,\n      noteId: noteData.noteId,\n      emoji: emoji.name,\n      userId: emoji.user?.id || 0,\n      action: 'award'\n    });\n  }\n}\n\nreturn feedbackEmojis.map(e => ({ json: e }));"
+        "jsCode": "// claude-flow API 응답에서 피드백 이모지 필터링 (👍/👎)\nconst response = $input.first().json;\nconst noteData = $('Loop AI Notes').item.json;\nconst emojis = (response.success && response.data) ? response.data : [];\nconst feedbackEmojis = [];\n\nfor (const emoji of emojis) {\n  if (emoji && emoji.name && ['thumbsup', 'thumbsdown', '+1', '-1'].includes(emoji.name)) {\n    feedbackEmojis.push({\n      projectId: noteData.projectId,\n      noteId: noteData.noteId,\n      emoji: emoji.name,\n      userId: emoji.user_id || 0,\n      action: 'award'\n    });\n  }\n}\n\nreturn feedbackEmojis.map(e => ({ json: e }));"
       },
       "id": "filter-feedback-emojis",
       "name": "Filter Feedback Emojis",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2640, 100],
+      "position": [2760, 100],
       "notes": "👍/👎 이모지만 필터링"
     },
     {
@@ -281,7 +254,7 @@
       "name": "Has Feedback Emojis?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [2640, 100]
+      "position": [2960, 100]
     },
     {
       "parameters": {
@@ -296,7 +269,7 @@
       "name": "Save Emoji Feedback",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [2840, 0],
+      "position": [3160, 0],
       "notes": "이모지 피드백 저장"
     },
     {
@@ -305,7 +278,7 @@
       "name": "No MRs",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1240, 400]
+      "position": [1360, 400]
     },
     {
       "parameters": {},
@@ -313,7 +286,7 @@
       "name": "No AI Notes",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [2040, 300]
+      "position": [2160, 300]
     },
     {
       "parameters": {},
@@ -321,7 +294,7 @@
       "name": "No Emojis",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [2840, 200]
+      "position": [3160, 200]
     }
   ],
   "connections": {
@@ -360,6 +333,17 @@
       ]
     },
     "Get Reviewed MRs": {
+      "main": [
+        [
+          {
+            "node": "Extract MRs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract MRs": {
       "main": [
         [
           {
@@ -556,7 +540,7 @@
     "templateId": "gitlab-feedback-poller"
   },
   "pinData": {},
-  "versionId": "1",
+  "versionId": "2",
   "triggerCount": 0,
   "active": true
 }

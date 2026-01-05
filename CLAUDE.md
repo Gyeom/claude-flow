@@ -136,6 +136,19 @@ claude-flow/
 | 예시 | AgentRouter, Storage, Plugin | Slack→Jira, GitLab MR 리뷰 |
 | 수정 | 빌드/배포 필요 | UI에서 즉시 수정 가능 |
 
+### n8n 워크플로우 필수 규칙
+
+> **외부 서비스(GitLab, Jira 등)는 반드시 claude-flow API를 통해 호출해야 합니다.**
+
+n8n은 Docker 컨테이너에서 실행되어 회사 내부 DNS를 resolve하지 못할 수 있습니다.
+
+```
+❌ 금지: $env.GITLAB_URL/api/v4/... (직접 호출)
+✅ 권장: $env.CLAUDE_FLOW_API_URL/api/v1/plugins/gitlab/... (프록시)
+```
+
+자세한 API 목록과 규칙: `.claude/rules/n8n-workflow-rules.md`
+
 ### 현재 n8n 워크플로우 목록
 
 | 워크플로우 | 기능 | 상태 |

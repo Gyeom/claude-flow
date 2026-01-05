@@ -129,6 +129,12 @@ class GitLabPlugin(
             description = "Jira 이슈 키로 관련 MR 검색 (커밋 메시지, 브랜치명, 설명에서)",
             usage = "/gitlab search-mrs-by-issue <issue-key> [project]",
             examples = listOf("/gitlab search-mrs-by-issue PROJ-123", "/gitlab search-mrs-by-issue PROJ-123 my-project")
+        ),
+        PluginCommand(
+            name = "reviewed-mrs",
+            description = "AI 리뷰 완료된 MR 목록 조회 (ai-review::done 라벨)",
+            usage = "/gitlab reviewed-mrs <project> [days]",
+            examples = listOf("/gitlab reviewed-mrs my-project", "/gitlab reviewed-mrs my-project 7")
         )
     )
 
@@ -474,6 +480,11 @@ class GitLabPlugin(
             "search-mrs-by-issue" -> searchMRsByIssueKey(
                 args["issue_key"] as? String ?: return PluginResult(false, error = "Issue key required"),
                 args["project"] as? String
+            )
+            // AI 리뷰 완료된 MR 목록 (피드백 폴링용)
+            "reviewed-mrs" -> listReviewedMRs(
+                args["project"] as? String ?: return PluginResult(false, error = "Project required"),
+                (args["days"] as? Number)?.toInt() ?: 3
             )
             else -> PluginResult(false, error = "Unknown command: $command")
         }
@@ -1468,6 +1479,62 @@ class GitLabPlugin(
         } catch (e: Exception) {
             logger.error(e) { "Failed to search MRs by issue key: $issueKey" }
             PluginResult(false, error = "MR 검색 실패: ${e.message}")
+        }
+    }
+
+    // ============================================================
+    // AI 리뷰 완료 MR 목록 (피드백 폴링용)
+    // ============================================================
+
+    /**
+     * AI 리뷰 완료된 MR 목록 조회
+     *
+     * n8n 피드백 폴러에서 사용:
+     * - state=opened
+     * - labels=ai-review::done
+     * - updated_after=N일 전
+     *
+     * @param project GitLab 프로젝트 경로
+     * @param days 최근 N일 내 업데이트된 MR만 조회 (기본 3일)
+     */
+    private fun listReviewedMRs(project: String, days: Int): PluginResult {
+        return try {
+            val updatedAfter = java.time.Instant.now()
+                .minus(java.time.Duration.ofDays(days.toLong()))
+                .toString()
+
+            val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests" +
+                    "?state=opened" +
+                    "&labels=ai-review::done" +
+                    "&updated_after=$updatedAfter" +
+                    "&per_page=50"
+
+            val response = apiGet(url)
+            val mrs = mapper.readValue<List<Map<String, Any>>>(response)
+
+            val formatted = mrs.map { mr ->
+                mapOf(
+                    "iid" to mr["iid"],
+                    "title" to mr["title"],
+                    "author" to (mr["author"] as? Map<*, *>)?.get("name"),
+                    "source_branch" to mr["source_branch"],
+                    "target_branch" to mr["target_branch"],
+                    "web_url" to mr["web_url"],
+                    "updated_at" to mr["updated_at"],
+                    "labels" to mr["labels"]
+                )
+            }
+
+            logger.info { "Found ${mrs.size} reviewed MRs in $project (last $days days)" }
+
+            PluginResult(
+                success = true,
+                data = formatted,
+                message = "$project 에서 AI 리뷰 완료된 MR ${mrs.size}개 (최근 ${days}일)"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to list reviewed MRs for $project" }
+            PluginResult(false, error = "리뷰된 MR 조회 실패: ${e.message}")
         }
     }
 }
