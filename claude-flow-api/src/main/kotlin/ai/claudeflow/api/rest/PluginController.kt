@@ -141,6 +141,26 @@ class PluginController(
     }
 
     /**
+     * GitLab MR 변경사항(diff) 조회
+     */
+    @GetMapping("/gitlab/mrs/{project}/{mrId}/changes")
+    fun getGitLabMRChanges(
+        @PathVariable project: String,
+        @PathVariable mrId: Int
+    ): Mono<ResponseEntity<PluginExecuteResponse>> = mono {
+        val result = pluginManager.execute("gitlab", "mr-changes", mapOf(
+            "project" to project,
+            "mr_id" to mrId
+        ))
+        ResponseEntity.ok(PluginExecuteResponse(
+            success = result.success,
+            data = result.data,
+            message = result.message,
+            error = result.error
+        ))
+    }
+
+    /**
      * GitLab 파이프라인 상태 조회
      */
     @GetMapping("/gitlab/pipelines/{project}")

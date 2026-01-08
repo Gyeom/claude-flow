@@ -135,6 +135,12 @@ class GitLabPlugin(
             description = "AI 리뷰 완료된 MR 목록 조회 (ai-review::done 라벨)",
             usage = "/gitlab reviewed-mrs <project> [days]",
             examples = listOf("/gitlab reviewed-mrs my-project", "/gitlab reviewed-mrs my-project 7")
+        ),
+        PluginCommand(
+            name = "mr-changes",
+            description = "MR 변경사항(diff) 조회",
+            usage = "/gitlab mr-changes <project> <mr_id>",
+            examples = listOf("/gitlab mr-changes my-project 123")
         )
     )
 
@@ -486,6 +492,12 @@ class GitLabPlugin(
                 args["project"] as? String ?: return PluginResult(false, error = "Project required"),
                 (args["days"] as? Number)?.toInt() ?: 3
             )
+            // MR 변경사항(diff) 조회
+            "mr-changes" -> {
+                val mrId = (args["mr_id"] as? Number)?.toInt() ?: return PluginResult(false, error = "MR ID required")
+                val project = args["project"] as? String ?: return PluginResult(false, error = "Project required")
+                getMrChanges(project, mrId)
+            }
             else -> PluginResult(false, error = "Unknown command: $command")
         }
     }
@@ -1341,6 +1353,51 @@ class GitLabPlugin(
         } catch (e: Exception) {
             logger.error(e) { "Failed to get notes for MR !$mrId" }
             PluginResult(false, error = "노트 조회 실패: ${e.message}")
+        }
+    }
+
+    /**
+     * MR 변경사항(diff) 조회
+     * GET /api/v4/projects/:id/merge_requests/:merge_request_iid/changes
+     */
+    private fun getMrChanges(project: String, mrId: Int): PluginResult {
+        val url = "$baseUrl/api/v4/projects/${encodeProject(project)}/merge_requests/$mrId/changes"
+
+        return try {
+            val response = apiGet(url)
+            val result: Map<String, Any> = mapper.readValue(response)
+
+            @Suppress("UNCHECKED_CAST")
+            val changes = result["changes"] as? List<Map<String, Any>> ?: emptyList()
+
+            val formatted = mapOf(
+                "iid" to result["iid"],
+                "title" to result["title"],
+                "state" to result["state"],
+                "source_branch" to result["source_branch"],
+                "target_branch" to result["target_branch"],
+                "author" to (result["author"] as? Map<*, *>)?.get("name"),
+                "files_changed" to changes.size,
+                "changes" to changes.map { change ->
+                    mapOf(
+                        "old_path" to change["old_path"],
+                        "new_path" to change["new_path"],
+                        "new_file" to change["new_file"],
+                        "renamed_file" to change["renamed_file"],
+                        "deleted_file" to change["deleted_file"],
+                        "diff" to change["diff"]
+                    )
+                }
+            )
+
+            PluginResult(
+                success = true,
+                data = formatted,
+                message = "MR !${mrId}: ${changes.size}개 파일 변경"
+            )
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get changes for MR !$mrId" }
+            PluginResult(false, error = "변경사항 조회 실패: ${e.message}")
         }
     }
 
