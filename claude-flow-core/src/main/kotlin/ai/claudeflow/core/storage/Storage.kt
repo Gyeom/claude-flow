@@ -124,11 +124,16 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 val resolvedGitlabPath = entry.gitlabPath
                     ?: gitlabGroup?.let { "$it/${entry.path}" }
 
+                // workingDirectory 결정: 명시적 지정 > workspacePath/path
+                val resolvedWorkingDirectory = entry.workingDirectory?.let {
+                    resolveEnvironmentVariables(it, workspacePath)
+                } ?: "$workspacePath/${entry.path}"
+
                 val project = Project(
                     id = entry.id,
                     name = entry.name,
                     description = entry.description,
-                    workingDirectory = "$workspacePath/${entry.path}",
+                    workingDirectory = resolvedWorkingDirectory,
                     gitRemote = entry.gitRemote,
                     gitlabPath = resolvedGitlabPath,
                     defaultBranch = entry.defaultBranch ?: defaultBranch,
@@ -171,6 +176,35 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
     }
 
     override fun getConnection(): Connection = connection
+
+    /**
+     * 환경변수 치환
+     *
+     * ${WORKSPACE_PATH}, ${HOME} 등의 환경변수를 실제 값으로 치환
+     */
+    private fun resolveEnvironmentVariables(path: String, defaultWorkspacePath: String): String {
+        var resolved = path
+
+        // ${WORKSPACE_PATH} 치환
+        if (resolved.contains("\${WORKSPACE_PATH}")) {
+            val workspacePath = System.getenv("WORKSPACE_PATH") ?: defaultWorkspacePath
+            resolved = resolved.replace("\${WORKSPACE_PATH}", workspacePath)
+        }
+
+        // ${HOME} 치환
+        if (resolved.contains("\${HOME}")) {
+            val homePath = System.getProperty("user.home") ?: ""
+            resolved = resolved.replace("\${HOME}", homePath)
+        }
+
+        // $HOME 치환 (중괄호 없는 형태도 지원)
+        if (resolved.contains("\$HOME")) {
+            val homePath = System.getProperty("user.home") ?: ""
+            resolved = resolved.replace("\$HOME", homePath)
+        }
+
+        return resolved
+    }
 
     private fun initTables() {
         connection.createStatement().use { stmt ->
@@ -908,6 +942,7 @@ data class ProjectFileEntry(
     val name: String,
     val description: String? = null,
     val path: String,
+    val workingDirectory: String? = null,  // 작업 디렉토리 (환경변수 치환 지원: ${WORKSPACE_PATH})
     val gitRemote: String? = null,
     val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "team/my-project")
     val defaultBranch: String? = null,

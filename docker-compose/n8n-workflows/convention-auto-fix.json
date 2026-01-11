@@ -1,0 +1,413 @@
+{
+  "name": "Convention Auto-Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every Hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [120, 300],
+      "notes": "매시간 Convention 검사 실행"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "convention-scan",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [120, 480],
+      "webhookId": "convention-scan-webhook",
+      "notes": "POST /webhook/convention-scan { projectId?: string }"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/convention/enabled-projects",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "get-enabled-projects",
+      "name": "Get Convention-Enabled Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [360, 380],
+      "notes": "CONVENTION.md가 있는 프로젝트 목록 조회"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 웹훅에서 특정 프로젝트 지정 시 필터링\nconst webhookData = $('Webhook Trigger').first()?.json;\nconst projects = $input.first().json;\n\nif (webhookData?.body?.projectId) {\n  // 특정 프로젝트만\n  const filtered = projects.filter(p => p.projectId === webhookData.body.projectId);\n  return filtered.map(p => ({ json: p }));\n} else {\n  // 모든 프로젝트\n  return projects.map(p => ({ json: p }));\n}"
+      },
+      "id": "filter-projects",
+      "name": "Filter Projects",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 380],
+      "notes": "웹훅에서 projectId 지정 시 해당 프로젝트만 처리"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-projects",
+      "name": "Loop Projects",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [760, 380],
+      "notes": "프로젝트별로 순차 처리"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/convention/{{ $json.projectId }}/scan",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ scope: 'full' }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "scan-violations",
+      "name": "Scan Violations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 380],
+      "notes": "Convention 위반 스캔 (최대 5분)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-auto-fixable",
+              "leftValue": "={{ $json.summary?.autoFixable }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-auto-fixable",
+      "name": "Has Auto-Fixable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1160, 380],
+      "notes": "자동 수정 가능한 위반이 있는지 확인"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/convention/{{ $json.projectId }}/fix",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ maxFixes: 5, createMr: true }) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "fix-violations",
+      "name": "Fix Violations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 300],
+      "notes": "자동 수정 및 MR 생성 (최대 10분)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 스캔 결과와 수정 결과 병합\nconst scanResult = $('Scan Violations').first().json;\nconst fixResult = $input.first().json;\n\nreturn [{\n  json: {\n    projectId: scanResult.projectId,\n    scanSuccess: scanResult.success,\n    summary: scanResult.summary,\n    fixSuccess: fixResult.success,\n    fixedCount: fixResult.fixedCount,\n    mrUrl: fixResult.mrUrl,\n    branchName: fixResult.branchName,\n    manualReviewNeeded: scanResult.summary.total - scanResult.summary.autoFixable\n  }\n}];"
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 300],
+      "notes": "스캔/수정 결과 병합"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 자동 수정 없이 스캔만 완료된 경우\nconst scanResult = $('Scan Violations').first().json;\n\nreturn [{\n  json: {\n    projectId: scanResult.projectId,\n    scanSuccess: scanResult.success,\n    summary: scanResult.summary,\n    fixSuccess: null,\n    fixedCount: 0,\n    mrUrl: null,\n    branchName: null,\n    manualReviewNeeded: scanResult.summary.total\n  }\n}];"
+      },
+      "id": "scan-only-result",
+      "name": "Scan Only Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 480],
+      "notes": "자동 수정 대상 없을 때"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 모든 프로젝트 결과 수집\nconst items = $input.all();\n\nconst results = items.map(item => item.json);\nconst totalFixed = results.reduce((sum, r) => sum + (r.fixedCount || 0), 0);\nconst totalManual = results.reduce((sum, r) => sum + (r.manualReviewNeeded || 0), 0);\nconst mrsCreated = results.filter(r => r.mrUrl).map(r => r.mrUrl);\n\nreturn [{\n  json: {\n    results,\n    summary: {\n      projectsScanned: results.length,\n      totalFixed,\n      totalManualReview: totalManual,\n      mrsCreated\n    }\n  }\n}];"
+      },
+      "id": "aggregate-results",
+      "name": "Aggregate Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 380],
+      "notes": "전체 결과 집계"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "channel": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SLACK_REVIEW_CHANNEL || 'general' }}"
+        },
+        "messageType": "block",
+        "blocksUi": {
+          "blocksValues": [
+            {
+              "type": "header",
+              "text": {
+                "type": "plain_text",
+                "text": "🔧 Convention Check 완료"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "={{ '📊 *검사 결과*\\n\\n' + '| 구분 | 개수 |\\n|------|------|\\n' + '| 프로젝트 | ' + $json.summary.projectsScanned + ' |\\n' + '| ✅ 자동 수정 | ' + $json.summary.totalFixed + ' |\\n' + '| ⚠️ 수동 검토 | ' + $json.summary.totalManualReview + ' |' }}"
+              }
+            },
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "={{ $json.summary.mrsCreated.length > 0 ? '\\n🔗 *생성된 MR*\\n' + $json.summary.mrsCreated.map(url => '• ' + url).join('\\n') : '\\n_자동 수정된 항목 없음_' }}"
+              }
+            },
+            {
+              "type": "context",
+              "elements": [
+                {
+                  "type": "mrkdwn",
+                  "text": "수동 검토가 필요한 항목은 각 프로젝트의 `CONVENTION_VIOLATIONS.md`를 확인하세요."
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "id": "send-slack-notification",
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [2000, 380],
+      "credentials": {
+        "slackApi": {
+          "id": "slack-credentials",
+          "name": "Slack API"
+        }
+      },
+      "notes": "결과 요약을 Slack으로 전송"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Convention scan completed', summary: $json.summary }) }}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2200, 380],
+      "notes": "웹훅 응답 반환"
+    }
+  ],
+  "connections": {
+    "Every Hour": {
+      "main": [
+        [
+          {
+            "node": "Get Convention-Enabled Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Convention-Enabled Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Convention-Enabled Projects": {
+      "main": [
+        [
+          {
+            "node": "Filter Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Projects": {
+      "main": [
+        [
+          {
+            "node": "Loop Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Projects": {
+      "main": [
+        [
+          {
+            "node": "Scan Violations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Violations": {
+      "main": [
+        [
+          {
+            "node": "Has Auto-Fixable?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Auto-Fixable?": {
+      "main": [
+        [
+          {
+            "node": "Fix Violations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Scan Only Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fix Violations": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Loop Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scan Only Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Projects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Results": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "convention",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "name": "auto-fix",
+      "createdAt": "2024-01-01T00:00:00.000Z",
+      "updatedAt": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "triggerCount": 0,
+  "active": false,
+  "pinData": {},
+  "versionId": "1"
+}

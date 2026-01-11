@@ -158,6 +158,7 @@ n8n은 Docker 컨테이너에서 실행되어 회사 내부 DNS를 resolve하지
 | `slack-feedback-handler` | 피드백 수집 (👍/👎) | ✅ 활성 |
 | `scheduled-mr-review` | 5분마다 새 MR 자동 리뷰 | ✅ 활성 |
 | `gitlab-feedback-poller` | GitLab AI 코멘트 이모지 피드백 수집 | ✅ 활성 |
+| `convention-auto-fix` | CONVENTION.md 기반 코드 스캔 및 자동 수정 | ⏸️ 비활성 |
 | `alert-channel-monitor` | 장애 알람 채널 자동 모니터링 | ⏸️ 비활성 |
 | `alert-to-mr-pipeline` | 알람 → Jira → 브랜치 → MR 파이프라인 | ⏸️ 비활성 |
 
@@ -186,6 +187,42 @@ n8n은 Docker 컨테이너에서 실행되어 회사 내부 DNS를 resolve하지
     ↓
 📢 Slack에 완료 알림 + MR 링크
 ```
+
+### Convention Auto-Fix 파이프라인
+
+각 프로젝트의 `CONVENTION.md`를 기반으로 코드 컨벤션 위반을 자동으로 탐지하고 수정하는 파이프라인:
+
+```
+📅 스케줄 트리거 (매일 오전 9시) 또는 웹훅
+    ↓
+📋 CONVENTION.md 있는 프로젝트 조회
+    ↓
+🔍 Claude가 코드 스캔 (컨벤션 위반 탐지)
+    ↓
+📝 CONVENTION_VIOLATIONS.md 자동 생성
+    ↓
+    ├── 자동 수정 가능 ──→ 🔧 Claude가 코드 수정
+    │                        ↓
+    │                    🌿 브랜치 생성 + 커밋
+    │                        ↓
+    │                    🔀 MR 생성
+    │
+    └── 수동 검토 필요 ──→ 📋 VIOLATIONS.md에 기록
+    ↓
+💬 Slack 결과 알림 (MR 링크 + 수동 검토 항목)
+```
+
+**사용 방법:**
+1. 프로젝트에 `CONVENTION.md` 파일 생성 (코딩 규칙 정의)
+2. 워크플로우 활성화 또는 웹훅 호출: `POST /webhook/convention-scan`
+3. Claude가 자동으로 위반 탐지 및 수정
+
+**API 엔드포인트:**
+- `GET /api/v1/convention/{projectId}` - CONVENTION.md 조회
+- `GET /api/v1/convention/{projectId}/violations` - 위반 사항 조회
+- `POST /api/v1/convention/{projectId}/scan` - 위반 스캔 실행
+- `POST /api/v1/convention/{projectId}/fix` - 자동 수정 실행
+- `GET /api/v1/convention/enabled-projects` - 활성화된 프로젝트 목록
 
 ### Kotlin 코드의 역할
 
