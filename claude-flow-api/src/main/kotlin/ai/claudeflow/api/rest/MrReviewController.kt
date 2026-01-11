@@ -327,15 +327,6 @@ class MrReviewController(
                     appendLine()
                 }
 
-                // 리뷰 우선순위 파일
-                if (priorityFiles.isNotEmpty()) {
-                    appendLine("### 리뷰 우선순위 파일")
-                    priorityFiles.take(5).forEachIndexed { idx, file ->
-                        appendLine("${idx + 1}. `$file`")
-                    }
-                    appendLine()
-                }
-
                 // AI 리뷰 가이드
                 appendLine("### AI 리뷰 지침")
                 appendLine("""
@@ -345,16 +336,16 @@ class MrReviewController(
                 |3. 파일명 변경(Rename)과 내용 수정(Modify) 정확히 구분
                 |4. 보안, Breaking Change, 코드 품질 관점에서 추가 검토
                 |5. 각 항목에 대해 구체적인 코드 라인과 함께 피드백 제공
+                |6. **diff만으로 컨텍스트가 부족하면, 프로젝트 내 관련 파일을 직접 읽어서 전체 맥락을 파악하세요**
+                |   - 변경된 클래스/함수가 사용되는 다른 파일 확인
+                |   - 관련 테스트 파일이 있는지 확인
+                |   - 설정 파일이나 인터페이스 정의 확인
                 """.trimMargin())
 
-                // 리뷰 프롬프트가 있으면 추가 (diff 포함)
+                // 리뷰 프롬프트가 있으면 추가 (diff 포함) - 이미 마크다운 포맷팅됨
                 if (reviewPrompt != null && reviewPrompt.length > 100) {
                     appendLine()
-                    appendLine("### 실제 코드 변경사항 (Diff)")
-                    appendLine("```")
-                    appendLine(reviewPrompt.take(8000))
-                    if (reviewPrompt.length > 8000) appendLine("... (생략됨)")
-                    appendLine("```")
+                    appendLine(reviewPrompt)
                 }
             }
 

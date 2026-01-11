@@ -384,7 +384,10 @@ class ClaudeFlowController(
         logger.info { "Execute with routing: ${request.prompt.take(50)}..." }
 
         // 0. Rate Limiting 체크
-        val projectId = request.channel?.let { projectRegistry.getChannelProject(it)?.id } ?: "default"
+        // 프로젝트 ID 결정: 요청에서 직접 지정 > 채널 매핑 > 기본값
+        val projectId = request.projectId
+            ?: request.channel?.let { projectRegistry.getChannelProject(it)?.id }
+            ?: "default"
 
         // 타입에 따라 다른 Rate Limit 체크
         val isRateLimited = when (rateLimiter) {
@@ -433,8 +436,9 @@ class ClaudeFlowController(
         val routingLatencyMs = System.currentTimeMillis() - routingStartTime
         logger.info { "Routed to agent: ${match.agent.id} (confidence: ${match.confidence}, method: ${match.method}, latency: ${routingLatencyMs}ms)" }
 
-        // 2. 채널에 설정된 프로젝트 조회 (채널 정보가 있으면)
-        val project = request.channel?.let { projectRegistry.getChannelProject(it) }
+        // 2. 프로젝트 조회 (우선순위: 요청의 projectId > 채널 매핑)
+        val project = request.projectId?.let { projectRegistry.get(it) }
+            ?: request.channel?.let { projectRegistry.getChannelProject(it) }
         if (project != null) {
             logger.info { "Using project: ${project.id} (${project.workingDirectory})" }
         }
@@ -953,6 +957,7 @@ data class ExecuteRequest(
     val deniedTools: List<String>? = null,
     val conversationHistory: List<ConversationMessage>? = null,
     val channel: String? = null,
+    val projectId: String? = null,  // 프로젝트 ID (채널 매핑 없이 직접 지정)
     val userId: String? = null,
     val threadTs: String? = null,
     val source: String? = null  // slack, webhook, api, etc.

@@ -85,9 +85,9 @@ class MrAnalyzer {
                     isDeleted -> ChangeType.DELETED
                     else -> ChangeType.MODIFIED
                 },
-                additions = countLines(diff, '+'),
-                deletions = countLines(diff, '-'),
-                diffPreview = truncateDiff(diff, 500)
+                additions = countDiffLines(diff, '+'),
+                deletions = countDiffLines(diff, '-'),
+                diffPreview = diff  // 전체 diff 전달 (제한 제거)
             )
 
             when (fileChange.changeType) {
@@ -299,6 +299,27 @@ class MrAnalyzer {
             sb.appendLine("| 📝 Modify | ${file.newPath} | +${file.additions}/-${file.deletions} |")
         }
 
+        // 실제 diff 내용 추가 (코드 리뷰에 필수!)
+        sb.appendLine()
+        sb.appendLine("## 실제 코드 변경사항 (Diff)")
+        sb.appendLine()
+
+        val allFiles = analysis.renamed + analysis.added + analysis.modified
+        for (file in allFiles) {
+            if (file.diffPreview.isNotBlank()) {
+                val fileType = when {
+                    file.changeType == ChangeType.RENAMED -> "✏️ Renamed"
+                    file.changeType == ChangeType.ADDED -> "➕ New"
+                    else -> "📝 Modified"
+                }
+                sb.appendLine("### $fileType: ${file.newPath}")
+                sb.appendLine("```diff")
+                sb.appendLine(file.diffPreview)
+                sb.appendLine("```")
+                sb.appendLine()
+            }
+        }
+
         return ReviewContext(
             formattedPrompt = sb.toString(),
             priorityFiles = getPriorityFiles(analysis),
@@ -454,22 +475,38 @@ class MrAnalyzer {
     }
 
     /**
-     * diff에서 라인 수 카운트
+     * diff에서 실제 변경 라인 수 카운트 (정확한 파싱)
+     *
+     * 개선된 로직:
+     * 1. @@ 헤더 이후 실제 diff 영역에서만 카운트
+     * 2. +++ / --- 파일 헤더 제외
+     * 3. 문자열 내 +/- 문자 오인식 방지
      */
-    private fun countLines(diff: String, prefix: Char): Int {
-        return diff.lines()
-            .count { it.startsWith(prefix) && !it.startsWith("$prefix$prefix$prefix") }
-    }
+    private fun countDiffLines(diff: String, prefix: Char): Int {
+        var count = 0
+        var inHunk = false
 
-    /**
-     * diff 미리보기 생성 (길이 제한)
-     */
-    private fun truncateDiff(diff: String, maxLength: Int): String {
-        return if (diff.length > maxLength) {
-            diff.take(maxLength) + "\n... (truncated)"
-        } else {
-            diff
+        for (line in diff.lines()) {
+            // @@ ... @@ 헤더로 hunk 시작 감지 (예: @@ -1,10 +1,10 @@)
+            if (line.startsWith("@@") && line.indexOf("@@", 2) > 0) {
+                inHunk = true
+                continue
+            }
+
+            // hunk 내부에서만 카운트
+            if (inHunk) {
+                // +++ 또는 --- 파일 헤더 제외
+                if (line.startsWith("$prefix$prefix$prefix")) {
+                    continue
+                }
+                // 실제 변경 라인 카운트
+                if (line.startsWith(prefix)) {
+                    count++
+                }
+            }
         }
+
+        return count
     }
 }
 

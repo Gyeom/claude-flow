@@ -1027,7 +1027,7 @@ class GitLabPlugin(
         }
 
         sb.appendLine("## 변경된 파일 및 코드 diff")
-        for (change in changes.take(10)) {  // 최대 10개 파일
+        for (change in changes) {  // 모든 파일 포함 (제한 제거)
             val status = when {
                 change["new_file"] == true -> "[신규]"
                 change["deleted_file"] == true -> "[삭제]"
@@ -1036,22 +1036,14 @@ class GitLabPlugin(
             }
             sb.appendLine("### $status ${change["new_path"]}")
 
-            // diff 내용 포함 (최대 300줄)
+            // diff 내용 포함 (제한 없이 전체 전달)
             val diff = change["diff"] as? String
             if (!diff.isNullOrBlank()) {
-                val diffLines = diff.lines().take(300)
                 sb.appendLine("```diff")
-                sb.appendLine(diffLines.joinToString("\n"))
-                if (diff.lines().size > 300) {
-                    sb.appendLine("... (truncated, ${diff.lines().size - 300} more lines)")
-                }
+                sb.appendLine(diff)
                 sb.appendLine("```")
             }
             sb.appendLine()
-        }
-
-        if (changes.size > 10) {
-            sb.appendLine("... 그 외 ${changes.size - 10}개 파일 (생략)")
         }
 
         return sb.toString()
