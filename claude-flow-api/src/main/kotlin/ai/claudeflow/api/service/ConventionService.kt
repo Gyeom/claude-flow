@@ -5,6 +5,7 @@ import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
 import ai.claudeflow.executor.ExecutionStatus
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import mu.KotlinLogging
@@ -560,10 +561,23 @@ $violationsJson
 
     private fun parseClaudeScanResult(output: String): List<ViolationItem> {
         return try {
-            // JSON 블록 추출
-            val jsonMatch = Regex("""\{[\s\S]*"violations"[\s\S]*\}""").find(output)
-            if (jsonMatch != null) {
-                val result: ClaudeScanOutput = objectMapper.readValue(jsonMatch.value)
+            // 1. 마크다운 코드블록 내의 JSON 찾기: ```json ... ```
+            val codeBlockPattern = Regex("""```json\s*\n(\{[\s\S]*?"violations"[\s\S]*?\})\s*\n```""")
+            val codeBlockMatch = codeBlockPattern.find(output)
+
+            val jsonString = if (codeBlockMatch != null) {
+                codeBlockMatch.groupValues[1]
+            } else {
+                // 2. 코드블록 없이 직접 JSON 찾기 (마지막 것)
+                val jsonPattern = Regex("""\{\s*"violations"\s*:\s*\[[\s\S]*?\]\s*(?:,[\s\S]*?)?\}""")
+                val allMatches = jsonPattern.findAll(output).toList()
+                allMatches.lastOrNull()?.value
+            }
+
+            if (jsonString != null) {
+                logger.info { "Found JSON block (${jsonString.length} chars)" }
+                val result: ClaudeScanOutput = objectMapper.readValue(jsonString)
+                logger.info { "Parsed ${result.violations.size} violations" }
                 result.violations.map { v ->
                     ViolationItem(
                         id = v.id,
@@ -579,7 +593,9 @@ $violationsJson
                     )
                 }
             } else {
-                logger.warn { "Could not parse Claude scan result: no JSON found" }
+                logger.warn { "Could not parse Claude scan result: no JSON found in ${output.length} chars" }
+                // 디버깅: 출력의 마지막 1000자 로그
+                logger.debug { "Last 1000 chars: ${output.takeLast(1000)}" }
                 emptyList()
             }
         } catch (e: Exception) {
@@ -634,20 +650,22 @@ data class ConventionFixRequest(
 
 // ==================== Claude Output DTOs ====================
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 private data class ClaudeScanOutput(
     val violations: List<ClaudeViolation> = emptyList()
 )
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 private data class ClaudeViolation(
     val id: String,
     val file: String,
-    val line: Int?,
+    val line: Int? = null,
     val rule: String,
     val severity: String,
-    val autoFixable: Boolean,
+    val autoFixable: Boolean = false,
     val description: String,
-    val suggestion: String?,
-    val codeSnippet: String?
+    val suggestion: String? = null,
+    val codeSnippet: String? = null
 )
 
 private data class ClaudeFixOutput(
