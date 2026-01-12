@@ -7,7 +7,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 * * * *"
+              "expression": "*/10 * * * *"
             }
           ]
         }
@@ -17,7 +17,7 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [120, 300],
-      "notes": "매시간 Convention 검사 실행"
+      "notes": "10분마다 Convention 검사 실행"
     },
     {
       "parameters": {
@@ -173,63 +173,6 @@
     },
     {
       "parameters": {
-        "resource": "message",
-        "channel": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $env.SLACK_REVIEW_CHANNEL || 'general' }}"
-        },
-        "messageType": "block",
-        "blocksUi": {
-          "blocksValues": [
-            {
-              "type": "header",
-              "text": {
-                "type": "plain_text",
-                "text": "🔧 Convention Check 완료"
-              }
-            },
-            {
-              "type": "section",
-              "text": {
-                "type": "mrkdwn",
-                "text": "={{ '📊 *검사 결과*\\n\\n' + '| 구분 | 개수 |\\n|------|------|\\n' + '| 프로젝트 | ' + $json.summary.projectsScanned + ' |\\n' + '| ✅ 자동 수정 | ' + $json.summary.totalFixed + ' |\\n' + '| ⚠️ 수동 검토 | ' + $json.summary.totalManualReview + ' |' }}"
-              }
-            },
-            {
-              "type": "section",
-              "text": {
-                "type": "mrkdwn",
-                "text": "={{ $json.summary.mrsCreated.length > 0 ? '\\n🔗 *생성된 MR*\\n' + $json.summary.mrsCreated.map(url => '• ' + url).join('\\n') : '\\n_자동 수정된 항목 없음_' }}"
-              }
-            },
-            {
-              "type": "context",
-              "elements": [
-                {
-                  "type": "mrkdwn",
-                  "text": "수동 검토가 필요한 항목은 각 프로젝트의 `CONVENTION_VIOLATIONS.md`를 확인하세요."
-                }
-              ]
-            }
-          ]
-        }
-      },
-      "id": "send-slack-notification",
-      "name": "Send Slack Notification",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.2,
-      "position": [2000, 380],
-      "credentials": {
-        "slackApi": {
-          "id": "slack-credentials",
-          "name": "Slack API"
-        }
-      },
-      "notes": "결과 요약을 Slack으로 전송"
-    },
-    {
-      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify({ success: true, message: 'Convention scan completed', summary: $json.summary }) }}",
         "options": {}
@@ -368,17 +311,6 @@
       ]
     },
     "Aggregate Results": {
-      "main": [
-        [
-          {
-            "node": "Send Slack Notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Send Slack Notification": {
       "main": [
         [
           {
