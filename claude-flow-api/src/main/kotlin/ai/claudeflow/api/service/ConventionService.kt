@@ -237,7 +237,8 @@ class ConventionService(
             baseBranch = project.defaultBranch,
             useWorktree = useWorktree,
             worktreePath = worktreePath,
-            originalPath = project.workingDirectory
+            originalPath = project.workingDirectory,
+            jiraProject = project.jiraProject  // Jira 프로젝트 키 전달
         )
 
         // Convention fix용 설정: 타임아웃 2시간, 모든 작업 자동 승인
@@ -454,43 +455,102 @@ src, main 디렉토리의 Kotlin 파일을 대상으로 합니다.
         baseBranch: String,
         useWorktree: Boolean = false,
         worktreePath: String? = null,
-        originalPath: String? = null
+        originalPath: String? = null,
+        jiraProject: String? = null
     ): String {
         val violationsJson = objectMapper.writeValueAsString(violations)
-        val timestamp = System.currentTimeMillis()
-        val branchName = "refactor/convention-fix-$timestamp"
+        val violationsSummary = violations.joinToString(", ") { it.id }
 
-        val worktreeSetup = if (useWorktree && worktreePath != null && originalPath != null) {
+        // Jira 티켓 생성 단계 (jiraProject가 설정된 경우)
+        val jiraStep = if (!jiraProject.isNullOrBlank()) {
             """
-### Git Worktree 설정 (메인 작업 디렉토리 영향 없음)
+### 0. Jira 티켓 생성 (필수)
 
-**중요**: Git Worktree를 사용하여 메인 작업 디렉토리를 건드리지 않고 독립적으로 작업합니다.
+먼저 Jira 티켓을 생성하세요. MCP Jira 도구 사용:
 
-1. Worktree 생성 및 이동
-   ```bash
-   # 현재 디렉토리: $originalPath
-   git fetch origin
-   git worktree add $worktreePath -b $branchName origin/$baseBranch
-   cd $worktreePath
-   ```
+```
+mcp__atlassian-jira__jira_post 사용:
+- path: "/rest/api/3/issue"
+- body: {
+    "fields": {
+      "project": {"key": "$jiraProject"},
+      "summary": "refactor: Fix convention violations ($violationsSummary)",
+      "issuetype": {"name": "Task"},
+      "description": {
+        "type": "doc",
+        "version": 1,
+        "content": [{
+          "type": "paragraph",
+          "content": [{
+            "type": "text",
+            "text": "Convention 위반 자동 수정\\n\\nFixed violations:\\n${violations.joinToString("\\n") { "- ${it.id}: ${it.description}" }}"
+          }]
+        }]
+      }
+    }
+  }
+```
 
-   - 이후 모든 작업은 $worktreePath 에서 수행
-   - 메인 디렉토리($originalPath)는 전혀 변경되지 않음
+생성된 티켓 키(예: $jiraProject-123)를 **JIRA_TICKET** 변수로 사용합니다.
+- 브랜치명: `refactor/{JIRA_TICKET}-fix-convention-violations`
+- 커밋 메시지: `refactor: [{JIRA_TICKET}] Fix convention violations`
 """
         } else {
             """
-### 작업 순서
+### 0. 브랜치명 설정
 
-1. 현재 브랜치 확인 및 $baseBranch 최신화
-   ```bash
-   git checkout $baseBranch
-   git pull origin $baseBranch
-   ```
+Jira 프로젝트가 설정되지 않았으므로 타임스탬프 기반 브랜치명 사용:
+- 브랜치명: `refactor/convention-fix-{timestamp}`
+"""
+        }
 
-2. 새 브랜치 생성
-   ```bash
-   git checkout -b $branchName
-   ```
+        val branchNameInstruction = if (!jiraProject.isNullOrBlank()) {
+            "refactor/{JIRA_TICKET}-fix-convention-violations (Jira 티켓 생성 후 실제 티켓 번호 사용)"
+        } else {
+            "refactor/convention-fix-{timestamp}"
+        }
+
+        val commitMessageInstruction = if (!jiraProject.isNullOrBlank()) {
+            """refactor: [{JIRA_TICKET}] Fix convention violations
+
+Fixed violations:
+${violations.joinToString("\n") { "- ${it.id}: ${it.description}" }}
+
+🤖 Generated with Claude Code"""
+        } else {
+            """refactor: fix convention violations
+
+Fixed violations:
+${violations.joinToString("\n") { "- ${it.id}: ${it.description}" }}
+
+🤖 Generated with Claude Code"""
+        }
+
+        val worktreeSetup = if (useWorktree && worktreePath != null && originalPath != null) {
+            """
+### 1. Git Worktree 설정 (메인 작업 디렉토리 영향 없음)
+
+**중요**: Git Worktree를 사용하여 메인 작업 디렉토리를 건드리지 않고 독립적으로 작업합니다.
+
+```bash
+# 현재 디렉토리: $originalPath
+git fetch origin
+git worktree add {worktree_path} -b {branch_name} origin/$baseBranch
+cd {worktree_path}
+```
+
+- 이후 모든 작업은 worktree에서 수행
+- 메인 디렉토리($originalPath)는 전혀 변경되지 않음
+"""
+        } else {
+            """
+### 1. 브랜치 설정
+
+```bash
+git checkout $baseBranch
+git pull origin $baseBranch
+git checkout -b {branch_name}
+```
 """
         }
 
@@ -501,7 +561,7 @@ src, main 디렉토리의 Kotlin 파일을 대상으로 합니다.
 작업 완료 후:
 ```bash
 cd $originalPath
-git worktree remove $worktreePath
+git worktree remove {worktree_path}
 ```
 """
         } else ""
@@ -509,38 +569,32 @@ git worktree remove $worktreePath
         return """
 ## Convention 위반 자동 수정
 
-### 중요 규칙
-- **브랜치명은 반드시 `$branchName` 사용** (Jira 티켓 번호 사용 금지)
-- **커밋 메시지에 Jira 티켓 번호 사용 금지** (아래 형식 그대로 사용)
-- develop 브랜치에서 분기해야 함
+$jiraStep
 
 ### 수정 대상
 $violationsJson
 
 $worktreeSetup
 
-3. 각 위반 항목 수정
-   - 파일을 열어 해당 라인 수정
-   - 수정 내용이 정확한지 확인
-   - 연쇄적인 변경이 필요하면 모두 수정
+### 2. 각 위반 항목 수정
+- 파일을 열어 해당 라인 수정
+- 수정 내용이 정확한지 확인
+- 연쇄적인 변경이 필요하면 모두 수정
 
-4. 변경사항 커밋 (아래 메시지 그대로 사용)
-   ```bash
-   git add -A
-   git commit -m "refactor: fix convention violations
+### 3. 변경사항 커밋
 
-Fixed violations:
-${violations.joinToString("\n") { "- ${it.id}: ${it.description}" }}
+```bash
+git add -A
+git commit -m "$commitMessageInstruction"
+```
 
-🤖 Generated with Claude Code"
-   ```
+### 4. 푸시 및 MR 생성
 
-5. 푸시 및 MR 생성
-   ```bash
-   git push origin $branchName
-   ```
+```bash
+git push origin {branch_name}
+```
 
-   glab mr create 명령어로 MR 생성 (develop 브랜치로)
+glab mr create 명령어로 MR 생성 (develop 브랜치로)
 
 $worktreeCleanup
 
@@ -552,7 +606,7 @@ $worktreeCleanup
 {
   "fixedCount": 3,
   "failedCount": 0,
-  "branchName": "$branchName",
+  "branchName": "{실제 브랜치명}",
   "mrUrl": "https://gitlab.../merge_requests/123",
   "fixedViolations": ["CV-001", "CV-002", "CV-003"],
   "failedViolations": [],
