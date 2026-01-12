@@ -1,6 +1,8 @@
 package ai.claudeflow.api.service
 
 import ai.claudeflow.api.rest.*
+import ai.claudeflow.core.model.ClaudeConfig
+import ai.claudeflow.core.model.PermissionMode
 import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.executor.ClaudeExecutor
 import ai.claudeflow.executor.ExecutionRequest
@@ -222,15 +224,36 @@ class ConventionService(
         // 수정 개수 제한 (한 번에 최대 5개)
         val limitedViolations = targetViolations.take(request.maxFixes)
 
-        // Claude Code로 수정 실행
-        val fixPrompt = buildFixPrompt(limitedViolations, project.defaultBranch)
+        // Git Worktree 설정
+        val useWorktree = request.useWorktree
+        val timestamp = System.currentTimeMillis()
+        val worktreePath = if (useWorktree) {
+            "${project.workingDirectory}-convention-fix-$timestamp"
+        } else null
+
+        // Claude Code로 수정 실행 (타임아웃 2시간으로 확장)
+        val fixPrompt = buildFixPrompt(
+            violations = limitedViolations,
+            baseBranch = project.defaultBranch,
+            useWorktree = useWorktree,
+            worktreePath = worktreePath,
+            originalPath = project.workingDirectory
+        )
+
+        // Convention fix용 설정: 타임아웃 2시간, 모든 작업 자동 승인
+        val fixConfig = ClaudeConfig(
+            timeoutSeconds = 7200,  // 2시간 (기본 15분에서 확장)
+            permissionMode = PermissionMode.DONT_ASK  // 모든 작업 자동 승인
+        )
 
         try {
+            // Claude는 항상 원본 디렉토리에서 시작하여 worktree를 생성하고 이동
             val result = claudeExecutor.execute(
                 ExecutionRequest(
                     prompt = fixPrompt,
-                    workingDirectory = project.workingDirectory,
-                    userId = "convention-fixer"
+                    workingDirectory = project.workingDirectory,  // 항상 원본 디렉토리에서 시작
+                    userId = "convention-fixer",
+                    config = fixConfig
                 )
             )
 
@@ -348,7 +371,7 @@ class ConventionService(
                 rule = match.groupValues[5],
                 severity = match.groupValues[6].lowercase(),
                 autoFixable = match.groupValues[7].contains("가능"),
-                status = if (match.groupValues[8].contains("해결")) "fixed" else "open",
+                status = if (match.groupValues[8].contains("미해결")) "open" else "fixed",
                 suggestion = null,
                 codeSnippet = null
             ))
@@ -426,19 +449,39 @@ src, main 디렉토리의 Kotlin 파일을 대상으로 합니다.
         """.trimIndent()
     }
 
-    private fun buildFixPrompt(violations: List<ViolationItem>, baseBranch: String): String {
+    private fun buildFixPrompt(
+        violations: List<ViolationItem>,
+        baseBranch: String,
+        useWorktree: Boolean = false,
+        worktreePath: String? = null,
+        originalPath: String? = null
+    ): String {
         val violationsJson = objectMapper.writeValueAsString(violations)
         val timestamp = System.currentTimeMillis()
+        val branchName = "refactor/convention-fix-$timestamp"
 
-        return """
-## Convention 위반 자동 수정
+        val worktreeSetup = if (useWorktree && worktreePath != null && originalPath != null) {
+            """
+### Git Worktree 설정 (메인 작업 디렉토리 영향 없음)
 
-### 수정 대상
-$violationsJson
+**중요**: Git Worktree를 사용하여 메인 작업 디렉토리를 건드리지 않고 독립적으로 작업합니다.
 
+1. Worktree 생성 및 이동
+   ```bash
+   # 현재 디렉토리: $originalPath
+   git fetch origin
+   git worktree add $worktreePath -b $branchName origin/$baseBranch
+   cd $worktreePath
+   ```
+
+   - 이후 모든 작업은 $worktreePath 에서 수행
+   - 메인 디렉토리($originalPath)는 전혀 변경되지 않음
+"""
+        } else {
+            """
 ### 작업 순서
 
-1. 현재 브랜치 확인 및 develop 최신화
+1. 현재 브랜치 확인 및 $baseBranch 최신화
    ```bash
    git checkout $baseBranch
    git pull origin $baseBranch
@@ -446,12 +489,35 @@ $violationsJson
 
 2. 새 브랜치 생성
    ```bash
-   git checkout -b refactor/convention-fix-$timestamp
+   git checkout -b $branchName
    ```
+"""
+        }
+
+        val worktreeCleanup = if (useWorktree && worktreePath != null && originalPath != null) {
+            """
+### Worktree 정리
+
+작업 완료 후:
+```bash
+cd $originalPath
+git worktree remove $worktreePath
+```
+"""
+        } else ""
+
+        return """
+## Convention 위반 자동 수정
+
+### 수정 대상
+$violationsJson
+
+$worktreeSetup
 
 3. 각 위반 항목 수정
    - 파일을 열어 해당 라인 수정
    - 수정 내용이 정확한지 확인
+   - 연쇄적인 변경이 필요하면 모두 수정
 
 4. 변경사항 커밋
    ```bash
@@ -466,10 +532,12 @@ $violationsJson
 
 5. 푸시 및 MR 생성
    ```bash
-   git push origin refactor/convention-fix-$timestamp
+   git push origin $branchName
    ```
 
    gh 또는 glab 명령어로 MR 생성
+
+$worktreeCleanup
 
 ### 출력 형식 (JSON)
 
@@ -479,7 +547,7 @@ $violationsJson
 {
   "fixedCount": 3,
   "failedCount": 0,
-  "branchName": "refactor/convention-fix-xxx",
+  "branchName": "$branchName",
   "mrUrl": "https://gitlab.../merge_requests/123",
   "fixedViolations": ["CV-001", "CV-002", "CV-003"],
   "failedViolations": [],
@@ -645,7 +713,8 @@ data class ConventionScanRequest(
 data class ConventionFixRequest(
     val violationIds: List<String> = emptyList(),  // 빈 리스트면 모든 autoFixable 대상
     val maxFixes: Int = 5,
-    val createMr: Boolean = true
+    val createMr: Boolean = true,
+    val useWorktree: Boolean = true  // Git Worktree 사용 (메인 작업 디렉토리 영향 없음)
 )
 
 // ==================== Claude Output DTOs ====================

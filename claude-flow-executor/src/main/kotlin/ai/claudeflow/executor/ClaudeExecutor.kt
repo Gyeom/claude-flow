@@ -767,8 +767,13 @@ class ClaudeExecutor(
             }
         }
 
-        // 최종 결과 구성
-        val resultText = finalResult ?: assistantMessages.toString().ifEmpty { null }
+        // 최종 결과 구성 - assistantMessages가 더 완전한 경우가 많으므로 우선 사용
+        val assistantText = assistantMessages.toString()
+        val resultText = if (assistantText.isNotEmpty()) {
+            assistantText  // 전체 대화 내용
+        } else {
+            finalResult  // assistantMessages가 비어있을 때만 result 이벤트 사용
+        }
         val executionResult = ExecutionResult(
             requestId = requestId,
             status = ExecutionStatus.SUCCESS,
