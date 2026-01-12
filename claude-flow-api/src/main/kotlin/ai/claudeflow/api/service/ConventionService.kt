@@ -509,6 +509,11 @@ git worktree remove $worktreePath
         return """
 ## Convention 위반 자동 수정
 
+### 중요 규칙
+- **브랜치명은 반드시 `$branchName` 사용** (Jira 티켓 번호 사용 금지)
+- **커밋 메시지에 Jira 티켓 번호 사용 금지** (아래 형식 그대로 사용)
+- develop 브랜치에서 분기해야 함
+
 ### 수정 대상
 $violationsJson
 
@@ -519,15 +524,15 @@ $worktreeSetup
    - 수정 내용이 정확한지 확인
    - 연쇄적인 변경이 필요하면 모두 수정
 
-4. 변경사항 커밋
+4. 변경사항 커밋 (아래 메시지 그대로 사용)
    ```bash
    git add -A
    git commit -m "refactor: fix convention violations
 
-   Fixed violations:
-   ${violations.joinToString("\n") { "- ${it.id}: ${it.description}" }}
+Fixed violations:
+${violations.joinToString("\n") { "- ${it.id}: ${it.description}" }}
 
-   🤖 Generated with Claude Code"
+🤖 Generated with Claude Code"
    ```
 
 5. 푸시 및 MR 생성
@@ -535,7 +540,7 @@ $worktreeSetup
    git push origin $branchName
    ```
 
-   gh 또는 glab 명령어로 MR 생성
+   glab mr create 명령어로 MR 생성 (develop 브랜치로)
 
 $worktreeCleanup
 
