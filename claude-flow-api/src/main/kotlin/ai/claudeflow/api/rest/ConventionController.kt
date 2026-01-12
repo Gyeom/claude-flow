@@ -12,7 +12,7 @@ private val logger = KotlinLogging.logger {}
 /**
  * Convention 관리 API
  *
- * 프로젝트별 CONVENTION.md 기반 코드 스캔 및 자동 수정을 제공합니다.
+ * 프로젝트별 CONVENTIONS.md 기반 코드 스캔 및 자동 수정을 제공합니다.
  */
 @RestController
 @RequestMapping("/api/v1/convention")
@@ -21,7 +21,7 @@ class ConventionController(
 ) {
 
     /**
-     * 프로젝트의 CONVENTION.md 조회
+     * 프로젝트의 CONVENTIONS.md 조회
      */
     @GetMapping("/{projectId}")
     suspend fun getConvention(

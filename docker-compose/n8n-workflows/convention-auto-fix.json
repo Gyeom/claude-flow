@@ -47,7 +47,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [360, 380],
-      "notes": "CONVENTION.md가 있는 프로젝트 목록 조회"
+      "notes": "CONVENTIONS.md가 있는 프로젝트 목록 조회"
     },
     {
       "parameters": {
@@ -407,7 +407,7 @@
     }
   ],
   "triggerCount": 0,
-  "active": false,
+  "active": true,
   "pinData": {},
   "versionId": "1"
 }

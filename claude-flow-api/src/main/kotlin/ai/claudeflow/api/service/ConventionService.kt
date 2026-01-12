@@ -17,7 +17,7 @@ private val logger = KotlinLogging.logger {}
 /**
  * Convention 서비스
  *
- * CONVENTION.md 기반 코드 스캔 및 자동 수정을 담당합니다.
+ * CONVENTIONS.md 기반 코드 스캔 및 자동 수정을 담당합니다.
  */
 @Service
 class ConventionService(
@@ -27,15 +27,15 @@ class ConventionService(
     private val objectMapper = jacksonObjectMapper()
 
     /**
-     * 프로젝트의 CONVENTION.md 조회
+     * 프로젝트의 CONVENTIONS.md 조회
      */
     fun getConvention(projectId: String): ConventionResponse? {
         val project = projectRegistry.get(projectId) ?: return null
         val workDir = File(project.workingDirectory)
-        val conventionFile = File(workDir, "CONVENTION.md")
+        val conventionFile = File(workDir, "CONVENTIONS.md")
 
         if (!conventionFile.exists()) {
-            logger.warn { "CONVENTION.md not found for project $projectId at ${conventionFile.absolutePath}" }
+            logger.warn { "CONVENTIONS.md not found for project $projectId at ${conventionFile.absolutePath}" }
             return null
         }
 
@@ -107,7 +107,7 @@ class ConventionService(
             )
 
         val workDir = File(project.workingDirectory)
-        val conventionFile = File(workDir, "CONVENTION.md")
+        val conventionFile = File(workDir, "CONVENTIONS.md")
 
         if (!conventionFile.exists()) {
             return ScanResultResponse(
@@ -117,7 +117,7 @@ class ConventionService(
                 summary = ViolationSummary(0, 0, 0, 0, 0, 0),
                 scannedAt = Instant.now().toString(),
                 duration = 0,
-                message = "CONVENTION.md not found in project"
+                message = "CONVENTIONS.md not found in project"
             )
         }
 
@@ -286,7 +286,7 @@ class ConventionService(
             val workDir = File(project.workingDirectory)
             if (!workDir.exists()) return@mapNotNull null
 
-            val conventionFile = File(workDir, "CONVENTION.md")
+            val conventionFile = File(workDir, "CONVENTIONS.md")
             val violationsFile = File(workDir, "CONVENTION_VIOLATIONS.md")
 
             val violationCount = if (violationsFile.exists()) {
