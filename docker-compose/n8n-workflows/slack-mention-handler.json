@@ -1,8 +1,8 @@
 {
   "name": "Slack Mention Handler",
-  "versionId": "mention-handler-v4",
+  "versionId": "mention-handler-v5",
   "meta": {
-    "description": "Slack에서 @멘션 메시지를 처리합니다. 일반 질문, 명령어(/health 등), MR 리뷰 요청을 분류하여 적절한 핸들러로 라우팅합니다."
+    "description": "Slack에서 @멘션 메시지와 장애 알람 봇 메시지를 처리합니다. 일반 질문, 명령어(/health 등), MR 리뷰 요청, 장애 알람을 분류하여 적절한 핸들러로 라우팅합니다."
   },
   "nodes": [
     {
@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 메시지 유형 분류: command, mr-review, general, skip\nconst body = $input.item.json.body || {};\nconst eventType = body.eventType || '';\n\n// 리액션 이벤트는 스킵 (피드백 핸들러에서 처리)\nif (eventType.includes('REACTION')) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'reaction event' } };\n}\n\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 빈 텍스트는 스킵\nif (!text) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'empty text' } };\n}\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
+        "jsCode": "// 메시지 유형 분류: command, mr-review, alert-bot, general, skip\nconst body = $input.item.json.body || {};\nconst eventType = body.eventType || '';\n\n// 리액션 이벤트는 스킵 (피드백 핸들러에서 처리)\nif (eventType.includes('REACTION')) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'reaction event' } };\n}\n\n// 알람 봇 메시지 감지 (ALERT_BOT_MESSAGE 타입)\nif (eventType === 'ALERT_BOT_MESSAGE') {\n  const text = body.text || '';\n  // 에러/장애 키워드 확인\n  const errorKeywords = ['error', 'exception', 'failed', 'failure', 'critical', 'alert', '장애', '오류', '에러', '실패', 'Failure', 'ERROR', 'CRITICAL', 'WARNING'];\n  const hasErrorKeyword = errorKeywords.some(kw => text.toLowerCase().includes(kw.toLowerCase()));\n  \n  if (hasErrorKeyword) {\n    return { json: { ...body, messageType: 'alert-bot', isAlertBot: true, botId: body.botId } };\n  }\n  // 에러 키워드 없으면 스킵\n  return { json: { ...body, messageType: 'skip', skipReason: 'bot message without error keywords' } };\n}\n\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 빈 텍스트는 스킵\nif (!text) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'empty text' } };\n}\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false, isAlertBot: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
       },
       "id": "classify-message",
       "name": "Classify Message",
@@ -45,7 +45,7 @@
       "name": "Is Command?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [650, 300]
+      "position": [850, 400]
     },
     {
       "parameters": {
@@ -458,6 +458,156 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [750, 450]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "alert-bot-check",
+              "leftValue": "={{ $json.isAlertBot }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "is-alert-bot",
+      "name": "Is Alert Bot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/projects/by-alert-channel/{{ $json.channel }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "lookup-alert-project",
+      "name": "Lookup Alert Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, -100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 프로젝트 조회 결과 병합\nconst projectResponse = $input.item.json;\nconst alertData = $('Classify Message').item.json;\n\n// 프로젝트가 없으면 (404 또는 에러) 스킵\nconst hasProject = projectResponse.projectId != null;\n\nreturn {\n  json: {\n    shouldProcess: hasProject,\n    channel: alertData.channel,\n    botId: alertData.botId,\n    text: alertData.text,\n    messageTs: alertData.timestamp,\n    threadTs: alertData.threadTs || alertData.timestamp,\n    // 프로젝트 정보\n    projectId: projectResponse.projectId,\n    projectName: projectResponse.projectName,\n    jiraProject: projectResponse.jiraProject,\n    gitlabPath: projectResponse.gitlabPath,\n    workingDirectory: projectResponse.workingDirectory,\n    defaultBranch: projectResponse.defaultBranch,\n    reason: hasProject ? null : 'Channel not mapped to any project'\n  }\n};"
+      },
+      "id": "merge-alert-project",
+      "name": "Merge Alert Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, -100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.shouldProcess }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "alert-should-process",
+      "name": "Has Project?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1250, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/chat/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '다음 장애 알람 메시지를 분석해주세요:\\n\\n## 프로젝트 정보\\n- 프로젝트: ' + ($json.projectName || 'Unknown') + ' (' + ($json.projectId || 'unknown') + ')\\n- Jira 프로젝트: ' + ($json.jiraProject || 'PROJ') + '\\n\\n## 알람 메시지\\n```\\n' + $json.text + '\\n```\\n\\n다음 JSON 형식으로만 응답해주세요:\\n```json\\n{\\n  \"isActionable\": true/false,\\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\\n  \"summary\": \"Jira 이슈 제목 (50자 이내)\",\\n  \"description\": \"상세 설명\",\\n  \"suggestedFix\": \"수정 제안 (있으면)\",\\n  \"errorType\": \"에러 타입 (Kafka, NullPointer, Timeout 등)\"\\n}\\n```' }], model: 'haiku', source: 'alert', maxTurns: 1 }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "claude-analyze-alert",
+      "name": "Claude Analyze Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1450, -150],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.item.json;\nconst text = response.content || response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 및 프로젝트 정보 가져오기\nconst projectData = $('Merge Alert Project').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: projectData.channel,\n    messageTs: projectData.messageTs,\n    threadTs: projectData.threadTs,\n    originalText: projectData.text,\n    // 프로젝트 정보 전달\n    projectId: projectData.projectId,\n    projectName: projectData.projectName,\n    jiraProject: projectData.jiraProject,\n    gitlabPath: projectData.gitlabPath,\n    workingDirectory: projectData.workingDirectory,\n    defaultBranch: projectData.defaultBranch\n  }\n};"
+      },
+      "id": "parse-alert-analysis",
+      "name": "Parse Alert Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, -150]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isActionable }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "alert-is-actionable",
+      "name": "Is Actionable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1850, -150]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, thread_ts: $json.threadTs, text: ':rotating_light: *장애 알람 분석 완료*\\n\\n*심각도:* ' + ($json.severity || 'UNKNOWN') + '\\n*프로젝트:* ' + ($json.projectName || 'Unknown') + ' (`' + ($json.projectId || 'unknown') + '`)\\n*Jira:* ' + ($json.jiraProject || 'N/A') + '\\n*에러 타입:* ' + ($json.errorType || '분석 중') + '\\n\\n*제목:* ' + ($json.summary || '알람 분석 결과') + '\\n\\n*설명:*\\n' + ($json.description || '상세 내용 없음') + '\\n\\n' + ($json.suggestedFix ? '*수정 제안:*\\n' + $json.suggestedFix : '') + '\\n\\n---\\n:ticket: Jira 이슈 생성 → :ticket: 리액션 추가\\n:rocket: 자동 수정 시작 → :hammer_and_wrench: 리액션 추가' }) }}"
+      },
+      "id": "send-alert-analysis",
+      "name": "Send Alert Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2050, -200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 액션 불필요 또는 분석 실패 로깅\nconst data = $input.item.json;\nconsole.log('Alert not actionable or analysis failed:', data);\nreturn { json: { skipped: true, reason: data.error || 'Not actionable', channel: data.channel } };"
+      },
+      "id": "alert-not-actionable",
+      "name": "Alert Not Actionable",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2050, -50]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 프로젝트 미등록 채널 로깅\nconst data = $input.item.json;\nconsole.log('Alert channel not mapped to project:', data.channel);\nreturn { json: { skipped: true, reason: 'Channel not mapped to project', channel: data.channel } };"
+      },
+      "id": "alert-no-project",
+      "name": "No Project Mapped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 0]
     }
   ],
   "connections": {
@@ -469,8 +619,38 @@
     },
     "Not Skip?": {
       "main": [
-        [{ "node": "Is Command?", "type": "main", "index": 0 }],
+        [{ "node": "Is Alert Bot?", "type": "main", "index": 0 }],
         [{ "node": "Skip (Reaction/Empty)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Alert Bot?": {
+      "main": [
+        [{ "node": "Lookup Alert Project", "type": "main", "index": 0 }],
+        [{ "node": "Is Command?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lookup Alert Project": {
+      "main": [[{ "node": "Merge Alert Project", "type": "main", "index": 0 }]]
+    },
+    "Merge Alert Project": {
+      "main": [[{ "node": "Has Project?", "type": "main", "index": 0 }]]
+    },
+    "Has Project?": {
+      "main": [
+        [{ "node": "Claude Analyze Alert", "type": "main", "index": 0 }],
+        [{ "node": "No Project Mapped", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude Analyze Alert": {
+      "main": [[{ "node": "Parse Alert Analysis", "type": "main", "index": 0 }]]
+    },
+    "Parse Alert Analysis": {
+      "main": [[{ "node": "Is Actionable?", "type": "main", "index": 0 }]]
+    },
+    "Is Actionable?": {
+      "main": [
+        [{ "node": "Send Alert Analysis", "type": "main", "index": 0 }],
+        [{ "node": "Alert Not Actionable", "type": "main", "index": 0 }]
       ]
     },
     "Is Command?": {

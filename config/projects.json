@@ -19,10 +19,20 @@
       "description": "Connected Car Data Service - 차량 데이터 수집 및 처리",
       "path": "ccds-server",
       "workingDirectory": "${WORKSPACE_PATH}/ccds-server",
+      "claudeWorkingDirectory": "${WORKSPACE_PATH}/ccds-server-claude",
       "gitlabPath": "sirius/ccds/ccds-server",
       "jiraProject": "CCDC",
       "alertChannels": ["C0948770XNG"],
-      "aliases": ["ccds", "CCDS", "차량 데이터", "connected car", "ccdc"]
+      "aliases": ["ccds", "CCDS", "차량 데이터", "connected car", "ccdc"],
+      "envBranchMapping": {
+        "int": "develop",
+        "integration": "develop",
+        "stage": "release",
+        "staging": "release",
+        "real": "main",
+        "prod": "main",
+        "production": "main"
+      }
     },
     {
       "id": "authorization-server",

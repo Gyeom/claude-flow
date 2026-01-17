@@ -129,18 +129,25 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                     resolveEnvironmentVariables(it, workspacePath)
                 } ?: "$workspacePath/${entry.path}"
 
+                // claudeWorkingDirectory 결정: 명시적 지정 (환경변수 치환)
+                val resolvedClaudeWorkingDirectory = entry.claudeWorkingDirectory?.let {
+                    resolveEnvironmentVariables(it, workspacePath)
+                }
+
                 val project = Project(
                     id = entry.id,
                     name = entry.name,
                     description = entry.description,
                     workingDirectory = resolvedWorkingDirectory,
+                    claudeWorkingDirectory = resolvedClaudeWorkingDirectory,
                     gitRemote = entry.gitRemote,
                     gitlabPath = resolvedGitlabPath,
                     defaultBranch = entry.defaultBranch ?: defaultBranch,
                     isDefault = entry.isDefault ?: false,
                     aliases = entry.aliases ?: emptyList(),
                     jiraProject = entry.jiraProject,
-                    alertChannels = entry.alertChannels ?: emptyList()
+                    alertChannels = entry.alertChannels ?: emptyList(),
+                    envBranchMapping = entry.envBranchMapping ?: emptyMap()
                 )
 
                 try {
@@ -491,7 +498,9 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
                 "gitlab_path" to "TEXT",
                 "aliases" to "TEXT",
                 "jira_project" to "TEXT",
-                "alert_channels" to "TEXT"
+                "alert_channels" to "TEXT",
+                "claude_working_directory" to "TEXT",
+                "env_branch_mapping" to "TEXT"
             )
 
             for ((column, definition) in newProjectColumns) {
@@ -934,6 +943,7 @@ typealias TimeGranularity = ai.claudeflow.core.storage.repository.TimeGranularit
 data class ProjectsFileConfig(
     val defaultBranch: String? = "develop",
     val gitlabHost: String? = null,  // GitLab 인스턴스 URL (예: "https://gitlab.example.com")
+    val workspaceRoot: String? = null,  // 워크스페이스 루트 경로 (미사용, 호환성용)
     val projects: List<ProjectFileEntry>
 )
 
@@ -943,11 +953,13 @@ data class ProjectFileEntry(
     val description: String? = null,
     val path: String,
     val workingDirectory: String? = null,  // 작업 디렉토리 (환경변수 치환 지원: ${WORKSPACE_PATH})
+    val claudeWorkingDirectory: String? = null,  // Claude 분석용 worktree 경로 (사용자 작업 방해 방지)
     val gitRemote: String? = null,
     val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "team/my-project")
     val defaultBranch: String? = null,
     val isDefault: Boolean? = false,
     val aliases: List<String>? = null,
     val jiraProject: String? = null,  // Jira 프로젝트 키 (예: "CCDC")
-    val alertChannels: List<String>? = null  // 장애 알람 채널 ID 목록
+    val alertChannels: List<String>? = null,  // 장애 알람 채널 ID 목록
+    val envBranchMapping: Map<String, String>? = null  // 환경별 브랜치 매핑 (int→develop, stage→release, real→main)
 )

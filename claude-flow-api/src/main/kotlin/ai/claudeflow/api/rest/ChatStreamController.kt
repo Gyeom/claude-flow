@@ -303,11 +303,22 @@ class ChatStreamController(
                         "${gitlabContext ?: ""}$conversationContext"
                     }
 
-                    // 작업 디렉토리 결정: Pipeline > 프로젝트 > 에이전트
+                    // 작업 디렉토리 결정: Claude Worktree > Pipeline > 프로젝트 > 에이전트
+                    // Claude worktree가 있으면 사용자 작업 방해 방지를 위해 우선 사용
                     val project = projectRegistry.get(projectId)
-                    val workingDir = enrichedContext.workingDirectory
+                    val workingDir = project?.claudeWorkingDirectory  // Claude 분석용 worktree 최우선
+                        ?: enrichedContext.workingDirectory
                         ?: project?.workingDirectory
                         ?: agentMatch.agent.workingDirectory
+
+                    // 환경 기반 브랜치 checkout (worktree 사용 시)
+                    if (project != null && project.claudeWorkingDirectory != null && workingDir != null && workingDir == project.claudeWorkingDirectory) {
+                        val environment = extractEnvironment(lastUserMessage)
+                        if (environment != null) {
+                            logger.info { "Detected environment: $environment from message" }
+                            checkoutEnvironmentBranch(workingDir, project, environment)
+                        }
+                    }
 
                     // 🚀 실행 시작
                     sink.next(buildProgressEvent(
@@ -464,11 +475,22 @@ class ChatStreamController(
                     conversationContext
                 }
 
-                // 작업 디렉토리 결정
+                // 작업 디렉토리 결정: Claude Worktree > Pipeline > 프로젝트 > 에이전트
+                // Claude worktree가 있으면 사용자 작업 방해 방지를 위해 우선 사용
                 val project = projectRegistry.get(projectId)
-                val workingDir = enrichedContext.workingDirectory
+                val workingDir = project?.claudeWorkingDirectory  // Claude 분석용 worktree 최우선
+                    ?: enrichedContext.workingDirectory
                     ?: project?.workingDirectory
                     ?: agentMatch.agent.workingDirectory
+
+                // 환경 기반 브랜치 checkout (worktree 사용 시)
+                if (project != null && project.claudeWorkingDirectory != null && workingDir != null && workingDir == project.claudeWorkingDirectory) {
+                    val environment = extractEnvironment(lastUserMessage)
+                    if (environment != null) {
+                        logger.info { "Detected environment: $environment from message" }
+                        checkoutEnvironmentBranch(workingDir, project, environment)
+                    }
+                }
 
                 // 실행 요청
                 val executionRequest = ExecutionRequest(
@@ -1224,6 +1246,64 @@ class ChatStreamController(
         } catch (e: Exception) {
             logger.error(e) { "Failed to perform MR analysis for !$mrId" }
             null
+        }
+    }
+
+    /**
+     * 메시지에서 환경 정보 추출 (int, stage, real 등)
+     */
+    private fun extractEnvironment(message: String): String? {
+        val envPattern = Regex("""\[(\w+)\]""")
+        val match = envPattern.find(message) ?: return null
+        return match.groupValues[1].lowercase()
+    }
+
+    /**
+     * 환경에 맞는 브랜치로 worktree checkout
+     */
+    private suspend fun checkoutEnvironmentBranch(
+        workingDir: String,
+        project: Project,
+        environment: String?
+    ): Boolean {
+        if (project.claudeWorkingDirectory == null || workingDir != project.claudeWorkingDirectory) {
+            return true
+        }
+
+        if (environment == null) return true
+
+        val targetBranch = project.envBranchMapping[environment] ?: return true
+
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                logger.info { "Checking out branch '$targetBranch' for environment '$environment' in $workingDir" }
+
+                // git fetch로 최신 정보 가져오기
+                val fetchProcess = ProcessBuilder("git", "fetch", "origin", targetBranch)
+                    .directory(java.io.File(workingDir))
+                    .redirectErrorStream(true)
+                    .start()
+                fetchProcess.waitFor()
+
+                // origin/브랜치로 checkout → detached HEAD로 checkout됨
+                // 이렇게 하면 사용자가 로컬에서 같은 브랜치를 checkout해도 충돌 없음
+                val checkoutProcess = ProcessBuilder("git", "checkout", "origin/$targetBranch")
+                    .directory(java.io.File(workingDir))
+                    .redirectErrorStream(true)
+                    .start()
+                val exitCode = checkoutProcess.waitFor()
+
+                if (exitCode == 0) {
+                    logger.info { "Successfully checked out origin/$targetBranch (detached HEAD)" }
+                    true
+                } else {
+                    logger.error { "Failed to checkout origin/$targetBranch" }
+                    false
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Error during branch checkout" }
+                false
+            }
         }
     }
 }

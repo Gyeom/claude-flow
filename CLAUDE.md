@@ -153,13 +153,13 @@ n8n은 Docker 컨테이너에서 실행되어 회사 내부 DNS를 resolve하지
 
 | 워크플로우 | 기능 | 상태 |
 |-----------|------|------|
-| `slack-mention-handler` | Slack 멘션 → 분류 → Claude/MR리뷰 실행 | ✅ 활성 |
+| `slack-mention-handler` | Slack 멘션/장애 알람 → 분류 → Claude/MR리뷰/알람분석 실행 | ✅ 활성 |
 | `slack-action-handler` | Slack 버튼 액션 처리 | ✅ 활성 |
 | `slack-feedback-handler` | 피드백 수집 (👍/👎) | ✅ 활성 |
 | `scheduled-mr-review` | 5분마다 새 MR 자동 리뷰 | ✅ 활성 |
 | `gitlab-feedback-poller` | GitLab AI 코멘트 이모지 피드백 수집 | ✅ 활성 |
 | `convention-auto-fix` | CONVENTIONS.md 기반 코드 스캔 및 자동 수정 | ✅ 활성 |
-| `alert-channel-monitor` | 장애 알람 채널 자동 모니터링 | ⏸️ 비활성 |
+| `alert-channel-monitor` | ~~장애 알람 채널 자동 모니터링~~ (slack-mention-handler로 통합) | 🔄 통합됨 |
 | `alert-to-mr-pipeline` | 알람 → Jira → 브랜치 → MR 파이프라인 | ⏸️ 비활성 |
 
 ### 장애 알람 자동화 파이프라인

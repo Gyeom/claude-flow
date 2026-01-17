@@ -29,6 +29,7 @@ class ProjectRepository(
             name = rs.getString("name"),
             description = rs.getString("description"),
             workingDirectory = rs.getString("working_directory"),
+            claudeWorkingDirectory = rs.getString("claude_working_directory"),
             gitRemote = rs.getString("git_remote"),
             gitlabPath = rs.getString("gitlab_path"),
             defaultBranch = rs.getString("default_branch") ?: "main",
@@ -51,6 +52,9 @@ class ProjectRepository(
             alertChannels = rs.getString("alert_channels")?.let {
                 objectMapper.readValue(it)
             } ?: emptyList(),
+            envBranchMapping = rs.getString("env_branch_mapping")?.let {
+                objectMapper.readValue(it)
+            } ?: emptyMap(),
             createdAt = rs.getString("created_at"),
             updatedAt = rs.getString("updated_at")
         )
@@ -66,6 +70,7 @@ class ProjectRepository(
                 "name" to entity.name,
                 "description" to entity.description,
                 "working_directory" to entity.workingDirectory,
+                "claude_working_directory" to entity.claudeWorkingDirectory,
                 "git_remote" to entity.gitRemote,
                 "gitlab_path" to entity.gitlabPath,
                 "default_branch" to entity.defaultBranch,
@@ -80,6 +85,7 @@ class ProjectRepository(
                 "aliases" to objectMapper.writeValueAsString(entity.aliases),
                 "jira_project" to entity.jiraProject,
                 "alert_channels" to objectMapper.writeValueAsString(entity.alertChannels),
+                "env_branch_mapping" to objectMapper.writeValueAsString(entity.envBranchMapping),
                 "created_at" to (entity.createdAt ?: now),
                 "updated_at" to now
             )

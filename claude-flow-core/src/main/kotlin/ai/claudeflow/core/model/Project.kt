@@ -28,6 +28,7 @@ data class Project(
     val name: String,
     val description: String? = null,
     val workingDirectory: String,
+    val claudeWorkingDirectory: String? = null,  // Claude 분석용 worktree 경로 (사용자 작업 방해 방지)
     val gitRemote: String? = null,
     val gitlabPath: String? = null,  // GitLab 프로젝트 경로 (예: "team/my-project")
     val defaultBranch: String = "main",
@@ -42,6 +43,7 @@ data class Project(
     val aliases: List<String> = emptyList(),  // 프로젝트 별칭 (RAG 검색용)
     val jiraProject: String? = null,  // Jira 프로젝트 키 (예: "CCDC", "PROJ")
     val alertChannels: List<String> = emptyList(),  // 장애 알람 채널 ID 목록
+    val envBranchMapping: Map<String, String> = emptyMap(),  // 환경별 브랜치 매핑 (int→develop, stage→release, real→main)
     val createdAt: String? = null,
     val updatedAt: String? = null
 ) {

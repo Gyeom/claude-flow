@@ -133,6 +133,7 @@ class ProjectsController(
             name = request.name ?: existing.name,
             description = request.description ?: existing.description,
             workingDirectory = request.workingDirectory ?: existing.workingDirectory,
+            claudeWorkingDirectory = request.claudeWorkingDirectory ?: existing.claudeWorkingDirectory,
             gitRemote = request.gitRemote ?: existing.gitRemote,
             defaultBranch = request.defaultBranch ?: existing.defaultBranch,
             enableUserContext = request.enableUserContext ?: existing.enableUserContext,
@@ -141,7 +142,8 @@ class ProjectsController(
             rateLimitRpm = request.rateLimitRpm ?: existing.rateLimitRpm,
             allowedTools = request.allowedTools ?: existing.allowedTools,
             disallowedTools = request.disallowedTools ?: existing.disallowedTools,
-            fallbackAgentId = request.fallbackAgentId ?: existing.fallbackAgentId
+            fallbackAgentId = request.fallbackAgentId ?: existing.fallbackAgentId,
+            envBranchMapping = request.envBranchMapping ?: existing.envBranchMapping
         )
 
         projectRegistry.register(updated)
@@ -300,6 +302,7 @@ class ProjectsController(
         name = name,
         description = description,
         workingDirectory = workingDirectory,
+        claudeWorkingDirectory = claudeWorkingDirectory,
         gitRemote = gitRemote,
         gitlabPath = gitlabPath,
         defaultBranch = defaultBranch,
@@ -311,6 +314,7 @@ class ProjectsController(
         allowedTools = allowedTools,
         disallowedTools = disallowedTools,
         fallbackAgentId = fallbackAgentId,
+        envBranchMapping = envBranchMapping,
         createdAt = createdAt,
         updatedAt = updatedAt
     )
@@ -352,6 +356,7 @@ data class ProjectResponse(
     val name: String,
     val description: String?,
     val workingDirectory: String,
+    val claudeWorkingDirectory: String?,
     val gitRemote: String?,
     val gitlabPath: String?,
     val defaultBranch: String,
@@ -363,6 +368,7 @@ data class ProjectResponse(
     val allowedTools: List<String>,
     val disallowedTools: List<String>,
     val fallbackAgentId: String,
+    val envBranchMapping: Map<String, String>,
     val createdAt: String?,
     val updatedAt: String?
 )
@@ -388,6 +394,7 @@ data class UpdateProjectRequest(
     val name: String? = null,
     val description: String? = null,
     val workingDirectory: String? = null,
+    val claudeWorkingDirectory: String? = null,
     val gitRemote: String? = null,
     val defaultBranch: String? = null,
     val enableUserContext: Boolean? = null,
@@ -396,7 +403,8 @@ data class UpdateProjectRequest(
     val rateLimitRpm: Int? = null,
     val allowedTools: List<String>? = null,
     val disallowedTools: List<String>? = null,
-    val fallbackAgentId: String? = null
+    val fallbackAgentId: String? = null,
+    val envBranchMapping: Map<String, String>? = null
 )
 
 data class ProjectAgentResponse(

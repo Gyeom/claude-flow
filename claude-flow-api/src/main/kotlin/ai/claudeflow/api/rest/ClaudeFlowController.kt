@@ -485,11 +485,22 @@ class ClaudeFlowController(
         // 5. 대화 히스토리 포함 프롬프트 생성
         val contextualPrompt = buildContextualPrompt(enrichedContext.enrichedPrompt, request.conversationHistory)
 
-        // 6. 작업 디렉토리 결정 (우선순위: 요청 > Pipeline > 채널 프로젝트 > 에이전트)
+        // 6. 작업 디렉토리 결정 (우선순위: 요청 > Claude Worktree > Pipeline > 채널 프로젝트 > 에이전트)
+        // Claude worktree가 있으면 사용자 작업 방해 방지를 위해 우선 사용
         val workingDir = request.workingDirectory
+            ?: project?.claudeWorkingDirectory  // Claude 분석용 worktree 최우선
             ?: enrichedContext.workingDirectory
             ?: project?.workingDirectory
             ?: match.agent.workingDirectory
+
+        // 6-1. 환경 기반 브랜치 checkout (worktree 사용 시)
+        if (project != null && project.claudeWorkingDirectory != null && workingDir != null && workingDir == project.claudeWorkingDirectory) {
+            val environment = extractEnvironment(request.prompt)
+            if (environment != null) {
+                logger.info { "Detected environment: $environment from message" }
+                checkoutEnvironmentBranch(workingDir, project, environment)
+            }
+        }
 
         // 7. 시스템 프롬프트 구성 (우선순위: 요청 > RAG증강 + 에이전트)
         val finalSystemPrompt = request.systemPrompt ?: buildString {
@@ -943,6 +954,80 @@ class ClaudeFlowController(
             }
         }
         ResponseEntity.ok(mapOf("success" to true, "projectId" to request.projectId, "rpm" to request.rpm))
+    }
+
+    /**
+     * 메시지에서 환경 정보 추출 (int, stage, real 등)
+     */
+    private fun extractEnvironment(message: String): String? {
+        // [int], [stage], [real], [prod] 등의 패턴 매칭
+        val envPattern = Regex("""\[(\w+)\]""")
+        val match = envPattern.find(message) ?: return null
+        return match.groupValues[1].lowercase()
+    }
+
+    /**
+     * 환경에 맞는 브랜치로 worktree checkout
+     *
+     * @param workingDir Claude worktree 경로
+     * @param project 프로젝트 설정 (envBranchMapping 포함)
+     * @param environment 환경 (int, stage, real 등)
+     * @return checkout 성공 여부
+     */
+    private suspend fun checkoutEnvironmentBranch(
+        workingDir: String,
+        project: Project,
+        environment: String?
+    ): Boolean {
+        // claudeWorkingDirectory가 아니면 checkout 불필요
+        if (project.claudeWorkingDirectory == null || workingDir != project.claudeWorkingDirectory) {
+            return true
+        }
+
+        // 환경 정보가 없으면 기본 브랜치 유지
+        if (environment == null) {
+            logger.debug { "No environment detected, keeping current branch" }
+            return true
+        }
+
+        // 환경에 맞는 브랜치 찾기
+        val targetBranch = project.envBranchMapping[environment]
+        if (targetBranch == null) {
+            logger.warn { "No branch mapping for environment: $environment" }
+            return true
+        }
+
+        return withContext(Dispatchers.IO) {
+            try {
+                logger.info { "Checking out branch '$targetBranch' for environment '$environment' in $workingDir" }
+
+                // git fetch로 최신 정보 가져오기
+                val fetchProcess = ProcessBuilder("git", "fetch", "origin", targetBranch)
+                    .directory(java.io.File(workingDir))
+                    .redirectErrorStream(true)
+                    .start()
+                fetchProcess.waitFor()
+
+                // origin/브랜치로 checkout → detached HEAD로 checkout됨
+                // 이렇게 하면 사용자가 로컬에서 같은 브랜치를 checkout해도 충돌 없음
+                val checkoutProcess = ProcessBuilder("git", "checkout", "origin/$targetBranch")
+                    .directory(java.io.File(workingDir))
+                    .redirectErrorStream(true)
+                    .start()
+                val exitCode = checkoutProcess.waitFor()
+
+                if (exitCode == 0) {
+                    logger.info { "Successfully checked out origin/$targetBranch (detached HEAD)" }
+                    true
+                } else {
+                    logger.error { "Failed to checkout origin/$targetBranch, exit code: $exitCode" }
+                    false
+                }
+            } catch (e: Exception) {
+                logger.error(e) { "Error during branch checkout for environment '$environment'" }
+                false
+            }
+        }
     }
 }
 
