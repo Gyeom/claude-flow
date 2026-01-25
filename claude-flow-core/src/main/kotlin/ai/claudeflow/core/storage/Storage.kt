@@ -113,6 +113,12 @@ class Storage(dbPath: String = "claude-flow.db") : ConnectionProvider {
             val config: ProjectsFileConfig = mapper.readValue(configFile)
             val defaultBranch = config.defaultBranch ?: "develop"
 
+            // 글로벌 Jira 프로젝트 설정 저장 (My Issues 필터용)
+            config.myJiraProjects?.let { projects ->
+                settingsRepository.setValue("myJiraProjects", mapper.writeValueAsString(projects))
+                logger.info { "Loaded global Jira projects: $projects" }
+            }
+
             // 환경변수에서 GitLab 기본 그룹 로드 (예: team/subgroup)
             val gitlabGroup = System.getenv("GITLAB_GROUP")
 
@@ -944,6 +950,7 @@ data class ProjectsFileConfig(
     val defaultBranch: String? = "develop",
     val gitlabHost: String? = null,  // GitLab 인스턴스 URL (예: "https://gitlab.example.com")
     val workspaceRoot: String? = null,  // 워크스페이스 루트 경로 (미사용, 호환성용)
+    val myJiraProjects: List<String>? = null,  // 글로벌 Jira 프로젝트 키 목록 (My Issues 필터용)
     val projects: List<ProjectFileEntry>
 )
 
@@ -959,7 +966,7 @@ data class ProjectFileEntry(
     val defaultBranch: String? = null,
     val isDefault: Boolean? = false,
     val aliases: List<String>? = null,
-    val jiraProject: String? = null,  // Jira 프로젝트 키 (예: "CCDC")
+    val jiraProject: String? = null,  // Jira 프로젝트 키 (예: "VLC")
     val alertChannels: List<String>? = null,  // 장애 알람 채널 ID 목록
     val envBranchMapping: Map<String, String>? = null  // 환경별 브랜치 매핑 (int→develop, stage→release, real→main)
 )

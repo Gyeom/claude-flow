@@ -233,6 +233,13 @@ class ProjectRepository(
     }
 
     /**
+     * Jira 프로젝트가 설정된 프로젝트 목록 조회
+     */
+    fun findByJiraEnabled(): List<Project> {
+        return findAll().filter { !it.jiraProject.isNullOrBlank() }
+    }
+
+    /**
      * 프로젝트 삭제 (연관 데이터도 함께 삭제)
      */
     fun deleteWithRelations(projectId: String): Boolean {

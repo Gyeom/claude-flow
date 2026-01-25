@@ -2,6 +2,7 @@
   "defaultBranch": "develop",
   "gitlabHost": "https://gitlab.42dot.ai",
   "workspaceRoot": "${WORKSPACE_PATH}",
+  "myJiraProjects": ["DC", "VLC", "CCDC"],
   "projects": [
     {
       "id": "claude-flow",
@@ -21,7 +22,7 @@
       "workingDirectory": "${WORKSPACE_PATH}/ccds-server",
       "claudeWorkingDirectory": "${WORKSPACE_PATH}/ccds-server-claude",
       "gitlabPath": "sirius/ccds/ccds-server",
-      "jiraProject": "CCDC",
+      "jiraProject": "VLC",
       "alertChannels": ["C0948770XNG"],
       "aliases": ["ccds", "CCDS", "차량 데이터", "connected car", "ccdc"],
       "envBranchMapping": {
@@ -41,7 +42,7 @@
       "path": "authorization-server",
       "workingDirectory": "${WORKSPACE_PATH}/authorization-server",
       "gitlabPath": "sirius/ccds/authorization-server",
-      "jiraProject": "CCDC",
+      "jiraProject": "VLC",
       "aliases": ["인가", "인가서버", "auth", "authorization", "openfga", "권한"]
     },
     {
@@ -51,7 +52,7 @@
       "path": "ad-data-management-server",
       "workingDirectory": "${WORKSPACE_PATH}/ad-data-management-server",
       "gitlabPath": "sirius/ad-data-management/ad-data-management-server",
-      "jiraProject": "ADDM",
+      "jiraProject": "DC",
       "aliases": ["ad-data", "자율주행", "AD", "AD Data"]
     },
     {
@@ -61,7 +62,7 @@
       "path": "vlc-gateway-server",
       "workingDirectory": "${WORKSPACE_PATH}/vlc-gateway-server",
       "gitlabPath": "sirius/ccds/vlc-gateway-server",
-      "jiraProject": "CCDC",
+      "jiraProject": "VLC",
       "aliases": ["vlc", "VLC", "게이트웨이", "gateway"]
     }
   ]

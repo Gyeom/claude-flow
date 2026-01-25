@@ -851,6 +851,10 @@ export const projectsApi = {
   getStats: (projectId: string) =>
     fetchApi<ProjectStats>(`/projects/${projectId}/stats`),
 
+  // Get configured Jira project keys (for My Issues filtering)
+  getJiraProjectKeys: () =>
+    fetchApi<{ keys: string[]; count: number }>('/projects/jira-project-keys'),
+
   // Get project agents
   getAgents: (projectId: string) =>
     fetchApi<Agent[]>(`/projects/${projectId}/agents`),

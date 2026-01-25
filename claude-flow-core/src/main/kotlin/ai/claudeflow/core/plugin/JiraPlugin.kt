@@ -328,7 +328,7 @@ class JiraPlugin : BasePlugin() {
         val url = "$baseUrl/rest/api/3/search/jql"
         val body = mapper.writeValueAsString(mapOf(
             "jql" to jql,
-            "maxResults" to 20,
+            "maxResults" to 100,  // 증가: 20 → 100 (설정된 프로젝트 필터링으로 결과가 줄어들 것으로 예상)
             "fields" to listOf("key", "summary", "status", "assignee", "priority", "issuetype")
         ))
 

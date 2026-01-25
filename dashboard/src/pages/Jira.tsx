@@ -54,7 +54,7 @@ import { Card } from '@/components/Card'
 import { SmartSearch } from '@/components/jira/SmartSearch'
 import { SmartIssueCreator } from '@/components/jira/SmartIssueCreator'
 import { MRLinkDialog } from '@/components/jira/MRLinkDialog'
-import { jiraApi, type JiraIssueListItem, type JiraIssue, type JiraComment, type JiraProject, type JiraBoard, type JiraSprint } from '@/lib/api'
+import { jiraApi, projectsApi, type JiraIssueListItem, type JiraIssue, type JiraComment, type JiraProject, type JiraBoard, type JiraSprint } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 type AssigneeFilter = 'me' | 'all' | 'unassigned'
@@ -250,6 +250,12 @@ export function Jira() {
     useSensor(KeyboardSensor)
   )
 
+  // Fetch configured Jira project keys (for My Issues filtering)
+  const { data: configuredProjectKeys } = useQuery({
+    queryKey: ['projects', 'jira-keys'],
+    queryFn: () => projectsApi.getJiraProjectKeys(),
+  })
+
   // Fetch projects
   const { data: projectsData, isLoading: projectsLoading } = useQuery({
     queryKey: ['jira', 'projects'],
@@ -328,6 +334,10 @@ export function Jira() {
     } else if (selectedProjects.length > 1) {
       const projectKeys = selectedProjects.map(p => p.key).join(', ')
       conditions.push(`project IN (${projectKeys})`)
+    } else if (assigneeFilter === 'me' && configuredProjectKeys?.keys && configuredProjectKeys.keys.length > 0) {
+      // My Issues 모드에서 프로젝트 미선택 시, 설정된 프로젝트들만 필터링
+      const keys = configuredProjectKeys.keys.join(', ')
+      conditions.push(`project IN (${keys})`)
     }
 
     // Sprint filter (if sprint selected, use sprint issues API instead)
@@ -339,7 +349,7 @@ export function Jira() {
       ? `${conditions.join(' AND ')} ORDER BY updated DESC`
       : 'project is not EMPTY ORDER BY updated DESC'
     return jql
-  }, [assigneeFilter, selectedProjects])
+  }, [assigneeFilter, selectedProjects, configuredProjectKeys])
 
   // Determine if we should use sprint API or search API
   const useSprintApi = !!selectedSprint

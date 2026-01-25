@@ -5,6 +5,8 @@ import ai.claudeflow.core.model.Project
 import ai.claudeflow.core.registry.ProjectRegistry
 import ai.claudeflow.core.storage.Storage
 import ai.claudeflow.core.storage.repository.ProjectStats
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import kotlinx.coroutines.reactor.mono
 import mu.KotlinLogging
 import org.springframework.http.ResponseEntity
@@ -58,6 +60,35 @@ class ProjectsController(
         } else {
             ResponseEntity.notFound().build()
         }
+    }
+
+    /**
+     * 글로벌 Jira 프로젝트 키 목록 (My Issues 필터용)
+     * projects.json의 myJiraProjects 설정에서 읽어옴
+     */
+    @GetMapping("/jira-project-keys")
+    fun getJiraProjectKeys(): Mono<ResponseEntity<JiraProjectKeysResponse>> = mono {
+        logger.info { "Get global Jira project keys (myJiraProjects)" }
+        val mapper = jacksonObjectMapper()
+        val myJiraProjectsJson = storage.settingsRepository.getValue("myJiraProjects")
+        val keys = if (myJiraProjectsJson != null) {
+            try {
+                mapper.readValue<List<String>>(myJiraProjectsJson)
+            } catch (e: Exception) {
+                logger.warn { "Failed to parse myJiraProjects: ${e.message}" }
+                emptyList()
+            }
+        } else {
+            // 글로벌 설정이 없으면 모든 프로젝트의 jiraProject를 수집 (fallback)
+            storage.projectRepository.findAll()
+                .mapNotNull { it.jiraProject }
+                .distinct()
+                .sorted()
+        }
+        ResponseEntity.ok(JiraProjectKeysResponse(
+            keys = keys,
+            count = keys.size
+        ))
     }
 
     /**
@@ -485,4 +516,13 @@ data class AlertChannelProjectResponse(
     val workingDirectory: String,
     val defaultBranch: String,
     val envBranchMapping: Map<String, String>? = null
+)
+
+/**
+ * Jira 프로젝트 키 목록 응답
+ * 대시보드 My Issues 필터링에 사용
+ */
+data class JiraProjectKeysResponse(
+    val keys: List<String>,
+    val count: Int
 )
