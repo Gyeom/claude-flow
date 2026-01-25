@@ -116,6 +116,18 @@ class SlackSocketModeBridge(
     }
 
     /**
+     * Record event received - updates timestamp and confirms connection
+     */
+    private fun recordEventReceived() {
+        lastEventTime.set(System.currentTimeMillis())
+        // Confirm connection is active when we receive events
+        if (connectionState.get() != ConnectionState.CONNECTED) {
+            connectionState.set(ConnectionState.CONNECTED)
+            logger.info { "Connection confirmed via event reception" }
+        }
+    }
+
+    /**
      * Start Socket Mode connection with auto-reconnect
      */
     fun start() {
@@ -226,9 +238,15 @@ class SlackSocketModeBridge(
             SocketModeClient.Backend.JavaWebSocket,
             app
         )
-        socketModeApp?.start()
+        socketModeApp?.startAsync()
 
-        logger.info { "Socket Mode connected (JavaWebSocket)" }
+        // Wait for WebSocket connection to be established
+        // The actual connection happens asynchronously, so we wait a bit
+        Thread.sleep(3000)
+
+        // Set to CONNECTED - actual confirmation will happen when first event is received
+        connectionState.set(ConnectionState.CONNECTED)
+        logger.info { "Socket Mode started (JavaWebSocket), waiting for events to confirm connection" }
     }
 
     private fun startHealthCheck() {
@@ -437,7 +455,7 @@ class SlackSocketModeBridge(
      */
     private fun App.registerMentionHandler() {
         event(AppMentionEvent::class.java) { payload, ctx ->
-            lastEventTime.set(System.currentTimeMillis())
+            recordEventReceived()
             val event = payload.event
 
             if (event.user == botUserId) {
@@ -479,7 +497,7 @@ class SlackSocketModeBridge(
      */
     private fun App.registerMessageHandler() {
         event(MessageEvent::class.java) { payload, ctx ->
-            lastEventTime.set(System.currentTimeMillis())
+            recordEventReceived()
             val event = payload.event
 
             // 자기 자신(Claude Flow 봇)의 메시지는 무시
@@ -560,7 +578,7 @@ class SlackSocketModeBridge(
         val feedbackReactions = setOf("thumbsup", "thumbsdown", "+1", "-1")
 
         event(ReactionAddedEvent::class.java) { payload, ctx ->
-            lastEventTime.set(System.currentTimeMillis())
+            recordEventReceived()
             val event = payload.event
 
             val slackEvent = SlackEvent(
@@ -589,7 +607,7 @@ class SlackSocketModeBridge(
         }
 
         event(ReactionRemovedEvent::class.java) { payload, ctx ->
-            lastEventTime.set(System.currentTimeMillis())
+            recordEventReceived()
             val event = payload.event
 
             val slackEvent = SlackEvent(

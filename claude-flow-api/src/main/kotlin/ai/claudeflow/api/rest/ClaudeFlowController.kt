@@ -104,6 +104,37 @@ class ClaudeFlowController(
     }
 
     /**
+     * 단일 메시지 내용 조회 API
+     */
+    @PostMapping("/slack/message-content")
+    fun getMessageContent(@RequestBody request: MessageContentRequest): Mono<ResponseEntity<MessageContentResponse>> = mono {
+        logger.info { "Getting message content for ${request.channel}:${request.timestamp}" }
+
+        val result = slackMessageSender.getMessage(
+            channel = request.channel,
+            timestamp = request.timestamp
+        )
+
+        result.fold(
+            onSuccess = { message ->
+                ResponseEntity.ok(MessageContentResponse(
+                    success = true,
+                    text = message.text,
+                    user = message.user,
+                    userName = message.userName,
+                    timestamp = message.timestamp,
+                    isBot = message.isBot
+                ))
+            },
+            onFailure = { e ->
+                ResponseEntity.status(500).body(
+                    MessageContentResponse(success = false, error = e.message)
+                )
+            }
+        )
+    }
+
+    /**
      * 스레드 히스토리 조회 API
      */
     @PostMapping("/slack/thread-history")
@@ -1171,6 +1202,21 @@ data class SlackReactionRequest(
     val timestamp: String,
     val emoji: String,
     val remove: Boolean = false
+)
+
+data class MessageContentRequest(
+    val channel: String,
+    val timestamp: String
+)
+
+data class MessageContentResponse(
+    val success: Boolean,
+    val text: String? = null,
+    val user: String? = null,
+    val userName: String? = null,
+    val timestamp: String? = null,
+    val isBot: Boolean? = null,
+    val error: String? = null
 )
 
 data class ThreadHistoryRequest(

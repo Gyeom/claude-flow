@@ -21,7 +21,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 메시지 유형 분류: command, mr-review, alert-bot, general, skip\nconst body = $input.item.json.body || {};\nconst eventType = body.eventType || '';\n\n// 리액션 이벤트는 스킵 (피드백 핸들러에서 처리)\nif (eventType.includes('REACTION')) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'reaction event' } };\n}\n\n// 알람 봇 메시지 감지 (ALERT_BOT_MESSAGE 타입)\nif (eventType === 'ALERT_BOT_MESSAGE') {\n  const text = body.text || '';\n  // 에러/장애 키워드 확인\n  const errorKeywords = ['error', 'exception', 'failed', 'failure', 'critical', 'alert', '장애', '오류', '에러', '실패', 'Failure', 'ERROR', 'CRITICAL', 'WARNING'];\n  const hasErrorKeyword = errorKeywords.some(kw => text.toLowerCase().includes(kw.toLowerCase()));\n  \n  if (hasErrorKeyword) {\n    return { json: { ...body, messageType: 'alert-bot', isAlertBot: true, botId: body.botId } };\n  }\n  // 에러 키워드 없으면 스킵\n  return { json: { ...body, messageType: 'skip', skipReason: 'bot message without error keywords' } };\n}\n\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 빈 텍스트는 스킵\nif (!text) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'empty text' } };\n}\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false, isAlertBot: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
+        "jsCode": "// 메시지 유형 분류: command, mr-review, alert-bot, ticket-reaction, general, skip\nconst body = $input.item.json.body || {};\nconst eventType = body.eventType || '';\n\n// :ticket: 리액션 이벤트 처리 → Jira 이슈 생성\nif (eventType === 'REACTION_ADDED' && body.reaction === 'ticket') {\n  console.log('Ticket reaction detected:', JSON.stringify({ channel: body.channel, timestamp: body.timestamp, reaction: body.reaction }));\n  return { \n    json: { \n      ...body, \n      messageType: 'ticket-reaction',\n      targetChannel: body.channel,\n      targetMessageTs: body.timestamp,\n      reactionUser: body.user\n    } \n  };\n}\n\n// :hammer_and_wrench: 리액션 이벤트 처리 → 자동 수정 파이프라인\nif (eventType === 'REACTION_ADDED' && body.reaction === 'hammer_and_wrench') {\n  console.log('Auto-fix reaction detected:', JSON.stringify({ channel: body.channel, timestamp: body.timestamp, reaction: body.reaction }));\n  return { \n    json: { \n      ...body, \n      messageType: 'autofix-reaction',\n      targetChannel: body.channel,\n      targetMessageTs: body.timestamp,\n      reactionUser: body.user\n    } \n  };\n}\n\n// 그 외 리액션 이벤트는 스킵 (피드백 핸들러에서 처리)\nif (eventType.includes('REACTION')) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'reaction event (not ticket)' } };\n}\n\n// 알람 봇 메시지 감지 (ALERT_BOT_MESSAGE 타입)\nif (eventType === 'ALERT_BOT_MESSAGE') {\n  const text = body.text || '';\n  // 에러/장애 키워드 확인\n  const errorKeywords = ['error', 'exception', 'failed', 'failure', 'critical', 'alert', '장애', '오류', '에러', '실패', 'Failure', 'ERROR', 'CRITICAL', 'WARNING'];\n  const hasErrorKeyword = errorKeywords.some(kw => text.toLowerCase().includes(kw.toLowerCase()));\n  \n  if (hasErrorKeyword) {\n    return { json: { ...body, messageType: 'alert-bot', isAlertBot: true, botId: body.botId } };\n  }\n  // 에러 키워드 없으면 스킵\n  return { json: { ...body, messageType: 'skip', skipReason: 'bot message without error keywords' } };\n}\n\nconst text = (body.text || '').replace(/<@[A-Z0-9]+>/gi, '').trim();\n\n// 빈 텍스트는 스킵\nif (!text) {\n  return { json: { ...body, messageType: 'skip', skipReason: 'empty text' } };\n}\n\n// 기본 결과 객체\nconst result = { ...body, messageType: 'general', isMrReview: false, isAlertBot: false };\n\n// 1. 명령어 체크 (/로 시작)\nif (text.charAt(0) === '/') {\n  result.messageType = 'command';\n  return { json: result };\n}\n\n// 2. MR 리뷰 요청 체크\nconst mrPatterns = [\n  /!([0-9]+)/,\n  /MR\\s*#?([0-9]+)/i,\n  /merge_requests?\\/([0-9]+)/i\n];\n\n// 프로젝트 힌트 추출\nconst projectPatterns = [\n  /\\[프로젝트:\\s*([^\\]]+)\\]/i,\n  /([a-z][a-z0-9-]*-server)/i,\n  /([a-z][a-z0-9-]+)\\s+!\\d+/i\n];\n\nlet projectHint = null;\nfor (const pattern of projectPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    projectHint = match[1].toLowerCase().trim();\n    break;\n  }\n}\n\n// MR 번호 추출\nlet mrNumber = null;\nfor (const pattern of mrPatterns) {\n  const match = text.match(pattern);\n  if (match) {\n    mrNumber = match[1];\n    break;\n  }\n}\n\nif (mrNumber) {\n  const reviewKeywords = ['리뷰', 'review', '검토', '봐줘', '확인', '코드리뷰', 'cr ', 'code review'];\n  const hasReviewKeyword = reviewKeywords.some(k => text.toLowerCase().includes(k.toLowerCase()));\n  \n  if (hasReviewKeyword) {\n    result.messageType = 'mr-review';\n    result.isMrReview = true;\n    result.mrNumber = mrNumber;\n    result.projectHint = projectHint;\n    return { json: result };\n  }\n}\n\nreturn { json: result };"
       },
       "id": "classify-message",
       "name": "Classify Message",
@@ -504,7 +504,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// 프로젝트 조회 결과 병합\nconst projectResponse = $input.item.json;\nconst alertData = $('Classify Message').item.json;\n\n// 프로젝트가 없으면 (404 또는 에러) 스킵\nconst hasProject = projectResponse.projectId != null;\n\nreturn {\n  json: {\n    shouldProcess: hasProject,\n    channel: alertData.channel,\n    botId: alertData.botId,\n    text: alertData.text,\n    messageTs: alertData.timestamp,\n    threadTs: alertData.threadTs || alertData.timestamp,\n    // 프로젝트 정보\n    projectId: projectResponse.projectId,\n    projectName: projectResponse.projectName,\n    jiraProject: projectResponse.jiraProject,\n    gitlabPath: projectResponse.gitlabPath,\n    workingDirectory: projectResponse.workingDirectory,\n    defaultBranch: projectResponse.defaultBranch,\n    reason: hasProject ? null : 'Channel not mapped to any project'\n  }\n};"
+        "jsCode": "// 프로젝트 조회 결과 병합\nconst projectResponse = $input.item.json;\nconst alertData = $('Classify Message').item.json;\n\n// 프로젝트가 없으면 (404 또는 에러) 스킵\nconst hasProject = projectResponse.projectId != null;\n\nreturn {\n  json: {\n    shouldProcess: hasProject,\n    channel: alertData.channel,\n    botId: alertData.botId,\n    text: alertData.text,\n    messageTs: alertData.timestamp,\n    threadTs: alertData.threadTs || alertData.timestamp,\n    // 프로젝트 정보\n    projectId: projectResponse.projectId,\n    projectName: projectResponse.projectName,\n    jiraProject: projectResponse.jiraProject,\n    gitlabPath: projectResponse.gitlabPath,\n    workingDirectory: projectResponse.workingDirectory,\n    defaultBranch: projectResponse.defaultBranch,\n    envBranchMapping: projectResponse.envBranchMapping || {},\n    reason: hasProject ? null : 'Channel not mapped to any project'\n  }\n};"
       },
       "id": "merge-alert-project",
       "name": "Merge Alert Project",
@@ -535,9 +535,9 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/chat/execute",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '다음 장애 알람 메시지를 분석해주세요:\\n\\n## 프로젝트 정보\\n- 프로젝트: ' + ($json.projectName || 'Unknown') + ' (' + ($json.projectId || 'unknown') + ')\\n- Jira 프로젝트: ' + ($json.jiraProject || 'PROJ') + '\\n\\n## 알람 메시지\\n```\\n' + $json.text + '\\n```\\n\\n다음 JSON 형식으로만 응답해주세요:\\n```json\\n{\\n  \"isActionable\": true/false,\\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\\n  \"summary\": \"Jira 이슈 제목 (50자 이내)\",\\n  \"description\": \"상세 설명\",\\n  \"suggestedFix\": \"수정 제안 (있으면)\",\\n  \"errorType\": \"에러 타입 (Kafka, NullPointer, Timeout 등)\"\\n}\\n```' }], model: 'haiku', source: 'alert', maxTurns: 1 }) }}",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: '다음 장애 알람 메시지를 분석해주세요:\\n\\n## 프로젝트 정보\\n- 프로젝트: ' + ($json.projectName || 'Unknown') + ' (' + ($json.projectId || 'unknown') + ')\\n- Jira 프로젝트: ' + ($json.jiraProject || 'PROJ') + '\\n\\n## 알람 메시지\\n```\\n' + $json.text + '\\n```\\n\\n다음 JSON 형식으로만 응답해주세요:\\n```json\\n{\\n  \"isActionable\": true/false,\\n  \"environment\": \"메시지 맨 앞의 [env] 형식에서 추출 (int/stage/real 등, 없으면 null)\",\\n  \"severity\": \"CRITICAL/HIGH/MEDIUM/LOW\",\\n  \"summary\": \"Jira 이슈 제목 (50자 이내)\",\\n  \"description\": \"상세 설명\",\\n  \"suggestedFix\": \"수정 제안 (있으면)\",\\n  \"errorType\": \"에러 타입 (Kafka, NullPointer, Timeout 등)\"\\n}\\n```\\n\\n참고: environment는 메시지 시작 부분의 [stage], [int], [real] 등에서 추출합니다.' }], model: 'haiku', source: 'alert', maxTurns: 5, skipRouting: true }) }}",
         "options": {
-          "timeout": 30000
+          "timeout": 60000
         }
       },
       "id": "claude-analyze-alert",
@@ -549,7 +549,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const response = $input.item.json;\nconst text = response.content || response.response || response.output || '';\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  analysis = JSON.parse(jsonStr.trim());\n} catch (e) {\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 및 프로젝트 정보 가져오기\nconst projectData = $('Merge Alert Project').item.json;\n\nreturn {\n  json: {\n    ...analysis,\n    channel: projectData.channel,\n    messageTs: projectData.messageTs,\n    threadTs: projectData.threadTs,\n    originalText: projectData.text,\n    // 프로젝트 정보 전달\n    projectId: projectData.projectId,\n    projectName: projectData.projectName,\n    jiraProject: projectData.jiraProject,\n    gitlabPath: projectData.gitlabPath,\n    workingDirectory: projectData.workingDirectory,\n    defaultBranch: projectData.defaultBranch\n  }\n};"
+        "jsCode": "const response = $input.item.json;\nconsole.log('Raw response:', JSON.stringify(response, null, 2));\n\n// HTTP Request 노드는 응답을 그대로 반환\nconst text = response.content || response.response || response.output || '';\nconsole.log('Extracted text:', text.substring(0, 200));\n\n// JSON 추출\nconst jsonMatch = text.match(/```json\\s*([\\s\\S]*?)\\s*```/) || text.match(/\\{[\\s\\S]*\\}/);\nconsole.log('JSON match found:', !!jsonMatch);\nlet analysis = {};\n\ntry {\n  const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;\n  console.log('Parsing JSON:', jsonStr.substring(0, 100));\n  analysis = JSON.parse(jsonStr.trim());\n  console.log('Parsed analysis:', JSON.stringify(analysis));\n} catch (e) {\n  console.log('Parse error:', e.message);\n  analysis = {\n    isActionable: false,\n    error: 'Failed to parse analysis: ' + e.message\n  };\n}\n\n// 이전 노드의 메시지 및 프로젝트 정보 가져오기\nconst projectData = $('Merge Alert Project').item.json;\n\n// 환경 기반 브랜치 결정 (envBranchMapping 사용)\nconst environment = analysis.environment?.toLowerCase() || null;\nconst envBranchMapping = projectData.envBranchMapping || {};\nconst targetBranch = environment ? (envBranchMapping[environment] || projectData.defaultBranch || 'develop') : (projectData.defaultBranch || 'develop');\nconsole.log('Environment:', environment, 'Target branch:', targetBranch);\n\nreturn {\n  json: {\n    ...analysis,\n    environment: environment,\n    targetBranch: targetBranch,\n    channel: projectData.channel,\n    messageTs: projectData.messageTs,\n    threadTs: projectData.threadTs,\n    originalText: projectData.text,\n    // 프로젝트 정보 전달\n    projectId: projectData.projectId,\n    projectName: projectData.projectName,\n    jiraProject: projectData.jiraProject,\n    gitlabPath: projectData.gitlabPath,\n    workingDirectory: projectData.workingDirectory,\n    defaultBranch: projectData.defaultBranch,\n    envBranchMapping: envBranchMapping\n  }\n};"
       },
       "id": "parse-alert-analysis",
       "name": "Parse Alert Analysis",
@@ -580,7 +580,7 @@
         "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, thread_ts: $json.threadTs, text: ':rotating_light: *장애 알람 분석 완료*\\n\\n*심각도:* ' + ($json.severity || 'UNKNOWN') + '\\n*프로젝트:* ' + ($json.projectName || 'Unknown') + ' (`' + ($json.projectId || 'unknown') + '`)\\n*Jira:* ' + ($json.jiraProject || 'N/A') + '\\n*에러 타입:* ' + ($json.errorType || '분석 중') + '\\n\\n*제목:* ' + ($json.summary || '알람 분석 결과') + '\\n\\n*설명:*\\n' + ($json.description || '상세 내용 없음') + '\\n\\n' + ($json.suggestedFix ? '*수정 제안:*\\n' + $json.suggestedFix : '') + '\\n\\n---\\n:ticket: Jira 이슈 생성 → :ticket: 리액션 추가\\n:rocket: 자동 수정 시작 → :hammer_and_wrench: 리액션 추가' }) }}"
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, thread_ts: $json.threadTs, text: ':rotating_light: *장애 알람 분석 완료*\\n\\n*환경:* ' + ($json.environment ? '[' + $json.environment.toUpperCase() + '] → `' + $json.targetBranch + '` 브랜치' : '미지정 → `' + ($json.targetBranch || 'develop') + '` 브랜치') + '\\n*심각도:* ' + ($json.severity || 'UNKNOWN') + '\\n*프로젝트:* ' + ($json.projectName || 'Unknown') + ' (`' + ($json.projectId || 'unknown') + '`)\\n*Jira:* ' + ($json.jiraProject || 'N/A') + '\\n*에러 타입:* ' + ($json.errorType || '분석 중') + '\\n\\n*제목:* ' + ($json.summary || '알람 분석 결과') + '\\n\\n*설명:*\\n' + ($json.description || '상세 내용 없음') + '\\n\\n' + ($json.suggestedFix ? '*수정 제안:*\\n' + $json.suggestedFix : '') + '\\n\\n---\\n:ticket: Jira 이슈 생성 → :ticket: 리액션 추가\\n:rocket: 자동 수정 시작 → :hammer_and_wrench: 리액션 추가' }) }}"
       },
       "id": "send-alert-analysis",
       "name": "Send Alert Analysis",
@@ -608,6 +608,246 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1450, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "ticket-reaction-check",
+              "leftValue": "={{ $json.messageType }}",
+              "rightValue": "ticket-reaction",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "is-ticket-reaction",
+      "name": "Is Ticket Reaction?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [750, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message-content",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.targetChannel, timestamp: $json.targetMessageTs }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "get-reacted-message",
+      "name": "Get Reacted Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [950, 50],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 리액션된 메시지에서 분석 데이터 추출\nconst messageResponse = $input.item.json;\nconst classifyData = $('Classify Message').item.json;\n\nconsole.log('Get reacted message response:', JSON.stringify(messageResponse, null, 2));\n\nif (!messageResponse.success || !messageResponse.text) {\n  return {\n    json: {\n      error: 'Failed to get message content',\n      channel: classifyData.targetChannel,\n      threadTs: classifyData.targetMessageTs\n    }\n  };\n}\n\nconst text = messageResponse.text;\n\n// 분석 결과 메시지 파싱\n// 형식: *심각도:* HIGH, *프로젝트:* Name (`id`), *제목:* ...\nconst severityMatch = text.match(/\\*심각도:\\*\\s*(\\w+)/);\nconst projectMatch = text.match(/\\*프로젝트:\\*\\s*([^(]+)\\s*\\(`([^`]+)`\\)/);\nconst jiraMatch = text.match(/\\*Jira:\\*\\s*(\\w+)/);\nconst errorTypeMatch = text.match(/\\*에러 타입:\\*\\s*([^\\n]+)/);\nconst summaryMatch = text.match(/\\*제목:\\*\\s*([^\\n]+)/);\nconst descMatch = text.match(/\\*설명:\\*\\n([\\s\\S]*?)(?=\\n\\n\\*수정 제안:|\\n---)/); \nconst fixMatch = text.match(/\\*수정 제안:\\*\\n([\\s\\S]*?)(?=\\n---|$)/);\n\nconst severity = severityMatch ? severityMatch[1].trim() : 'MEDIUM';\nconst projectName = projectMatch ? projectMatch[1].trim() : 'Unknown';\nconst projectId = projectMatch ? projectMatch[2].trim() : null;\nconst jiraProject = jiraMatch ? jiraMatch[1].trim() : 'PROJ';\nconst errorType = errorTypeMatch ? errorTypeMatch[1].trim() : 'Unknown';\nconst summary = summaryMatch ? summaryMatch[1].trim() : '장애 알람';\nconst description = descMatch ? descMatch[1].trim() : text;\nconst suggestedFix = fixMatch ? fixMatch[1].trim() : '';\n\n// 심각도에 따른 Jira 우선순위 ID 매핑 (Jira는 우선순위 ID를 사용)\nconst priorityMap = {\n  'CRITICAL': '10000',  // Highest\n  'HIGH': '10001',       // High\n  'MEDIUM': '10002',     // Medium\n  'LOW': '10003'         // Low\n};\n\nreturn {\n  json: {\n    // Jira 이슈 생성용 데이터\n    jiraProject: jiraProject,\n    summary: `[${errorType}] ${summary}`,\n    description: `h2. 장애 알람 분석\\n\\n*심각도:* ${severity}\\n*에러 타입:* ${errorType}\\n*프로젝트:* ${projectName}\\n\\nh2. 설명\\n${description}\\n\\n${suggestedFix ? 'h2. 수정 제안\\n' + suggestedFix : ''}`,\n    priority: priorityMap[severity] || 'Medium',\n    labels: ['auto-created', 'alert-analysis'],\n    // 컨텍스트 정보\n    channel: classifyData.targetChannel,\n    threadTs: classifyData.targetMessageTs,\n    reactionUser: classifyData.reactionUser,\n    projectId: projectId,\n    originalText: text\n  }\n};"
+      },
+      "id": "parse-analysis-for-ticket",
+      "name": "Parse Analysis for Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1150, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/plugins/jira/issues",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ project: $json.jiraProject, summary: $json.summary, description: $json.description, issueType: 'Bug', labels: $json.labels }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "create-jira-issue",
+      "name": "Create Jira Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1350, 50],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success === true }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "jira-created-ok",
+      "name": "Jira Created?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1550, 50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Parse Analysis for Ticket').item.json.channel, thread_ts: $('Parse Analysis for Ticket').item.json.threadTs, text: ':ticket: *Jira 이슈가 생성되었습니다*\\n\\n*이슈:* <' + ($json.data?.url || 'https://jira.example.com/browse/' + ($json.data?.key || 'UNKNOWN')) + '|' + ($json.data?.key || 'N/A') + '>\\n*제목:* ' + ($('Parse Analysis for Ticket').item.json.summary || 'N/A') + '\\n*우선순위:* ' + ($('Parse Analysis for Ticket').item.json.priority || 'N/A') }) }}"
+      },
+      "id": "send-ticket-created",
+      "name": "Send Ticket Created",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 0],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/reaction",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Parse Analysis for Ticket').item.json.channel, timestamp: $('Parse Analysis for Ticket').item.json.threadTs, emoji: 'white_check_mark', remove: false }) }}"
+      },
+      "id": "add-jira-success-reaction",
+      "name": "Add ✅ (Jira)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1950, 0],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Parse Analysis for Ticket').item.json.channel, thread_ts: $('Parse Analysis for Ticket').item.json.threadTs, text: ':x: *Jira 이슈 생성 실패*\\n\\n오류: ' + ($json.error || $json.message || 'Unknown error') }) }}"
+      },
+      "id": "send-jira-error",
+      "name": "Send Jira Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 150],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "autofix-reaction-check",
+              "leftValue": "={{ $json.messageType }}",
+              "rightValue": "autofix-reaction",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "is-autofix-reaction",
+      "name": "Is Auto-Fix Reaction?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [950, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message-content",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.targetChannel, timestamp: $json.targetMessageTs }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "get-message-for-autofix",
+      "name": "Get Message for Auto-Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1150, -50],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 리액션된 메시지에서 분석 데이터 추출 (자동 수정 파이프라인용)\nconst messageResponse = $input.item.json;\nconst classifyData = $('Classify Message').item.json;\n\nconsole.log('Get message for autofix response:', JSON.stringify(messageResponse, null, 2));\n\nif (!messageResponse.success || !messageResponse.text) {\n  return {\n    json: {\n      error: 'Failed to get message content',\n      channel: classifyData.targetChannel,\n      threadTs: classifyData.targetMessageTs\n    }\n  };\n}\n\nconst text = messageResponse.text;\n\n// 분석 결과 메시지 파싱\nconst envMatch = text.match(/\\*환경:\\*\\s*(?:\\[(\\w+)\\])?[^`]*`([^`]+)`/);\nconst severityMatch = text.match(/\\*심각도:\\*\\s*(\\w+)/);\nconst projectMatch = text.match(/\\*프로젝트:\\*\\s*([^(]+)\\s*\\(`([^`]+)`\\)/);\nconst jiraMatch = text.match(/\\*Jira:\\*\\s*(\\w+)/);\nconst errorTypeMatch = text.match(/\\*에러 타입:\\*\\s*([^\\n]+)/);\nconst summaryMatch = text.match(/\\*제목:\\*\\s*([^\\n]+)/);\nconst descMatch = text.match(/\\*설명:\\*\\n([\\s\\S]*?)(?=\\n\\n\\*수정 제안:|\\n---)/); \nconst fixMatch = text.match(/\\*수정 제안:\\*\\n([\\s\\S]*?)(?=\\n---|$)/);\n\nconst environment = envMatch ? envMatch[1]?.toLowerCase() : null;\nconst targetBranch = envMatch ? envMatch[2]?.trim() : null;\nconst severity = severityMatch ? severityMatch[1].trim() : 'MEDIUM';\nconst projectName = projectMatch ? projectMatch[1].trim() : 'Unknown';\nconst projectId = projectMatch ? projectMatch[2].trim() : null;\nconst jiraProject = jiraMatch ? jiraMatch[1].trim() : 'PROJ';\nconst errorType = errorTypeMatch ? errorTypeMatch[1].trim() : 'Unknown';\nconst summary = summaryMatch ? summaryMatch[1].trim() : '장애 알람';\nconst description = descMatch ? descMatch[1].trim() : text;\nconst suggestedFix = fixMatch ? fixMatch[1].trim() : '';\n\nconsole.log('Parsed environment:', environment, 'targetBranch:', targetBranch);\n\nreturn {\n  json: {\n    // 파이프라인으로 전달할 데이터\n    projectId: projectId,\n    projectName: projectName,\n    jiraProject: jiraProject,\n    summary: `[${errorType}] ${summary}`,\n    description: description,\n    severity: severity,\n    suggestedFix: suggestedFix,\n    errorType: errorType,\n    environment: environment,\n    targetBranch: targetBranch,\n    // Slack 정보\n    channel: classifyData.targetChannel,\n    threadTs: classifyData.targetMessageTs,\n    userId: classifyData.reactionUser\n  }\n};"
+      },
+      "id": "parse-for-autofix",
+      "name": "Parse for Auto-Fix",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, -50]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/projects/{{ $json.projectId }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "lookup-project-for-autofix",
+      "name": "Lookup Project for Auto-Fix",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1550, -50],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// 파싱된 데이터와 프로젝트 정보 병합\nconst parseData = $('Parse for Auto-Fix').item.json;\nconst projectResponse = $input.item.json;\n\n// 프로젝트 정보 추출\nconst project = projectResponse.data || projectResponse;\nconst gitlabPath = project.gitlabPath || null;\nconst workingDirectory = project.workingDirectory || `/workspace/${parseData.projectId}`;\nconst envBranchMapping = project.envBranchMapping || {};\n\n// 환경 기반 브랜치 결정: 파싱된 targetBranch > envBranchMapping > defaultBranch\nconst env = parseData.environment?.toLowerCase();\nconst targetBranch = parseData.targetBranch || (env ? envBranchMapping[env] : null) || project.defaultBranch || 'develop';\n\nconsole.log('Auto-fix environment:', env, 'targetBranch:', targetBranch);\n\nreturn {\n  json: {\n    ...parseData,\n    gitlabPath,\n    workingDirectory,\n    defaultBranch: targetBranch,\n    environment: env\n  }\n};"
+      },
+      "id": "merge-project-for-autofix",
+      "name": "Merge Project for Auto-Fix",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1750, -50]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_URL || 'http://127.0.0.1:5678' }}/webhook/alert-pipeline",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "trigger-autofix-pipeline",
+      "name": "Trigger Auto-Fix Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1950, -50],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CLAUDE_FLOW_API_URL || 'http://host.docker.internal:8080' }}/api/v1/slack/message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Merge Project for Auto-Fix').item.json.channel, thread_ts: $('Merge Project for Auto-Fix').item.json.threadTs, text: ':hammer_and_wrench: *자동 수정 파이프라인이 시작되었습니다*\\n\\n프로젝트: ' + ($('Merge Project for Auto-Fix').item.json.projectName || 'Unknown') + '\\nGitLab: ' + ($('Merge Project for Auto-Fix').item.json.gitlabPath || 'N/A') + '\\nJira: ' + ($('Merge Project for Auto-Fix').item.json.jiraProject || 'N/A') + '\\n\\n진행 상황은 스레드에서 확인하세요.' }) }}"
+      },
+      "id": "notify-autofix-started",
+      "name": "Notify Auto-Fix Started",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2150, -50],
+      "continueOnFail": true
     }
   ],
   "connections": {
@@ -619,9 +859,54 @@
     },
     "Not Skip?": {
       "main": [
-        [{ "node": "Is Alert Bot?", "type": "main", "index": 0 }],
+        [{ "node": "Is Ticket Reaction?", "type": "main", "index": 0 }],
         [{ "node": "Skip (Reaction/Empty)", "type": "main", "index": 0 }]
       ]
+    },
+    "Is Ticket Reaction?": {
+      "main": [
+        [{ "node": "Get Reacted Message", "type": "main", "index": 0 }],
+        [{ "node": "Is Auto-Fix Reaction?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Auto-Fix Reaction?": {
+      "main": [
+        [{ "node": "Get Message for Auto-Fix", "type": "main", "index": 0 }],
+        [{ "node": "Is Alert Bot?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Message for Auto-Fix": {
+      "main": [[{ "node": "Parse for Auto-Fix", "type": "main", "index": 0 }]]
+    },
+    "Parse for Auto-Fix": {
+      "main": [[{ "node": "Lookup Project for Auto-Fix", "type": "main", "index": 0 }]]
+    },
+    "Lookup Project for Auto-Fix": {
+      "main": [[{ "node": "Merge Project for Auto-Fix", "type": "main", "index": 0 }]]
+    },
+    "Merge Project for Auto-Fix": {
+      "main": [[{ "node": "Trigger Auto-Fix Pipeline", "type": "main", "index": 0 }]]
+    },
+    "Trigger Auto-Fix Pipeline": {
+      "main": [[{ "node": "Notify Auto-Fix Started", "type": "main", "index": 0 }]]
+    },
+    "Get Reacted Message": {
+      "main": [[{ "node": "Parse Analysis for Ticket", "type": "main", "index": 0 }]]
+    },
+    "Parse Analysis for Ticket": {
+      "main": [[{ "node": "Create Jira Issue", "type": "main", "index": 0 }]]
+    },
+    "Create Jira Issue": {
+      "main": [[{ "node": "Jira Created?", "type": "main", "index": 0 }]]
+    },
+    "Jira Created?": {
+      "main": [
+        [{ "node": "Send Ticket Created", "type": "main", "index": 0 }],
+        [{ "node": "Send Jira Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Ticket Created": {
+      "main": [[{ "node": "Add ✅ (Jira)", "type": "main", "index": 0 }]]
     },
     "Is Alert Bot?": {
       "main": [

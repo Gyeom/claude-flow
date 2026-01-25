@@ -74,11 +74,18 @@ class ProjectContextEnricher(
                 )
             )
 
-            // 작업 디렉토리 설정 (빈 경로 제외)
-            ragResult.workingDirectory?.let { dir ->
-                if (dir.isNotEmpty()) {
-                    enrichedContext = enrichedContext.withWorkingDirectory(dir)
+            // 작업 디렉토리 설정: claudeWorkingDirectory 우선 (worktree 격리)
+            val effectiveDir = ragResult.projectIds
+                .filterNot { it == "project-list" }
+                .firstNotNullOfOrNull { projectId ->
+                    try {
+                        storage.projectRepository.findById(projectId)?.claudeWorkingDirectory
+                    } catch (e: Exception) { null }
                 }
+                ?: ragResult.workingDirectory
+
+            if (!effectiveDir.isNullOrEmpty()) {
+                enrichedContext = enrichedContext.withWorkingDirectory(effectiveDir)
             }
 
             logger.info { "RAG search found ${ragResult.projectIds.size} projects: ${ragResult.projectIds}" }
@@ -97,9 +104,11 @@ class ProjectContextEnricher(
             if (projectDir != null && projectDir.exists()) {
                 val projectContext = extractProjectContext(projectDir)
                 if (projectContext.isNotEmpty()) {
+                    // NOTE: 경로를 프롬프트에 포함하지 않음
+                    // Claude가 경로를 보고 cd로 이동하면 worktree 격리가 깨짐
+                    // 작업 디렉토리는 ProcessBuilder에서 설정됨
                     val content = """
                         |[Detected Project: ${detected.projectId}]
-                        |Path: ${projectDir.absolutePath}
                         |Matched: "${detected.matchedPattern}"
                         |--- Project Context ---
                         |$projectContext
@@ -112,13 +121,16 @@ class ProjectContextEnricher(
                         content = content,
                         metadata = mapOf(
                             "source" to "pattern",
-                            "projectId" to detected.projectId,
-                            "path" to projectDir.absolutePath
+                            "projectId" to detected.projectId
                         )
                     )
 
-                    // 작업 디렉토리 설정
-                    enrichedContext = enrichedContext.withWorkingDirectory(projectDir.absolutePath)
+                    // 작업 디렉토리 설정: claudeWorkingDirectory 우선 사용 (worktree 격리)
+                    val project = try {
+                        storage.projectRepository.findById(detected.projectId)
+                    } catch (e: Exception) { null }
+                    val effectiveWorkingDir = project?.claudeWorkingDirectory ?: projectDir.absolutePath
+                    enrichedContext = enrichedContext.withWorkingDirectory(effectiveWorkingDir)
 
                     logger.info { "Pattern matched project: ${detected.projectId}" }
                 }

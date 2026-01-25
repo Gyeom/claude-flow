@@ -21,7 +21,9 @@ data class ChatRequest(
     // scheduled → mr_review로 변환됨
     val source: String? = null,
     // MR 재분석 건너뛰기 (이미 컨텍스트 포함된 경우)
-    val skipMrAnalysis: Boolean = false
+    val skipMrAnalysis: Boolean = false,
+    // 에이전트 라우팅 건너뛰기 (JSON 응답 등 직접 Claude 호출 시)
+    val skipRouting: Boolean = false
 )
 
 /**

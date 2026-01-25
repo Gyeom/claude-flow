@@ -52,7 +52,8 @@ class ProjectsController(
                 jiraProject = project.jiraProject,
                 gitlabPath = project.gitlabPath,
                 workingDirectory = project.workingDirectory,
-                defaultBranch = project.defaultBranch
+                defaultBranch = project.defaultBranch,
+                envBranchMapping = project.envBranchMapping
             ))
         } else {
             ResponseEntity.notFound().build()
@@ -482,5 +483,6 @@ data class AlertChannelProjectResponse(
     val jiraProject: String?,
     val gitlabPath: String?,
     val workingDirectory: String,
-    val defaultBranch: String
+    val defaultBranch: String,
+    val envBranchMapping: Map<String, String>? = null
 )

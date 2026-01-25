@@ -3,6 +3,7 @@ package ai.claudeflow.api.slack
 import com.slack.api.Slack
 import com.slack.api.methods.MethodsClient
 import com.slack.api.methods.request.chat.ChatPostMessageRequest
+import com.slack.api.methods.request.conversations.ConversationsHistoryRequest
 import com.slack.api.methods.request.conversations.ConversationsRepliesRequest
 import com.slack.api.methods.request.reactions.ReactionsAddRequest
 import com.slack.api.methods.request.reactions.ReactionsRemoveRequest
@@ -126,6 +127,46 @@ class SlackMessageSender(
         } catch (e: Exception) {
             logger.error(e) { "Failed to remove reaction '$emoji'" }
             false
+        }
+    }
+
+    /**
+     * 단일 메시지 조회 (timestamp로)
+     */
+    fun getMessage(
+        channel: String,
+        timestamp: String
+    ): Result<ThreadMessage> {
+        return try {
+            // conversations.history를 사용하여 특정 timestamp의 메시지 조회
+            val response = client.conversationsHistory(
+                ConversationsHistoryRequest.builder()
+                    .channel(channel)
+                    .latest(timestamp)
+                    .oldest(timestamp)
+                    .inclusive(true)
+                    .limit(1)
+                    .build()
+            )
+
+            if (response.isOk && response.messages.isNotEmpty()) {
+                val msg = response.messages.first()
+                val message = ThreadMessage(
+                    user = msg.user ?: "unknown",
+                    userName = getUserName(msg.user),
+                    text = msg.text ?: "",
+                    timestamp = msg.ts,
+                    isBot = msg.botId != null
+                )
+                logger.info { "Retrieved message from $channel:$timestamp" }
+                Result.success(message)
+            } else {
+                logger.error { "Message not found or error: ${response.error}" }
+                Result.failure(RuntimeException(response.error ?: "Message not found"))
+            }
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to get message $channel:$timestamp" }
+            Result.failure(e)
         }
     }
 

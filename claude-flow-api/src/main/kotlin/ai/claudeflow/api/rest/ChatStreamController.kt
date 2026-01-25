@@ -410,7 +410,7 @@ class ChatStreamController(
      */
     @PostMapping("/execute")
     fun executeChat(@RequestBody request: ChatRequest): Mono<ResponseEntity<ChatResponse>> {
-        logger.info { "Chat execute request: messages=${request.messages.size}" }
+        logger.info { "Chat execute request: messages=${request.messages.size}, skipRouting=${request.skipRouting}, source=${request.source}" }
 
         return mono {
             try {
@@ -429,27 +429,52 @@ class ChatStreamController(
                         )
                     )
 
-                // 에이전트 라우팅
-                val agentMatch: AgentMatch = if (request.agentId != null) {
-                    val agent = agentRouter.getAgent(request.agentId)
-                    if (agent != null) {
-                        AgentMatch(agent = agent, confidence = 1.0, method = RoutingMethod.DEFAULT)
-                    } else {
-                        return@mono ResponseEntity.badRequest().body(
-                            ChatResponse(
-                                requestId = "",
-                                success = false,
-                                content = null,
-                                agentId = "",
-                                agentName = "",
-                                confidence = 0.0,
-                                durationMs = 0,
-                                error = "Agent not found: ${request.agentId}"
+                // 에이전트 라우팅 (skipRouting=true면 general 에이전트 사용)
+                val agentMatch: AgentMatch = when {
+                    // 1. skipRouting=true면 general 에이전트 사용 (라우팅 건너뛰기)
+                    request.skipRouting -> {
+                        val generalAgent = agentRouter.getAgent("general")
+                            ?: return@mono ResponseEntity.badRequest().body(
+                                ChatResponse(
+                                    requestId = "",
+                                    success = false,
+                                    content = null,
+                                    agentId = "",
+                                    agentName = "",
+                                    confidence = 0.0,
+                                    durationMs = 0,
+                                    error = "General agent not found for skipRouting mode"
+                                )
                             )
+                        AgentMatch(
+                            agent = generalAgent,
+                            confidence = 1.0,
+                            method = RoutingMethod.DEFAULT,
+                            reasoning = "Routing skipped (skipRouting=true)"
                         )
                     }
-                } else {
-                    agentRouter.route(lastUserMessage)
+                    // 2. 명시적 agentId 지정
+                    request.agentId != null -> {
+                        val agent = agentRouter.getAgent(request.agentId)
+                        if (agent != null) {
+                            AgentMatch(agent = agent, confidence = 1.0, method = RoutingMethod.DEFAULT)
+                        } else {
+                            return@mono ResponseEntity.badRequest().body(
+                                ChatResponse(
+                                    requestId = "",
+                                    success = false,
+                                    content = null,
+                                    agentId = "",
+                                    agentName = "",
+                                    confidence = 0.0,
+                                    durationMs = 0,
+                                    error = "Agent not found: ${request.agentId}"
+                                )
+                            )
+                        }
+                    }
+                    // 3. 일반 라우팅
+                    else -> agentRouter.route(lastUserMessage)
                 }
 
                 // 대화 히스토리 구성
@@ -478,10 +503,17 @@ class ChatStreamController(
                 // 작업 디렉토리 결정: Claude Worktree > Pipeline > 프로젝트 > 에이전트
                 // Claude worktree가 있으면 사용자 작업 방해 방지를 위해 우선 사용
                 val project = projectRegistry.get(projectId)
+                logger.info { "Working directory selection for projectId=$projectId: " +
+                    "project=${project != null}, " +
+                    "claudeWorkingDirectory=${project?.claudeWorkingDirectory}, " +
+                    "enrichedWorkingDir=${enrichedContext.workingDirectory}, " +
+                    "projectWorkingDir=${project?.workingDirectory}, " +
+                    "agentWorkingDir=${agentMatch.agent.workingDirectory}" }
                 val workingDir = project?.claudeWorkingDirectory  // Claude 분석용 worktree 최우선
                     ?: enrichedContext.workingDirectory
                     ?: project?.workingDirectory
                     ?: agentMatch.agent.workingDirectory
+                logger.info { "Selected workingDir=$workingDir for projectId=$projectId" }
 
                 // 환경 기반 브랜치 checkout (worktree 사용 시)
                 if (project != null && project.claudeWorkingDirectory != null && workingDir != null && workingDir == project.claudeWorkingDirectory) {
