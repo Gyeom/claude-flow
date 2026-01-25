@@ -64,7 +64,7 @@ type PageTab = 'browse' | 'quick-actions'
 // Quick Actions용 필터 타입
 interface QuickFilter {
   id: string
-  type: 'project' | 'status' | 'assignee' | 'type' | 'priority' | 'label'
+  type: 'project' | 'status' | 'assignee' | 'type' | 'priority' | 'label' | 'sprint'
   value: string
   label: string
 }
@@ -146,6 +146,7 @@ export function Jira() {
   const [selectedProjects, setSelectedProjects] = useState<SelectedProject[]>([]) // 다중 프로젝트 선택
   const [selectedBoard, setSelectedBoard] = useState<JiraBoard | null>(null)
   const [selectedSprint, setSelectedSprint] = useState<JiraSprint | null>(null)
+  const [activeSprintFilter, setActiveSprintFilter] = useState(true) // Active Sprint 필터 (기본 활성화)
 
   // UI states
   const [displayMode, setDisplayMode] = useState<DisplayMode>('board')
@@ -192,6 +193,7 @@ export function Jira() {
   const [quickFilterInput, setQuickFilterInput] = useState('')
   const [showQuickFilterDropdown, setShowQuickFilterDropdown] = useState(false)
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set())
+  const [quickActionInitialized, setQuickActionInitialized] = useState(false)
   const [bulkAction, setBulkAction] = useState<BulkAction>({ status: undefined, assignee: 'keep', priority: 'keep', comment: '', startDate: '', dueDate: '' })
   const [bulkProcessing, setBulkProcessing] = useState(false)
   const [availableTransitions, setAvailableTransitions] = useState<Array<{ name: string; count: number }>>([])
@@ -263,6 +265,67 @@ export function Jira() {
   })
 
   const allProjects = projectsData?.data || []
+
+  // 초기 로드 시 configuredProjectKeys를 selectedProjects에 자동 설정
+  useEffect(() => {
+    if (
+      configuredProjectKeys?.keys &&
+      configuredProjectKeys.keys.length > 0 &&
+      allProjects.length > 0 &&
+      selectedProjects.length === 0  // 아직 선택된 프로젝트가 없을 때만
+    ) {
+      const initialProjects: SelectedProject[] = configuredProjectKeys.keys
+        .map(key => {
+          const project = allProjects.find(p => p.key === key)
+          return project ? { key: project.key, name: project.name } : null
+        })
+        .filter((p): p is SelectedProject => p !== null)
+
+      if (initialProjects.length > 0) {
+        setSelectedProjects(initialProjects)
+      }
+    }
+  }, [configuredProjectKeys, allProjects])
+
+  // Quick Actions 초기 필터 설정 (quickFilters에 직접 설정)
+  useEffect(() => {
+    if (
+      configuredProjectKeys?.keys &&
+      configuredProjectKeys.keys.length > 0 &&
+      !quickActionInitialized
+    ) {
+      const initialFilters: QuickFilter[] = []
+
+      // 프로젝트 필터 추가
+      configuredProjectKeys.keys.forEach(key => {
+        initialFilters.push({
+          id: `init-project-${key}`,
+          type: 'project',
+          value: key,
+          label: key
+        })
+      })
+
+      // Assignee = me 필터 추가
+      initialFilters.push({
+        id: 'init-assignee-me',
+        type: 'assignee',
+        value: 'me',
+        label: 'Assignee: Me'
+      })
+
+      // Active Sprint 필터 추가
+      initialFilters.push({
+        id: 'init-sprint-active',
+        type: 'sprint',
+        value: 'active',
+        label: 'Active Sprint'
+      })
+
+      setQuickFilters(initialFilters)
+      setQuickActionInitialized(true)
+    }
+  }, [configuredProjectKeys, quickActionInitialized])
 
   // 프로젝트 검색 필터링
   const projects = useMemo(() => {
@@ -343,13 +406,18 @@ export function Jira() {
     // Sprint filter (if sprint selected, use sprint issues API instead)
     // Sprint is handled separately via getSprintIssues
 
+    // Active Sprint filter (특정 스프린트 선택 안 했을 때만 적용)
+    if (activeSprintFilter && !selectedSprint) {
+      conditions.push('sprint in openSprints()')
+    }
+
     // Build final JQL: conditions joined by AND, then ORDER BY
     // If no conditions, use "project is not EMPTY" to get all issues
     const jql = conditions.length > 0
       ? `${conditions.join(' AND ')} ORDER BY updated DESC`
       : 'project is not EMPTY ORDER BY updated DESC'
     return jql
-  }, [assigneeFilter, selectedProjects, configuredProjectKeys])
+  }, [assigneeFilter, selectedProjects, configuredProjectKeys, activeSprintFilter, selectedSprint])
 
   // Determine if we should use sprint API or search API
   const useSprintApi = !!selectedSprint
@@ -374,6 +442,87 @@ export function Jira() {
     queryFn: () => jiraApi.searchIssues(searchJql),
     enabled: !!searchJql,
   })
+
+  // Quick Actions 전용 JQL 빌드 (quickFilters에서 추출)
+  const quickActionJql = useMemo(() => {
+    const conditions: string[] = []
+
+    // quickFilters에서 project 추출
+    const projectFilters = quickFilters.filter(f => f.type === 'project')
+    if (projectFilters.length === 1) {
+      conditions.push(`project = ${projectFilters[0].value}`)
+    } else if (projectFilters.length > 1) {
+      const projectKeys = projectFilters.map(f => f.value).join(', ')
+      conditions.push(`project IN (${projectKeys})`)
+    }
+
+    // quickFilters에서 assignee 추출
+    const assigneeFilter = quickFilters.find(f => f.type === 'assignee')
+    if (assigneeFilter) {
+      if (assigneeFilter.value === 'me') {
+        conditions.push('assignee = currentUser()')
+      } else if (assigneeFilter.value === 'unassigned') {
+        conditions.push('assignee is EMPTY')
+      }
+    }
+
+    // quickFilters에서 status 추출 (상태 카테고리 → 실제 상태 매핑)
+    const statusFilters = quickFilters.filter(f => f.type === 'status')
+    if (statusFilters.length > 0) {
+      const statusConditions = statusFilters.map(f => {
+        const category = f.value as keyof typeof STATUS_CATEGORIES
+        const statuses = STATUS_CATEGORIES[category]
+        if (statuses && statuses.length > 0) {
+          return `status IN ("${statuses.join('", "')}")`
+        }
+        return `status = "${f.value}"`
+      })
+      if (statusConditions.length === 1) {
+        conditions.push(statusConditions[0])
+      } else if (statusConditions.length > 1) {
+        conditions.push(`(${statusConditions.join(' OR ')})`)
+      }
+    }
+
+    // quickFilters에서 type 추출
+    const typeFilters = quickFilters.filter(f => f.type === 'type')
+    if (typeFilters.length > 0) {
+      const types = typeFilters.map(f => `"${f.value}"`).join(', ')
+      conditions.push(`issuetype IN (${types})`)
+    }
+
+    // quickFilters에서 priority 추출
+    const priorityFilters = quickFilters.filter(f => f.type === 'priority')
+    if (priorityFilters.length > 0) {
+      const priorities = priorityFilters.map(f => `"${f.value}"`).join(', ')
+      conditions.push(`priority IN (${priorities})`)
+    }
+
+    // quickFilters에서 sprint 추출
+    const sprintFilter = quickFilters.find(f => f.type === 'sprint')
+    if (sprintFilter) {
+      if (sprintFilter.value === 'active') {
+        conditions.push('sprint in openSprints()')
+      }
+    }
+
+    const jql = conditions.length > 0
+      ? `${conditions.join(' AND ')} ORDER BY updated DESC`
+      : 'project is not EMPTY ORDER BY updated DESC'
+    return jql
+  }, [quickFilters])
+
+  // Quick Actions에 프로젝트 필터가 있는지 확인
+  const hasQuickActionProjectFilter = quickFilters.some(f => f.type === 'project')
+
+  // Quick Actions 전용 이슈 조회 (독립적)
+  const { data: quickActionIssuesData, isLoading: quickActionLoading, refetch: refetchQuickActionIssues } = useQuery({
+    queryKey: ['jira', 'quick-actions', quickActionJql],
+    queryFn: () => jiraApi.searchIssues(quickActionJql),
+    enabled: hasQuickActionProjectFilter,
+  })
+
+  const quickActionIssues = quickActionIssuesData?.data || []
 
   // Fetch selected issue details
   const { data: issueDetails, isLoading: detailsLoading } = useQuery({
@@ -724,10 +873,11 @@ export function Jira() {
       parts.push(`${selectedProjects.length} projects`)
     }
     if (selectedSprint) parts.push(selectedSprint.name)
+    else if (activeSprintFilter) parts.push('Active Sprint')
     if (searchJql) parts.push(`Search: "${searchJql}"`)
 
     return parts.join(' · ')
-  }, [assigneeFilter, selectedProjects, selectedSprint, searchJql])
+  }, [assigneeFilter, selectedProjects, selectedSprint, activeSprintFilter, searchJql])
 
   // AI 분석 핸들러
   const handleAnalyzeIssue = async (issueKey: string) => {
@@ -759,53 +909,20 @@ export function Jira() {
   }
 
   // Quick Actions: 필터링된 이슈 목록 (OR 로직 - 같은 타입 내에서는 OR, 다른 타입 간에는 AND)
-  const quickFilteredIssues = useMemo(() => {
-    if (quickFilters.length === 0) return currentIssues
+  // Quick Actions: JQL이 모든 필터를 처리하므로 quickActionIssues 직접 사용
+  const quickFilteredIssues = quickActionIssues
 
-    // 필터를 타입별로 그룹화
-    const filtersByType: Record<string, QuickFilter[]> = {}
-    quickFilters.forEach(filter => {
-      if (!filtersByType[filter.type]) {
-        filtersByType[filter.type] = []
-      }
-      filtersByType[filter.type].push(filter)
-    })
-
-    return currentIssues.filter(issue => {
-      // 각 타입 그룹에 대해: 그룹 내 필터 중 하나라도 매칭되면 OK (OR)
-      // 모든 타입 그룹이 매칭되어야 함 (AND)
-      return Object.entries(filtersByType).every(([type, filters]) => {
-        return filters.some(filter => {
-          switch (type) {
-            case 'project':
-              return issue.key.startsWith(filter.value + '-')
-            case 'status':
-              return getStatusCategory(issue.status) === filter.value ||
-                     issue.status.toLowerCase().includes(filter.value.toLowerCase())
-            case 'assignee':
-              if (filter.value === 'me') return issue.assignee?.includes('나') || issue.assignee?.includes('me')
-              if (filter.value === 'unassigned') return !issue.assignee
-              return issue.assignee?.toLowerCase().includes(filter.value.toLowerCase())
-            case 'type':
-              return issue.type?.toLowerCase() === filter.value.toLowerCase()
-            case 'priority':
-              return issue.priority?.toLowerCase() === filter.value.toLowerCase()
-            default:
-              return true
-          }
-        })
-      })
-    })
-  }, [currentIssues, quickFilters])
-
-  // Quick Actions: 필터 제안 생성
+  // Quick Actions: 필터 제안 생성 (configuredProjectKeys + quickActionIssues 기반)
   const filterSuggestions = useMemo(() => {
     const suggestions: { type: QuickFilter['type']; value: string; label: string }[] = []
     const input = quickFilterInput.toLowerCase()
 
-    // 프로젝트 제안
-    const projectKeys = [...new Set(currentIssues.map(i => i.key.split('-')[0]))]
-    projectKeys.forEach(key => {
+    // 프로젝트 제안 (configuredProjectKeys 우선 + quickActionIssues에서 추출)
+    const configuredKeys = configuredProjectKeys?.keys || []
+    const issueKeys = [...new Set(quickActionIssues.map(i => i.key.split('-')[0]))]
+    const allProjectKeys = [...new Set([...configuredKeys, ...issueKeys])]
+
+    allProjectKeys.forEach(key => {
       if (!input || key.toLowerCase().includes(input) || 'project'.includes(input)) {
         if (!quickFilters.some(f => f.type === 'project' && f.value === key)) {
           suggestions.push({ type: 'project', value: key, label: key })
@@ -861,8 +978,15 @@ export function Jira() {
       }
     })
 
+    // 스프린트 제안
+    if (!input || 'sprint'.includes(input) || 'active'.includes(input) || '스프린트'.includes(input)) {
+      if (!quickFilters.some(f => f.type === 'sprint' && f.value === 'active')) {
+        suggestions.push({ type: 'sprint', value: 'active', label: 'Active Sprint' })
+      }
+    }
+
     return suggestions.slice(0, 10)
-  }, [quickFilterInput, quickFilters, currentIssues])
+  }, [quickFilterInput, quickFilters, quickActionIssues, configuredProjectKeys])
 
 
   // Quick Actions: 벌크 상태 변경 실행
@@ -1119,6 +1243,23 @@ export function Jira() {
                 </div>
               )}
             </div>
+
+            {/* Active Sprint Filter Toggle */}
+            <button
+              onClick={() => setActiveSprintFilter(!activeSprintFilter)}
+              disabled={!!selectedSprint}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all",
+                activeSprintFilter && !selectedSprint
+                  ? "bg-cyan-50 dark:bg-cyan-900/20 border-cyan-200 dark:border-cyan-800 text-cyan-700 dark:text-cyan-300"
+                  : "border-border hover:bg-muted",
+                selectedSprint && "opacity-50 cursor-not-allowed"
+              )}
+              title={selectedSprint ? "특정 스프린트 선택 시 비활성화" : "활성 스프린트만 표시"}
+            >
+              <Zap className="h-4 w-4" />
+              <span className="text-sm font-medium">Active Sprint</span>
+            </button>
 
             {/* Project Filter - Multi-select */}
             <div className="relative">
@@ -1979,6 +2120,22 @@ export function Jira() {
                 <Search className="h-4 w-4 text-muted-foreground" />
                 <h3 className="font-semibold text-sm">필터 기반 선택</h3>
                 <span className="text-xs text-muted-foreground">여러 이슈를 선택하여 일괄 작업</span>
+                {/* 이슈 수 표시 */}
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {quickActionLoading ? (
+                    <Loader2 className="h-3 w-3 animate-spin inline" />
+                  ) : (
+                    `${quickActionIssues.length}개 이슈`
+                  )}
+                </span>
+                {/* 새로고침 버튼 */}
+                <button
+                  onClick={() => refetchQuickActionIssues()}
+                  className="p-1 hover:bg-muted rounded transition-colors"
+                  title="새로고침"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5 text-muted-foreground", quickActionLoading && "animate-spin")} />
+                </button>
               </div>
               {/* Filter Input Row */}
               <div className="flex items-center gap-2 flex-wrap border rounded-lg p-2 bg-muted/30">
@@ -1993,6 +2150,7 @@ export function Jira() {
                       filter.type === 'assignee' && "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300",
                       filter.type === 'type' && "bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300",
                       filter.type === 'priority' && "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
+                      filter.type === 'sprint' && "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/50 dark:text-cyan-300",
                     )}
                   >
                     {filter.label}
