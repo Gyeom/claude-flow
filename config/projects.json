@@ -64,6 +64,16 @@
       "gitlabPath": "sirius/ccds/vlc-gateway-server",
       "jiraProject": "VLC",
       "aliases": ["vlc", "VLC", "게이트웨이", "gateway"]
+    },
+    {
+      "id": "notification-center-server",
+      "name": "Notification Center Server",
+      "description": "알림 센터 서버",
+      "path": "notification-center-server",
+      "workingDirectory": "${WORKSPACE_PATH}/notification-center-server",
+      "gitlabPath": "sirius/ccds/notification-center-server",
+      "jiraProject": "VLC",
+      "aliases": ["notification", "알림", "notification-center", "알림센터"]
     }
   ]
 }
