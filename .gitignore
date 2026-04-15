@@ -27,6 +27,9 @@ Thumbs.db
 .claude/settings.local.json
 .claude/config/project-aliases.json
 
+# Local docs with company-specific content
+docs/jira-workflows.md
+
 # Logs
 *.log
 logs/

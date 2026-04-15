@@ -9,6 +9,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDraggable,
   type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core'
@@ -87,10 +88,10 @@ interface SelectedProject {
 
 // 동적 상태 설정 - 실제 데이터에서 추출
 const STATUS_CATEGORIES = {
-  backlog: ['Backlog', 'Open', 'New', 'Postpone'],
-  todo: ['To Do', '할 일', '해야할일', 'Selected for Development'],
-  inProgress: ['In Progress', '진행 중', 'In Development', 'Working'],
-  resolved: ['Resolved', '해결됨', 'In Review', '검토 중', 'Review', 'Code Review', 'QA'],
+  backlog: ['Backlog', 'Open', 'New', 'Postpone', '대기', '백로그'],
+  todo: ['To Do', '할 일', '해야할일', '해야 할 일', 'Selected for Development', 'Feasibility Check'],
+  inProgress: ['In Progress', '진행 중', 'In Development', 'Working', 'Start Progress', 'Implement'],
+  resolved: ['Resolved', '해결됨', 'In Review', '검토 중', 'Review', 'Code Review', 'QA', 'End Implement'],
   done: ['Done', 'Closed', '완료', 'Released', 'Cancel', 'Cancelled', '취소'],
 }
 
@@ -194,6 +195,32 @@ export function Jira() {
   const [showQuickFilterDropdown, setShowQuickFilterDropdown] = useState(false)
   const [selectedIssues, setSelectedIssues] = useState<Set<string>>(new Set())
   const [quickActionInitialized, setQuickActionInitialized] = useState(false)
+  const [quickActionDragging, setQuickActionDragging] = useState<string | null>(null) // 드래그 중인 이슈 키
+  const [droppableCategories, setDroppableCategories] = useState<Set<string>>(new Set()) // 드롭 가능한 카테고리
+  const [bulkTransitionDialog, setBulkTransitionDialog] = useState<{
+    open: boolean
+    targetStatus: string
+    issueKeys: string[]
+    availableTransitions: Array<{ id: string; name: string; toName: string }>
+    // Step-by-step transition mode
+    stepMode: boolean
+    currentStep: number
+    totalSteps: number
+    steps: Array<{ transitionId: string; transitionName: string; toStatus: string; completed: boolean }>
+    executing: boolean
+    currentIssueIndex: number
+  }>({
+    open: false,
+    targetStatus: '',
+    issueKeys: [],
+    availableTransitions: [],
+    stepMode: false,
+    currentStep: 0,
+    totalSteps: 0,
+    steps: [],
+    executing: false,
+    currentIssueIndex: 0
+  })
   const [bulkAction, setBulkAction] = useState<BulkAction>({ status: undefined, assignee: 'keep', priority: 'keep', comment: '', startDate: '', dueDate: '' })
   const [bulkProcessing, setBulkProcessing] = useState(false)
   const [availableTransitions, setAvailableTransitions] = useState<Array<{ name: string; count: number }>>([])
@@ -988,6 +1015,434 @@ export function Jira() {
     return suggestions.slice(0, 10)
   }, [quickFilterInput, quickFilters, quickActionIssues, configuredProjectKeys])
 
+
+  // Quick Actions: DnD 핸들러
+  const handleQuickActionDragStart = async (event: DragStartEvent) => {
+    const { active } = event
+    const issueKey = active.id as string
+
+    // 드래그 시작한 이슈가 선택되어 있지 않으면 선택에 추가
+    if (!selectedIssues.has(issueKey)) {
+      setSelectedIssues(new Set([issueKey]))
+    }
+    setQuickActionDragging(issueKey)
+
+    // 현재 이슈의 상태 카테고리
+    const currentIssue = quickActionIssues.find(i => i.key === issueKey)
+    const currentCategory = currentIssue ? getStatusCategory(currentIssue.status || '') : 'todo'
+
+    // 즉시 현재 카테고리만 설정 (API 응답 전까지 다른 영역 비활성화)
+    setDroppableCategories(new Set([currentCategory]))
+
+    // 트랜지션 조회해서 이동 가능한 카테고리 계산
+    try {
+      const result = await jiraApi.getTransitions(issueKey)
+      if (result.success && result.data?.transitions) {
+        const categories = new Set<string>([currentCategory]) // 현재 카테고리는 항상 포함 (취소 가능)
+        for (const t of result.data.transitions as Array<{ to?: { name: string } }>) {
+          if (t.to?.name) {
+            categories.add(getStatusCategory(t.to.name))
+          }
+        }
+        setDroppableCategories(categories)
+      }
+    } catch {
+      // 트랜지션 조회 실패 시 모든 카테고리 허용
+      setDroppableCategories(new Set(['backlog', 'todo', 'inProgress', 'resolved', 'done']))
+    }
+  }
+
+  // 트랜지션 찾기 헬퍼 함수
+  const findTransitionForStatus = (
+    transitions: Array<{ id: string; name: string; to?: { name: string } }>,
+    targetStatus: string
+  ) => {
+    const targetCategory = getStatusCategory(targetStatus)
+
+    // 1. to.name으로 정확히 매칭
+    let found = transitions.find(
+      (t) => t.to?.name?.toLowerCase() === targetStatus.toLowerCase()
+    )
+
+    // 2. to.name 부분 매칭
+    if (!found) {
+      found = transitions.find(
+        (t) => t.to?.name?.toLowerCase().includes(targetStatus.toLowerCase()) ||
+          targetStatus.toLowerCase().includes(t.to?.name?.toLowerCase() || '')
+      )
+    }
+
+    // 3. 카테고리 기반 매칭
+    if (!found) {
+      found = transitions.find(
+        (t) => t.to?.name && getStatusCategory(t.to.name) === targetCategory
+      )
+    }
+
+    // 4. 트랜지션 이름으로 매칭
+    if (!found) {
+      found = transitions.find(
+        (t) => t.name.toLowerCase() === targetStatus.toLowerCase() ||
+          t.name.toLowerCase().includes(targetStatus.toLowerCase()) ||
+          targetStatus.toLowerCase().includes(t.name.toLowerCase())
+      )
+    }
+
+    return found
+  }
+
+  const handleQuickActionDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    console.log('[DragEnd] active:', active.id, 'over:', over?.id, 'overData:', over?.data.current)
+    setQuickActionDragging(null)
+    setDroppableCategories(new Set())
+
+    if (!over) {
+      console.log('[DragEnd] No over target')
+      return
+    }
+
+    const targetStatus = over.data.current?.status as string
+    if (!targetStatus) {
+      console.log('[DragEnd] No targetStatus in over.data')
+      return
+    }
+
+    // 선택된 이슈들의 현재 상태 확인
+    const draggedIssueKey = active.id as string
+    const draggedIssue = quickActionIssues.find(i => i.key === draggedIssueKey)
+    console.log('[DragEnd] draggedIssue:', draggedIssueKey, 'found:', !!draggedIssue, 'status:', draggedIssue?.status, 'target:', targetStatus)
+    if (!draggedIssue || draggedIssue.status === targetStatus) {
+      console.log('[DragEnd] Same status or issue not found')
+      return
+    }
+
+    // 선택된 이슈들을 대상 상태로 변경
+    // 드래그 시작 시 setSelectedIssues가 비동기라서, 드래그한 이슈가 없으면 직접 추가
+    let issuesToChange = Array.from(selectedIssues)
+    console.log('[DragEnd] selectedIssues:', issuesToChange, 'has dragged:', selectedIssues.has(draggedIssueKey))
+    if (issuesToChange.length === 0 || !selectedIssues.has(draggedIssueKey)) {
+      issuesToChange = selectedIssues.has(draggedIssueKey)
+        ? Array.from(selectedIssues)
+        : [draggedIssueKey]
+    }
+    console.log('[DragEnd] issuesToChange:', issuesToChange)
+    if (issuesToChange.length === 0) return
+
+    // 첫 번째 이슈의 트랜지션 확인 (같은 상태의 이슈들은 같은 트랜지션을 가짐)
+    const firstIssueKey = issuesToChange[0]
+    const transitionsResult = await jiraApi.getTransitions(firstIssueKey)
+
+    if (!transitionsResult.success || !transitionsResult.data?.transitions) {
+      toast.error('트랜지션 정보를 가져올 수 없습니다')
+      return
+    }
+
+    type TransitionInfo = { id: string; name: string; to?: { name: string } }
+    const transitions = transitionsResult.data.transitions as TransitionInfo[]
+
+    // 대상 상태로 가는 트랜지션 찾기
+    const targetTransition = findTransitionForStatus(transitions, targetStatus)
+
+    if (!targetTransition) {
+      // 직접 이동 불가 → 팝업으로 가능한 트랜지션 안내
+      console.log('[DragEnd] No direct transition, showing dialog. Transitions:', transitions)
+      setBulkTransitionDialog({
+        open: true,
+        targetStatus,
+        issueKeys: issuesToChange,
+        availableTransitions: transitions.map(t => ({
+          id: t.id,
+          name: t.name,
+          toName: t.to?.name || t.name
+        })),
+        stepMode: false,
+        currentStep: 0,
+        totalSteps: 0,
+        steps: [],
+        executing: false,
+        currentIssueIndex: 0
+      })
+      return
+    }
+
+    // 직접 이동 가능 → 트랜지션 실행
+    toast.promise(
+      (async () => {
+        let successCount = 0
+        let failCount = 0
+
+        for (const issueKey of issuesToChange) {
+          try {
+            await jiraApi.transitionIssue(issueKey, targetTransition.id)
+            successCount++
+          } catch {
+            failCount++
+          }
+        }
+
+        if (failCount > 0) {
+          throw new Error(`${successCount}개 성공, ${failCount}개 실패`)
+        }
+        return successCount
+      })(),
+      {
+        loading: `${issuesToChange.length}개 이슈를 "${targetStatus}"로 변경 중...`,
+        success: (count) => {
+          setSelectedIssues(new Set())
+          refetchQuickActionIssues()
+          return `${count}개 이슈가 "${targetStatus}"로 변경되었습니다`
+        },
+        error: (err) => {
+          refetchQuickActionIssues()
+          return err.message
+        }
+      }
+    )
+  }
+
+  // 초기 다이얼로그 상태
+  const initialDialogState = {
+    open: false,
+    targetStatus: '',
+    issueKeys: [] as string[],
+    availableTransitions: [] as Array<{ id: string; name: string; toName: string }>,
+    stepMode: false,
+    currentStep: 0,
+    totalSteps: 0,
+    steps: [] as Array<{ transitionId: string; transitionName: string; toStatus: string; completed: boolean }>,
+    executing: false,
+    currentIssueIndex: 0
+  }
+
+  // 벌크 트랜지션 팝업에서 트랜지션 선택 시 실행
+  const executeBulkTransitionFromDialog = async (transitionId: string, transitionName: string) => {
+    const { issueKeys } = bulkTransitionDialog
+    setBulkTransitionDialog(initialDialogState)
+
+    toast.promise(
+      (async () => {
+        let successCount = 0
+        let failCount = 0
+
+        for (const issueKey of issueKeys) {
+          try {
+            await jiraApi.transitionIssue(issueKey, transitionId)
+            successCount++
+          } catch {
+            failCount++
+          }
+        }
+
+        if (failCount > 0) {
+          throw new Error(`${successCount}개 성공, ${failCount}개 실패`)
+        }
+        return successCount
+      })(),
+      {
+        loading: `${issueKeys.length}개 이슈에 "${transitionName}" 적용 중...`,
+        success: (count) => {
+          setSelectedIssues(new Set())
+          refetchQuickActionIssues()
+          return `${count}개 이슈 상태 변경 완료`
+        },
+        error: (err) => {
+          refetchQuickActionIssues()
+          return err.message
+        }
+      }
+    )
+  }
+
+  // 목표 상태까지의 경로 찾기 및 단계별 전환 시작
+  const startStepByStepTransition = async (targetTransition: { id: string; name: string; toName: string }) => {
+    console.log('[StepByStep] Starting with transition:', targetTransition)
+    const { issueKeys, targetStatus } = bulkTransitionDialog
+    console.log('[StepByStep] issueKeys:', issueKeys, 'targetStatus:', targetStatus)
+    const targetCategory = getStatusCategory(targetStatus)
+    console.log('[StepByStep] targetCategory:', targetCategory, 'toCategory:', getStatusCategory(targetTransition.toName))
+
+    // 선택한 트랜지션으로 이동 후, 목표 상태까지 추가 단계가 필요한지 확인
+    const firstStep = {
+      transitionId: targetTransition.id,
+      transitionName: targetTransition.name,
+      toStatus: targetTransition.toName,
+      completed: false
+    }
+
+    // 이동 후 상태가 목표 카테고리와 같으면 1단계로 충분
+    if (getStatusCategory(targetTransition.toName) === targetCategory) {
+      console.log('[StepByStep] Direct category match, executing single transition')
+      // 직접 실행
+      executeBulkTransitionFromDialog(targetTransition.id, targetTransition.name)
+      return
+    }
+
+    // 추가 단계가 필요할 수 있음 - 일단 첫 번째 단계 실행 후 다음 트랜지션 확인
+    setBulkTransitionDialog(prev => ({
+      ...prev,
+      stepMode: true,
+      executing: true,
+      currentStep: 1,
+      totalSteps: 1, // 동적으로 업데이트됨
+      steps: [firstStep],
+      currentIssueIndex: 0
+    }))
+
+    // 첫 번째 이슈로 경로 탐색
+    await executeStepByStepForIssues(issueKeys, [firstStep], targetStatus)
+  }
+
+  // 단계별 전환 실행 (모든 이슈에 대해)
+  const executeStepByStepForIssues = async (
+    issueKeys: string[],
+    initialSteps: Array<{ transitionId: string; transitionName: string; toStatus: string; completed: boolean }>,
+    targetStatus: string
+  ) => {
+    console.log('[StepByStep] executeStepByStepForIssues started', { issueKeys, initialSteps, targetStatus })
+    const targetCategory = getStatusCategory(targetStatus)
+    let allSteps = [...initialSteps]
+    let successCount = 0
+    let failCount = 0
+
+    for (let issueIndex = 0; issueIndex < issueKeys.length; issueIndex++) {
+      const issueKey = issueKeys[issueIndex]
+      let currentStepIndex = 0
+      let reachedTarget = false
+
+      console.log('[StepByStep] Processing issue:', issueKey, 'index:', issueIndex)
+
+      setBulkTransitionDialog(prev => ({
+        ...prev,
+        currentIssueIndex: issueIndex + 1
+      }))
+
+      while (!reachedTarget && currentStepIndex < 10) { // 최대 10단계 (무한 루프 방지)
+        const step = allSteps[currentStepIndex]
+        console.log('[StepByStep] Current step:', currentStepIndex, step)
+
+        if (step) {
+          // 현재 단계 실행
+          try {
+            console.log('[StepByStep] Executing transition:', issueKey, step.transitionId)
+            await jiraApi.transitionIssue(issueKey, step.transitionId)
+
+            // 단계 완료 표시
+            allSteps = allSteps.map((s, i) =>
+              i === currentStepIndex ? { ...s, completed: true } : s
+            )
+            setBulkTransitionDialog(prev => ({
+              ...prev,
+              steps: allSteps,
+              currentStep: currentStepIndex + 1
+            }))
+
+            // 목표 도달 확인
+            if (getStatusCategory(step.toStatus) === targetCategory ||
+                step.toStatus.toLowerCase() === targetStatus.toLowerCase()) {
+              reachedTarget = true
+              successCount++
+              break
+            }
+          } catch (error) {
+            // 이 이슈는 실패
+            console.error('[StepByStep] Transition failed:', issueKey, step.transitionId, error)
+            failCount++
+            break
+          }
+        }
+
+        // 다음 단계 찾기 (첫 번째 이슈에서만)
+        if (issueIndex === 0 && !reachedTarget) {
+          console.log('[StepByStep] Finding next step for target:', targetStatus)
+          const transitionsResult = await jiraApi.getTransitions(issueKey)
+          console.log('[StepByStep] Available transitions after step:', transitionsResult)
+          if (transitionsResult.success && transitionsResult.data?.transitions) {
+            type TransitionInfo = { id: string; name: string; to?: { name: string } }
+            const transitions = transitionsResult.data.transitions as TransitionInfo[]
+
+            // 목표 상태로 가는 트랜지션 찾기
+            const nextTransition = findBestTransitionToTarget(transitions, targetStatus, targetCategory)
+            console.log('[StepByStep] Next transition found:', nextTransition)
+
+            if (nextTransition) {
+              const newStep = {
+                transitionId: nextTransition.id,
+                transitionName: nextTransition.name,
+                toStatus: nextTransition.to?.name || nextTransition.name,
+                completed: false
+              }
+              allSteps = [...allSteps, newStep]
+              setBulkTransitionDialog(prev => ({
+                ...prev,
+                steps: allSteps,
+                totalSteps: allSteps.length
+              }))
+            } else {
+              // 더 이상 경로가 없음
+              console.log('[StepByStep] No more path found')
+              break
+            }
+          }
+        }
+
+        currentStepIndex++
+      }
+
+      // 첫 번째 이슈가 목표에 도달하지 못하면 중단
+      if (issueIndex === 0 && !reachedTarget) {
+        toast.error(`"${targetStatus}"까지의 경로를 찾을 수 없습니다`)
+        setBulkTransitionDialog(initialDialogState)
+        refetchQuickActionIssues()
+        return
+      }
+    }
+
+    // 완료
+    setBulkTransitionDialog(initialDialogState)
+    setSelectedIssues(new Set())
+    refetchQuickActionIssues()
+
+    if (failCount > 0) {
+      toast.error(`${successCount}개 성공, ${failCount}개 실패`)
+    } else {
+      toast.success(`${successCount}개 이슈가 "${targetStatus}"로 변경되었습니다`)
+    }
+  }
+
+  // 목표 상태로 가는 최적의 트랜지션 찾기
+  const findBestTransitionToTarget = (
+    transitions: Array<{ id: string; name: string; to?: { name: string } }>,
+    targetStatus: string,
+    targetCategory: keyof typeof STATUS_CATEGORIES
+  ) => {
+    // 1. 정확히 목표 상태로 가는 트랜지션
+    let found = transitions.find(
+      t => t.to?.name?.toLowerCase() === targetStatus.toLowerCase()
+    )
+    if (found) return found
+
+    // 2. 목표 카테고리로 가는 트랜지션
+    found = transitions.find(
+      t => t.to?.name && getStatusCategory(t.to.name) === targetCategory
+    )
+    if (found) return found
+
+    // 3. 워크플로우 순서상 목표에 가까운 트랜지션
+    const categoryOrder: (keyof typeof STATUS_CATEGORIES)[] = ['backlog', 'todo', 'inProgress', 'resolved', 'done']
+    const targetIndex = categoryOrder.indexOf(targetCategory)
+
+    // 목표 방향으로 진행하는 트랜지션 찾기
+    found = transitions.find(t => {
+      if (!t.to?.name) return false
+      const toCategory = getStatusCategory(t.to.name)
+      const toIndex = categoryOrder.indexOf(toCategory)
+      // 목표 방향으로 이동하는지 확인
+      return toIndex > categoryOrder.indexOf('backlog') && toIndex <= targetIndex
+    })
+
+    return found
+  }
 
   // Quick Actions: 벌크 상태 변경 실행
   const executeBulkAction = async () => {
@@ -2047,6 +2502,172 @@ export function Jira() {
         </div>
       )}
 
+      {/* Bulk Transition Dialog (Quick Actions 드래그용) */}
+      {bulkTransitionDialog.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => !bulkTransitionDialog.executing && setBulkTransitionDialog(initialDialogState)}
+          />
+          <div className="relative bg-background rounded-xl shadow-2xl border p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">
+                {bulkTransitionDialog.executing ? '상태 변경 중...' : '상태 변경 경로 선택'}
+              </h3>
+              {!bulkTransitionDialog.executing && (
+                <button
+                  onClick={() => setBulkTransitionDialog(initialDialogState)}
+                  className="p-1 hover:bg-muted rounded"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              )}
+            </div>
+
+            {bulkTransitionDialog.executing ? (
+              /* 단계별 전환 진행 중 */
+              <div className="space-y-4">
+                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                  <div className="flex items-center gap-3 mb-3">
+                    <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
+                    <div className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                      {bulkTransitionDialog.issueKeys.length}개 이슈를 "{bulkTransitionDialog.targetStatus}"로 변경 중
+                    </div>
+                  </div>
+                  <div className="text-xs text-blue-700 dark:text-blue-300">
+                    진행: {bulkTransitionDialog.currentIssueIndex} / {bulkTransitionDialog.issueKeys.length} 이슈
+                  </div>
+                </div>
+
+                {/* 단계 진행 표시 */}
+                <div className="space-y-2">
+                  {bulkTransitionDialog.steps.map((step, index) => {
+                    const stepCategory = getStatusCategory(step.toStatus)
+                    const style = categoryStyles[stepCategory]
+                    const isActive = index === bulkTransitionDialog.currentStep - 1
+                    return (
+                      <div
+                        key={index}
+                        className={cn(
+                          "flex items-center gap-3 p-3 rounded-lg border",
+                          step.completed ? "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800" :
+                          isActive ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800" :
+                          "bg-muted/30 border-muted"
+                        )}
+                      >
+                        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-background border text-xs font-medium">
+                          {step.completed ? (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                          ) : isActive ? (
+                            <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                          ) : (
+                            index + 1
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-sm font-medium">{step.transitionName}</div>
+                          <div className="text-xs text-muted-foreground flex items-center gap-1">
+                            <ChevronRight className="h-3 w-3" />
+                            <style.icon className={cn("h-3 w-3", style.color)} />
+                            {step.toStatus}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              /* 트랜지션 선택 */
+              <>
+                <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-800 dark:text-amber-200">
+                        직접 이동 불가
+                      </p>
+                      <p className="text-amber-700 dark:text-amber-300 mt-1">
+                        선택한 <span className="font-medium">{bulkTransitionDialog.issueKeys.length}개</span> 이슈를{' '}
+                        <span className="font-medium">"{bulkTransitionDialog.targetStatus}"</span>로
+                        직접 변경할 수 없습니다.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    아래 경로를 선택하여 목표 상태까지 자동으로 이동합니다:
+                  </p>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {bulkTransitionDialog.availableTransitions.map((transition) => {
+                      const category = getStatusCategory(transition.toName)
+                      const style = categoryStyles[category]
+                      const targetCategory = getStatusCategory(bulkTransitionDialog.targetStatus)
+                      const categoryOrder: (keyof typeof STATUS_CATEGORIES)[] = ['backlog', 'todo', 'inProgress', 'resolved', 'done']
+                      const currentIndex = categoryOrder.indexOf(category)
+                      const targetIndex = categoryOrder.indexOf(targetCategory)
+                      const isTowardTarget = currentIndex <= targetIndex && currentIndex > 0
+                      const isTargetCategory = category === targetCategory
+
+                      return (
+                        <button
+                          key={transition.id}
+                          onClick={() => startStepByStepTransition(transition)}
+                          className={cn(
+                            "w-full flex items-center gap-3 p-3 rounded-lg border transition-all",
+                            "hover:shadow-md hover:scale-[1.02]",
+                            isTargetCategory ? "ring-2 ring-blue-500 ring-offset-2" : "",
+                            style.border,
+                            style.bg
+                          )}
+                        >
+                          <style.icon className={cn("h-5 w-5", style.color)} />
+                          <div className="flex flex-col items-start flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{transition.name}</span>
+                              {isTargetCategory && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded">
+                                  목표 도달
+                                </span>
+                              )}
+                              {isTowardTarget && !isTargetCategory && (
+                                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded">
+                                  목표 방향
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs text-muted-foreground">→ {transition.toName}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            {isTargetCategory ? (
+                              <span className="text-blue-600 dark:text-blue-400">1단계</span>
+                            ) : isTowardTarget ? (
+                              <span className="text-emerald-600 dark:text-emerald-400">자동</span>
+                            ) : null}
+                            <ChevronRight className="h-4 w-4" />
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setBulkTransitionDialog(initialDialogState)}
+                    className="px-4 py-2 text-sm text-muted-foreground hover:bg-muted rounded-lg transition-colors"
+                  >
+                    취소
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Click outside to close project selector */}
       {showProjectSelector && (
         <div
@@ -2281,7 +2902,17 @@ export function Jira() {
             </div>
           </div>
 
-          {/* Issues List - Grouped by Status */}
+          {/* Issues List - Grouped by Status with DnD */}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={rectIntersection}
+            onDragStart={handleQuickActionDragStart}
+            onDragEnd={handleQuickActionDragEnd}
+            onDragCancel={() => {
+              setQuickActionDragging(null)
+              setDroppableCategories(new Set())
+            }}
+          >
           <Card className="overflow-hidden">
             {quickFilteredIssues.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
@@ -2333,8 +2964,28 @@ export function Jira() {
                     })
                   }
 
+                  // 현재 상태에 선택된 이슈가 있는지 확인
+                  const selectedIssueStatus = (() => {
+                    const firstSelectedKey = Array.from(selectedIssues)[0]
+                    if (!firstSelectedKey) return null
+                    const firstSelected = quickFilteredIssues.find(i => i.key === firstSelectedKey)
+                    return firstSelected?.status || null
+                  })()
+                  const isCurrentStatus = selectedIssueStatus === status
+
+                  // 이 상태의 카테고리가 드롭 가능한지 확인
+                  const statusCategory = getStatusCategory(status)
+                  // 드래그 중이 아니면 모든 영역 활성, 드래그 중이면 droppableCategories 확인
+                  const canDropHere = !quickActionDragging || droppableCategories.has(statusCategory)
+
                   return (
-                    <div key={status}>
+                    <QuickActionDropZone
+                      key={status}
+                      status={status}
+                      isCurrentStatus={isCurrentStatus}
+                      canDrop={canDropHere}
+                      isDragging={!!quickActionDragging}
+                    >
                       {/* Status Group Header */}
                       <div
                         onClick={toggleGroupSelection}
@@ -2377,7 +3028,6 @@ export function Jira() {
                       {/* Issues in this group */}
                       <div className="divide-y">
                         {issues.map((issue) => {
-                          const TypeIcon = issueTypeIcons[issue.type || ''] || FileText
                           const isSelected = selectedIssues.has(issue.key)
                           // 다른 상태 이슈가 선택되어 있으면 이 이슈는 선택 불가
                           const otherStatusSelected = Array.from(selectedIssues).some(key => {
@@ -2386,9 +3036,13 @@ export function Jira() {
                           })
 
                           return (
-                            <div
+                            <QuickActionDraggableIssue
                               key={issue.key}
-                              onClick={() => {
+                              issue={issue}
+                              isSelected={isSelected}
+                              isDragging={quickActionDragging === issue.key}
+                              otherStatusSelected={otherStatusSelected}
+                              onToggleSelect={() => {
                                 if (otherStatusSelected && !isSelected) {
                                   // 다른 상태가 선택되어 있으면 초기화하고 이 이슈 선택
                                   setSelectedIssues(new Set([issue.key]))
@@ -2404,60 +3058,71 @@ export function Jira() {
                                   })
                                 }
                               }}
-                              className={cn(
-                                "flex items-center gap-3 px-4 py-3 cursor-pointer transition-all pl-8",
-                                isSelected
-                                  ? "bg-purple-50 dark:bg-purple-900/20"
-                                  : otherStatusSelected
-                                  ? "opacity-50 hover:bg-muted/30"
-                                  : "hover:bg-muted/50"
-                              )}
-                            >
-                              {/* Checkbox */}
-                              <div className={cn(
-                                "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors",
-                                isSelected
-                                  ? "bg-purple-600 border-purple-600"
-                                  : "border-gray-300 dark:border-gray-600"
-                              )}>
-                                {isSelected && (
-                                  <CheckCircle2 className="h-3 w-3 text-white" />
-                                )}
-                              </div>
-
-                              {/* Type Icon */}
-                              <TypeIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-
-                              {/* Key */}
-                              <span className="font-mono text-sm text-blue-600 dark:text-blue-400 font-medium flex-shrink-0 w-24">
-                                {issue.key}
-                              </span>
-
-                              {/* Summary */}
-                              <div className="flex-1 min-w-0">
-                                <span className="truncate block text-sm">{issue.summary}</span>
-                              </div>
-
-                              {/* Assignee */}
-                              <div className="flex-shrink-0 w-20 text-right">
-                                {issue.assignee ? (
-                                  <span className="text-xs text-muted-foreground truncate block">
-                                    {issue.assignee.split(' ')[0]}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground italic">-</span>
-                                )}
-                              </div>
-                            </div>
+                            />
                           )
                         })}
                       </div>
-                    </div>
+                    </QuickActionDropZone>
                   )
                 })
               })()
             )}
           </Card>
+
+          {/* Drag Overlay for Quick Actions */}
+          <DragOverlay>
+            {quickActionDragging && (() => {
+              // 선택된 이슈들 가져오기 (최대 3개까지 미리보기)
+              const selectedIssueList = quickActionIssues.filter(i => selectedIssues.has(i.key))
+              const previewIssues = selectedIssueList.slice(0, 3)
+              const remainingCount = selectedIssueList.length - 3
+
+              return (
+                <div className="relative">
+                  {/* 스택 효과 - 뒤에 쌓인 카드들 */}
+                  {selectedIssueList.length > 1 && (
+                    <>
+                      <div className="absolute top-2 left-2 right-0 h-full bg-purple-200 dark:bg-purple-800/50 rounded-lg border border-purple-300 dark:border-purple-600" />
+                      {selectedIssueList.length > 2 && (
+                        <div className="absolute top-1 left-1 right-0 h-full bg-purple-300 dark:bg-purple-700/50 rounded-lg border border-purple-400 dark:border-purple-500" />
+                      )}
+                    </>
+                  )}
+                  {/* 메인 카드 */}
+                  <div className="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl border-2 border-purple-500 overflow-hidden min-w-[280px]">
+                    {/* 헤더 */}
+                    <div className="px-3 py-2 bg-purple-100 dark:bg-purple-900/50 border-b border-purple-200 dark:border-purple-700">
+                      <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300">
+                        <GripVertical className="h-4 w-4" />
+                        <span className="font-medium text-sm">
+                          {selectedIssueList.length}개 이슈 이동 중
+                        </span>
+                      </div>
+                    </div>
+                    {/* 이슈 미리보기 */}
+                    <div className="p-2 space-y-1">
+                      {previewIssues.map((issue) => {
+                        const TypeIcon = issueTypeIcons[issue.type || ''] || FileText
+                        return (
+                          <div key={issue.key} className="flex items-center gap-2 px-2 py-1.5 bg-gray-50 dark:bg-gray-700/50 rounded text-sm">
+                            <TypeIcon className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                            <span className="font-mono text-xs text-purple-600 dark:text-purple-400">{issue.key}</span>
+                            <span className="truncate text-gray-700 dark:text-gray-300">{issue.summary}</span>
+                          </div>
+                        )
+                      })}
+                      {remainingCount > 0 && (
+                        <div className="text-center text-xs text-muted-foreground py-1">
+                          +{remainingCount}개 더...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+          </DragOverlay>
+          </DndContext>
 
           {/* Bulk Actions Panel - Sticky Bottom */}
           {selectedIssues.size > 0 && (
@@ -3395,6 +4060,160 @@ function StatusColumn({
           )}
         </div>
       </SortableContext>
+    </div>
+  )
+}
+
+// Quick Actions: 드롭 가능한 상태 그룹 헤더
+function QuickActionDropZone({
+  status,
+  children,
+  isCurrentStatus,
+  canDrop,
+  isDragging,
+}: {
+  status: string
+  children: React.ReactNode
+  isCurrentStatus: boolean
+  canDrop: boolean
+  isDragging: boolean
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `quick-action-drop-${status}`,
+    data: { status },
+    // 드롭은 항상 허용 (이동 불가 시 팝업으로 안내)
+  })
+
+  const showDropHint = isOver && !isCurrentStatus
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "transition-all",
+        // 드래그 중일 때 직접 이동 불가 영역 시각적 힌트 (희미하게)
+        isDragging && !canDrop && !isCurrentStatus && "opacity-60",
+        // 드롭 위치 하이라이트: 가능하면 보라색, 불가능하면 주황색
+        showDropHint && canDrop && "ring-2 ring-purple-500 ring-inset bg-purple-50 dark:bg-purple-900/30",
+        showDropHint && !canDrop && "ring-2 ring-orange-400 ring-inset bg-orange-50 dark:bg-orange-900/30"
+      )}
+    >
+      {children}
+      {showDropHint && canDrop && (
+        <div className="px-4 py-2 text-center text-sm text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/50 border-b">
+          여기에 드롭하여 "{status}"로 변경
+        </div>
+      )}
+      {showDropHint && !canDrop && (
+        <div className="px-4 py-2 text-center text-sm text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-900/50 border-b">
+          ⚠️ 직접 이동 불가 - 드롭하면 가능한 경로 안내
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Quick Actions: 드래그 가능한 이슈 아이템
+function QuickActionDraggableIssue({
+  issue,
+  isSelected,
+  isDragging,
+  otherStatusSelected,
+  onToggleSelect,
+}: {
+  issue: JiraIssueListItem
+  isSelected: boolean
+  isDragging: boolean
+  otherStatusSelected: boolean
+  onToggleSelect: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform } = useDraggable({
+    id: issue.key,
+    data: { issue },
+    disabled: otherStatusSelected && !isSelected,
+  })
+
+  const TypeIcon = issueTypeIcons[issue.type || ''] || FileText
+
+  const style = transform ? {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+    zIndex: 1000,
+  } : undefined
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "flex items-center gap-3 px-4 py-3 cursor-pointer transition-all pl-8",
+        isSelected
+          ? "bg-purple-50 dark:bg-purple-900/20"
+          : otherStatusSelected
+          ? "opacity-50 hover:bg-muted/30"
+          : "hover:bg-muted/50",
+        isDragging && "opacity-50"
+      )}
+    >
+      {/* Drag Handle */}
+      <div
+        {...listeners}
+        {...attributes}
+        className={cn(
+          "p-1 rounded hover:bg-muted cursor-grab active:cursor-grabbing",
+          (otherStatusSelected && !isSelected) && "cursor-not-allowed opacity-30"
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <GripVertical className="h-4 w-4 text-muted-foreground" />
+      </div>
+
+      {/* Checkbox */}
+      <div
+        onClick={(e) => {
+          e.stopPropagation()
+          onToggleSelect()
+        }}
+        className={cn(
+          "w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer",
+          isSelected
+            ? "bg-purple-600 border-purple-600"
+            : "border-gray-300 dark:border-gray-600 hover:border-purple-400"
+        )}
+      >
+        {isSelected && (
+          <CheckCircle2 className="h-3 w-3 text-white" />
+        )}
+      </div>
+
+      {/* Type Icon */}
+      <TypeIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+
+      {/* Issue Key & Summary */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <a
+            href={issue.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-sm font-mono text-blue-600 hover:underline flex-shrink-0"
+          >
+            {issue.key}
+          </a>
+          <span className="text-sm truncate">{issue.summary}</span>
+        </div>
+      </div>
+
+      {/* Assignee */}
+      <div className="flex-shrink-0 w-20 text-right">
+        {issue.assignee ? (
+          <span className="text-xs text-muted-foreground truncate block">
+            {issue.assignee.split(' ')[0]}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">-</span>
+        )}
+      </div>
     </div>
   )
 }
