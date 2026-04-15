@@ -25,14 +25,12 @@ check_and_start_server() {
     if [ -f "$ENV_FILE" ]; then
         export SLACK_APP_TOKEN=$(grep "^SLACK_APP_TOKEN=" "$ENV_FILE" | cut -d'=' -f2-)
         export SLACK_BOT_TOKEN=$(grep "^SLACK_BOT_TOKEN=" "$ENV_FILE" | cut -d'=' -f2-)
-        export WORKSPACE_PATH="$PROJECT_ROOT/data"
 
         echo "[Server] Starting Claude Flow backend..." >&2
         cd "$PROJECT_ROOT"
 
         SLACK_APP_TOKEN="$SLACK_APP_TOKEN" \
         SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN" \
-        WORKSPACE_PATH="$WORKSPACE_PATH" \
         ./gradlew :claude-flow-app:bootRun > /tmp/claude-flow.log 2>&1 &
 
         echo "[Server] Started (PID: $!, logs: /tmp/claude-flow.log)" >&2
