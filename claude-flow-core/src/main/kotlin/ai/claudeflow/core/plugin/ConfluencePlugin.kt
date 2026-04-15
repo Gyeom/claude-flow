@@ -228,7 +228,8 @@ class ConfluencePlugin : BasePlugin() {
             val glossary = getCached(cacheKey) as? Map<String, String> ?: run {
                 // 용어 사전 페이지 검색
                 val cql = URLEncoder.encode("space=$spaceKey AND (title~\"Glossary\" OR title~\"용어사전\" OR title~\"용어 정의\")", "UTF-8")
-                val url = "$baseUrl/wiki/rest/api/content/search?cql=$cql&limit=1&expand=body.storage"
+                val url = "$baseUrl" +
+                        "/wiki/rest/api/content/search?cql=$cql&limit=1&expand=body.storage"
                 val response = apiGet(url)
                 val result: Map<String, Any> = mapper.readValue(response)
 
